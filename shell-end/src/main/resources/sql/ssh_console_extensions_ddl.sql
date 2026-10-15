@@ -1,0 +1,15 @@
+-- SSH 控制台扩展：平台脚本库（监控/进程无表）
+CREATE TABLE IF NOT EXISTS ssh_script (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  host_id BIGINT DEFAULT NULL COMMENT 'NULL=全局脚本，所有主机可见',
+  name VARCHAR(128) NOT NULL,
+  interpreter VARCHAR(32) NOT NULL DEFAULT 'bash' COMMENT 'bash|sh',
+  content MEDIUMTEXT NOT NULL,
+  work_dir VARCHAR(512) DEFAULT NULL COMMENT '执行工作目录，NULL=登录用户家目录',
+  remark VARCHAR(512) DEFAULT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_ssh_script_host (host_id),
+  CONSTRAINT fk_ssh_script_host FOREIGN KEY (host_id) REFERENCES ssh_host (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='SSH控制台-常用脚本';

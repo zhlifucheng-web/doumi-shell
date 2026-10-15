@@ -1,0 +1,51 @@
+logging:
+  level:
+    root: INFO
+    com.baomidou.mybatisplus: INFO
+    com.doumiot.sshconsole: INFO
+
+doumi:
+  storage:
+    data-dir: ${DOUMI_DATA_DIR:./data}
+
+  ssh-console:
+    enabled: true
+    credential-master-key: ${SSH_CONSOLE_MASTER_KEY:}
+    max-sessions: 50
+    idle-timeout-minutes: 30
+    upload-max-size-mb: 512
+    monitor-enabled: true
+    monitor-min-interval-ms: 5000
+    monitor-disk-interval-ms: 60000
+    script-run-timeout-sec: 0
+
+spring:
+  mvc:
+    async:
+      request-timeout: 0
+  application:
+    name: doumi
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+  servlet:
+    multipart:
+      max-file-size: 512MB
+      max-request-size: 512MB
+
+server:
+  port: ${DOUMI_PORT:80}
+
+app:
+  database:
+    init:
+      enabled: true
+      mode: AUTO
+      scripts:
+        - sql/sqlite_schema.sql
+      fail-fast: true
+
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl

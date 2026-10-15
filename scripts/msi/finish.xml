@@ -1,0 +1,11 @@
+<!-- Launch only from the successful full-UI finish page, after files are installed.
+     Silent installation, cancellation, failure, repair and removal never launch. -->
+<Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+<SetProperty Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"
+  Value="Open Doumi Shell in browser now" After="CostFinalize" Sequence="ui">NOT Installed</SetProperty>
+<Property Id="WixShellExecTarget" Value="[INSTALLDIR]Doumi Shell.exe" />
+<CustomAction Id="DoumiLaunchAfterInstall" BinaryKey="WixCA" DllEntry="WixShellExec"
+  Impersonate="yes" Return="ignore" />
+<UI>
+  <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="DoumiLaunchAfterInstall" Order="1">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed AND NOT REMOVE~="ALL"</Publish>
+</UI>

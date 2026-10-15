@@ -1,0 +1,12 @@
+<!-- MSI registration also exposes uninstall in Windows Settings. -->
+<DirectoryRef Id="ProgramMenuFolder">
+  <Directory Id="DoumiUninstallMenu" Name="Doumi Shell">
+    <Component Id="DoumiUninstallShortcut" Guid="4f977e3d-b49c-48a0-b61e-9dc9f7a9707e" Win64="yes">
+      <Condition>JP_INSTALL_STARTMENU_SHORTCUT</Condition>
+      <Shortcut Id="DoumiUninstallLink" Name="Uninstall Doumi Shell"
+        Target="[SystemFolder]msiexec.exe" Arguments="/x [ProductCode]" WorkingDirectory="INSTALLDIR" />
+      <RemoveFolder Id="DoumiRemoveUninstallMenu" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\Doumi\Shell" Name="UninstallShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+  </Directory>
+</DirectoryRef>

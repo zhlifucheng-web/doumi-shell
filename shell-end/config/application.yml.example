@@ -1,0 +1,11 @@
+# 复制为 jar 同级 config/application.yml（可选）
+doumi:
+  storage:
+    data-dir: ./data
+
+  ssh-console:
+    # 留空时自动在 data 目录生成并持久化 master.key；备份数据时请保留该文件。
+    credential-master-key: ${SSH_CONSOLE_MASTER_KEY:}
+
+server:
+  port: 80

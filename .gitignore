@@ -1,0 +1,15 @@
+**/target/
+**/node_modules/
+**/dist/
+release/
+data/
+**/src/main/resources/static/
+.idea/
+*.iml
+.DS_Store
+.build-tools/
+.build/
+.env
+.env.*
+!.env.example
+*.log

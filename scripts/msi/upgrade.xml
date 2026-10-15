@@ -1,0 +1,17 @@
+<!-- Restore this product's registered installation directory before replacement. -->
+<Property Id="DOUMI_PREVIOUS_USER_DIR" Secure="yes">
+  <RegistrySearch Id="DoumiUserInstallLocation" Root="HKCU"
+    Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\[JP_UPGRADABLE_FOUND]"
+    Name="InstallLocation" Type="raw" Win64="yes" />
+</Property>
+<Property Id="DOUMI_PREVIOUS_MACHINE_DIR" Secure="yes">
+  <RegistrySearch Id="DoumiMachineInstallLocation" Root="HKLM"
+    Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\[JP_UPGRADABLE_FOUND]"
+    Name="InstallLocation" Type="raw" Win64="yes" />
+</Property>
+<CustomAction Id="DoumiRestoreUserInstallDir" Property="INSTALLDIR" Value="[DOUMI_PREVIOUS_USER_DIR]" />
+<CustomAction Id="DoumiRestoreMachineInstallDir" Property="INSTALLDIR" Value="[DOUMI_PREVIOUS_MACHINE_DIR]" />
+<InstallUISequence>
+  <Custom Action="DoumiRestoreUserInstallDir" After="AppSearch">NOT Installed AND JP_UPGRADABLE_FOUND AND DOUMI_PREVIOUS_USER_DIR</Custom>
+  <Custom Action="DoumiRestoreMachineInstallDir" After="DoumiRestoreUserInstallDir">NOT Installed AND JP_UPGRADABLE_FOUND AND NOT DOUMI_PREVIOUS_USER_DIR AND DOUMI_PREVIOUS_MACHINE_DIR</Custom>
+</InstallUISequence>
