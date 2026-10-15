@@ -20,6 +20,16 @@ html.doumi-custom-background .el-table__cell.is-fixed-column--right {
   background-repeat: no-repeat !important;
   background-attachment: fixed !important;
 }
+/* Keep overflow tooltips readable after the generic popper backdrop override. */
+html.doumi-custom-background .el-popper.is-dark {
+  background: var(--el-text-color-primary) !important;
+  color: var(--el-bg-color) !important;
+  border-color: var(--el-text-color-primary) !important;
+}
+html.doumi-custom-background .el-popper.is-dark .el-popper__arrow::before {
+  background: var(--el-text-color-primary) !important;
+  border-color: var(--el-text-color-primary) !important;
+}
 /* Structural children use their parent backdrop; text and controls retain full opacity. */
 html.doumi-custom-background :where(.app-root,.app-header,.aside,.ssh-monitor,.block,
   .el-tree,.el-card,.el-table,.el-table__inner-wrapper,.el-table tr,.el-table th.el-table__cell,

@@ -1,6 +1,6 @@
 # Doumi Shell
 
-Doumi Shell 是一款面向 Windows 用户的 SSH 服务器管理工具。在本机安装后，通过浏览器即可集中管理服务器，完成终端连接、文件传输、运行监控、脚本定时执行和存储清理。
+Doumi Shell 是一款支持 Windows 和 Linux 的 SSH 服务器管理工具。在本机部署后，通过浏览器即可集中管理服务器，完成终端连接、文件传输、运行监控、脚本定时执行和存储清理。程序默认监听所有网络接口，也可以部署在 Linux 服务器上供局域网内的其他设备访问。
 
 安装包自带运行环境，无需提前安装 Java、Node.js 或数据库。适合日常服务器维护、批量保存连接信息，以及定期执行备份、巡检等 Shell 脚本。
 
@@ -19,14 +19,38 @@ Doumi Shell 是一款面向 Windows 用户的 SSH 服务器管理工具。在本
 
 ## 下载与安装
 
-支持 **Windows 10 / 11，64 位**。
+支持 **Windows 10 / 11（64 位）** 和 **Linux x64**。Windows 提供 MSI 安装包，Linux 提供包含 JAR 和启动脚本的压缩包；Linux 运行需要 Java 17（压缩包未自带运行时）。
 
-1. 从 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `Doumi Shell-1.0.14.msi` 并双击安装。
+### Windows
+
+1. 从 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `Doumi Shell-1.0.15.msi` 并双击安装。
 2. 选择安装目录，按需创建桌面和开始菜单快捷方式。
 3. 安装完成时勾选 **Open Doumi Shell in browser now**，或稍后通过快捷方式启动。
 4. 程序就绪后自动打开浏览器，也可以访问 **http://localhost/**。
 
-默认使用 80 端口，请确保没有其他程序占用。重复启动会打开已运行的页面。升级时先从系统托盘退出 Doumi Shell，再运行新安装包；安装程序会识别原安装目录。升级后网页资源会自动更新。
+### Linux
+
+1. 在 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `doumi-shell-1.0.15-linux-x64.tar.gz`。
+2. 解压并进入目录，确认已安装 Java 17，然后运行启动脚本：
+
+   ```bash
+   tar -xzf doumi-shell-1.0.15-linux-x64.tar.gz
+   cd doumi-shell-1.0.15
+   chmod +x run-linux.sh
+   ./run-linux.sh
+   ```
+
+3. 在部署机器上访问 **http://localhost/**。默认端口为 80，Linux 监听 80 端口通常需要 root 或相应的绑定端口权限。
+
+Linux 启动脚本默认将数据保存在程序目录的 `data/` 中。生产环境建议设置独立的数据目录和端口，例如：
+
+```bash
+DOUMI_DATA_DIR=/var/lib/doumi-shell/data DOUMI_PORT=8080 ./run-linux.sh
+```
+
+Linux 部署后可在局域网内使用。请在服务器防火墙放行所配置的 TCP 端口，然后让同一局域网设备访问 `http://服务器局域网IP:8080/`；使用默认端口时访问 `http://服务器局域网IP/`。请只在可信网络中开放管理页面。
+
+默认使用 80 端口，请确保没有其他程序占用。重复启动会打开已运行的页面。Windows 升级时先从系统托盘退出 Doumi Shell，再运行新安装包；安装程序会识别原安装目录。升级后网页资源会自动更新。
 
 ## 第一次连接服务器
 
@@ -100,11 +124,12 @@ Doumi Shell 是一款面向 Windows 用户的 SSH 服务器管理工具。在本
 
 ## 退出、卸载与数据位置
 
-- 右键系统托盘图标，选择 **Open Doumi Shell** 打开页面，选择 **Exit Doumi Shell** 退出后台程序。
+- Windows：右键系统托盘图标，选择 **Open Doumi Shell** 打开页面，选择 **Exit Doumi Shell** 退出后台程序。
+- Linux：在运行启动脚本的终端按 `Ctrl+C` 停止程序；使用 systemd 等服务管理器时，请通过对应服务命令停止。
 - 卸载可通过 Windows“设置 → 应用”或开始菜单的 **Uninstall Doumi Shell** 进行；卸载前请先退出程序。
-- 数据保存在 `%LOCALAPPDATA%\DoumiShell\data`，日志位于其中的 `logs` 目录。升级和卸载会保留这些数据。
+- Windows 数据保存在 `%LOCALAPPDATA%\DoumiShell\data`；Linux 默认保存在启动目录的 `data/`，也可通过 `DOUMI_DATA_DIR` 指定。日志位于数据目录的 `logs` 子目录。升级和卸载会保留这些数据。
 - 如需直接备份整个数据目录，请先退出程序，并同时保留数据库和 `master.key`；缺失密钥将无法解密已保存的账户凭据。
 
-网页打不开时，先确认程序已启动并检查 80 端口是否被占用。如需修改端口，可设置环境变量 `DOUMI_PORT` 后重新启动，例如使用 8080 时访问 `http://localhost:8080/`。
+网页打不开时，先确认程序已启动、访问地址和端口正确，并检查防火墙及端口是否被占用。如需修改端口，可设置环境变量 `DOUMI_PORT` 后重新启动，例如使用 8080 时访问 `http://localhost:8080/`。
 
 源码构建和开发说明见 [开发文档](docs/DEVELOPMENT.md)。
