@@ -61,6 +61,17 @@
                 <span class="node-label" :title="nodeTitle(data)">{{ data.label }}</span>
                 <span v-if="nodeSubtitle(data)" class="node-sub">{{ nodeSubtitle(data) }}</span>
               </div>
+              <el-dropdown class="node-actions" trigger="click" @command="(command) => onNodeAction(command, data)" @click.stop>
+                <el-button text circle size="small" title="更多操作" @click.stop><el-icon><MoreFilled /></el-icon></el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="edit">编辑</el-dropdown-item>
+                    <el-dropdown-item v-if="data.nodeType === 'GROUP'" command="host">新建主机</el-dropdown-item>
+                    <el-dropdown-item v-if="data.nodeType === 'HOST'" command="account">新建账户</el-dropdown-item>
+                    <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </div>
           </template>
         </el-tree></el-scrollbar>
@@ -268,7 +279,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Expand, Fold, Folder, Monitor, Plus, Refresh, Search, User } from '@element-plus/icons-vue'
+import { Expand, Fold, Folder, Monitor, MoreFilled, Plus, Refresh, Search, User } from '@element-plus/icons-vue'
 import { managedServer } from '@/composables/useWorkspaceContext'
 import SshTerminal from '@/components/ssh/SshTerminal.vue'
 import SshFilePanel from '@/components/ssh/SshFilePanel.vue'
@@ -670,6 +681,22 @@ function onNodeDblClick(data) {
   else editAccountNode(data)
 }
 
+function onNodeAction(command, data) {
+  selectedNode.value = data
+  if (command === 'edit') {
+    if (data.nodeType === 'GROUP') editGroupNode(data)
+    else if (data.nodeType === 'HOST') editHostNode(data)
+    else editAccountNode(data)
+    return
+  }
+  if (command === 'host') return openAddHost(data.id)
+  if (command === 'account') return openAddAccount(data.id)
+  if (command === 'delete') {
+    loadDetail(data)
+    nextTick(() => confirmDeleteDetail())
+  }
+}
+
 function onAddCommand(cmd) {
   if (cmd === 'group') openAddGroup()
   else if (cmd === 'host') openAddHost(selectedGroupId.value)
@@ -1008,6 +1035,8 @@ async function confirmDeleteDetail() {
   flex: 1;
   min-width: 0;
 }
+.node-actions { margin-left:auto; opacity:0; flex-shrink:0 }
+.tree-node:hover .node-actions, .tree-node:focus-within .node-actions { opacity:1 }
 .node-label {
   display: block;
   font-size: 13px;

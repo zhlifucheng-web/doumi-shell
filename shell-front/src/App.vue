@@ -8,6 +8,9 @@
       <el-scrollbar class="nav-scroll"><nav class="top-nav" aria-label="主导航">
         <router-link v-for="item in navigation" :key="item.path" :to="item.path">{{ item.label }}</router-link>
       </nav></el-scrollbar>
+      <router-link to="/about" class="about-link" title="关于 Doumi Shell">
+        <el-badge is-dot :hidden="!hasUpdate"><el-icon><InfoFilled /></el-icon><span>关于</span></el-badge>
+      </router-link>
       <el-dropdown trigger="click" popper-class="app-theme-dropdown" @command="onThemeCommand">
         <span class="theme-trigger" role="button" tabindex="0">
           <el-icon class="theme-trigger__icon"><component :is="themeTriggerIcon" /></el-icon>
@@ -35,7 +38,7 @@
     </header>
     <main class="app-main">
       <router-view v-slot="{ Component }">
-        <keep-alive include="SshConsole"><component :is="Component" /></keep-alive>
+        <keep-alive><component :is="Component" /></keep-alive>
       </router-view>
     </main>
     <ThemeBackground v-model="backgroundDialog" />
@@ -44,11 +47,12 @@
 
 <script setup>
 import { computed, ref, watchEffect } from 'vue'
-import { ArrowDown, Monitor, Moon, Sunny } from '@element-plus/icons-vue'
+import { ArrowDown, InfoFilled, Monitor, Moon, Sunny } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { managedServer } from '@/composables/useWorkspaceContext'
 import { useBackground } from '@/composables/useBackground'
 import ThemeBackground from '@/components/ThemeBackground.vue'
+import { checkLatestRelease, getLatestRelease, onLatestReleaseChange } from '@/utils/versionRefresh'
 
 const { background, style: backgroundStyle } = useBackground()
 // Teleported dialogs and menus share the same background settings as the workspace.
@@ -58,6 +62,9 @@ watchEffect(() => {
   for(const [name,value] of Object.entries(backgroundStyle.value))root.style.setProperty(name,value)
 })
 const backgroundDialog = ref(false)
+const hasUpdate = ref(Boolean(getLatestRelease()?.newer))
+onLatestReleaseChange(() => { hasUpdate.value = Boolean(getLatestRelease()?.newer) })
+checkLatestRelease()
 const serverTitle = computed(()=>managedServer.value ? `${managedServer.value.username ? managedServer.value.username+'@' : ''}${managedServer.value.name} · ${managedServer.value.address}:${managedServer.value.port}` : '')
 
 const { preference, themeLabel, setPreference } = useTheme()
@@ -116,6 +123,9 @@ function onThemeCommand(cmd) {
 .top-nav a { white-space: nowrap; text-decoration: none; color: var(--el-text-color-regular); padding: 9px 12px; border-radius: 6px; font-size: 14px; }
 .top-nav a:hover { background: var(--el-fill-color-light); }
 .top-nav a.router-link-active { background: var(--el-color-primary-light-9); color: var(--el-color-primary); font-weight: 600; }
+.about-link { flex-shrink:0; color:var(--el-text-color-regular); text-decoration:none; padding:6px 8px; border-radius:6px; font-size:13px }
+.about-link:hover,.about-link.router-link-active { background:var(--el-fill-color-light); color:var(--el-color-primary) }
+.about-link .el-badge { display:inline-flex; align-items:center; gap:4px }
 @media (max-width: 1200px) { .app-header { flex-wrap: wrap; } .nav-scroll { order: 3; flex-basis: 100%; } .managed-server{margin-right:auto} }
 .tagline {
   font-size: 13px;

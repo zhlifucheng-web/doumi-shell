@@ -39,6 +39,7 @@ try {
     }
     Copy-Item -LiteralPath (Join-Path $Root 'shell-end/config/application.yml.example') -Destination (Join-Path $outputPath 'config.example.yml') -Force
     Copy-Item -LiteralPath (Join-Path $Root 'README.md') -Destination $outputPath -Force
+    Copy-Item -LiteralPath (Join-Path $Root 'LICENSE') -Destination (Join-Path $outputPath 'LICENSE') -Force
     Copy-Item -LiteralPath (Join-Path $Root 'docs') -Destination $outputPath -Recurse -Force
     Write-Host "Release ready: $outputPath"
 } finally { Set-Location $originalLocation }

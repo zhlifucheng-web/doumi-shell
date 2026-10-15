@@ -23,19 +23,19 @@ Doumi Shell 是一款支持 Windows 和 Linux 的 SSH 服务器管理工具。�
 
 ### Windows
 
-1. 从 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `Doumi Shell-1.0.15.msi` 并双击安装。
+1. 从 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `Doumi Shell-1.0.16.msi` 并双击安装。
 2. 选择安装目录，按需创建桌面和开始菜单快捷方式。
 3. 安装完成时勾选 **Open Doumi Shell in browser now**，或稍后通过快捷方式启动。
 4. 程序就绪后自动打开浏览器，也可以访问 **http://localhost/**。
 
 ### Linux
 
-1. 在 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `doumi-shell-1.0.15-linux-x64.tar.gz`。
+1. 在 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `doumi-shell-1.0.16-linux-x64.tar.gz`。
 2. 解压并进入目录，确认已安装 Java 17，然后运行启动脚本：
 
    ```bash
-   tar -xzf doumi-shell-1.0.15-linux-x64.tar.gz
-   cd doumi-shell-1.0.15
+   tar -xzf doumi-shell-1.0.16-linux-x64.tar.gz
+   cd doumi-shell-1.0.16
    chmod +x run-linux.sh
    ./run-linux.sh
    ```
@@ -133,3 +133,7 @@ Linux 部署后可在局域网内使用。请在服务器防火墙放行所配�
 网页打不开时，先确认程序已启动、访问地址和端口正确，并检查防火墙及端口是否被占用。如需修改端口，可设置环境变量 `DOUMI_PORT` 后重新启动，例如使用 8080 时访问 `http://localhost:8080/`。
 
 源码构建和开发说明见 [开发文档](docs/DEVELOPMENT.md)。
+
+## 开源协议
+
+本项目采用 [Doumi Shell Non-Commercial License](LICENSE)。允许个人、教育、研究及其他非盈利用途使用、修改和分发；商业使用、销售、再授权或用于商业产品需要事先取得版权方书面许可。

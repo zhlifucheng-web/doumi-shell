@@ -50,6 +50,7 @@ try {
     New-Item -ItemType Directory -Force -Path $inputDirectory | Out-Null
     Copy-Item -LiteralPath $jarPath -Destination (Join-Path $inputDirectory 'doumi-shell.jar') -Force
     Copy-Item -LiteralPath (Join-Path $Root 'README.md') -Destination $inputDirectory -Force
+    Copy-Item -LiteralPath (Join-Path $Root 'LICENSE') -Destination $inputDirectory -Force
     Copy-Item -LiteralPath (Join-Path $Root 'docs') -Destination $inputDirectory -Recurse -Force
     $resourceDirectory = Join-Path $buildDirectory 'jpackage-resources'
     & (Join-Path $PSScriptRoot 'prepare-msi-resources.ps1') -JdkHome $JdkHome -Destination $resourceDirectory
