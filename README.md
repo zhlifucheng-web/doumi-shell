@@ -23,19 +23,19 @@ Windows 安装包自带运行环境，Linux 压缩包需要安装 Java 17；两�
 
 ### Windows
 
-1. 从 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `Doumi Shell-1.0.17.msi` 并双击安装。
+1. 从 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `Doumi Shell-1.0.18.msi` 并双击安装。
 2. 选择安装目录，按需创建桌面和开始菜单快捷方式。
 3. 安装完成时勾选 **Open Doumi Shell in browser now**，或稍后通过快捷方式启动。
 4. 程序就绪后自动打开浏览器，也可以访问 **http://localhost/**。
 
 ### Linux
 
-1. 在 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `doumi-shell-1.0.17-linux-x64.tar.gz`。
+1. 在 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `doumi-shell-1.0.18-linux-x64.tar.gz`。
 2. 解压并进入目录，确认已安装 Java 17，然后运行启动脚本：
 
    ```bash
-   tar -xzf doumi-shell-1.0.17-linux-x64.tar.gz
-   cd doumi-shell-1.0.17
+   tar -xzf doumi-shell-1.0.18-linux-x64.tar.gz
+   cd doumi-shell-1.0.18
    chmod +x run-linux.sh
    ./run-linux.sh
    ```
@@ -51,6 +51,14 @@ DOUMI_DATA_DIR=/var/lib/doumi-shell/data DOUMI_PORT=8080 ./run-linux.sh
 Linux 部署后可在局域网内使用。请在服务器防火墙放行所配置的 TCP 端口，然后让同一局域网设备访问 `http://服务器局域网IP:8080/`；使用默认端口时访问 `http://服务器局域网IP/`。请只在可信网络中开放管理页面。
 
 默认使用 80 端口，请确保没有其他程序占用。重复启动会打开已运行的页面。Windows 升级时先从系统托盘退出 Doumi Shell，再运行新安装包；安装程序会识别原安装目录。升级后网页资源会自动更新。
+
+### 检查更新与升级
+
+关于页面的「检查更新」由运行 Doumi Shell 的机器请求 Gitee 最新发布版本，比较本机程序版本后显示红点和对应的 Windows / Linux 下载入口。它不会自动下载、替换或安装程序；局域网访问者需要在部署机器上完成升级，仅刷新浏览器不会升级服务端。
+
+网络超时、Gitee 限流、版本信息无效或附件未上传完整时，会明确显示「检查更新失败，无法确认是否为最新版本」，不会误报「已是最新版本」。无论检查是否成功，页面都保留直接打开 Gitee 下载页的入口。
+
+Windows：等待传输和脚本任务结束，从系统托盘退出旧程序，运行新版 MSI 后重新启动。Linux：停止旧进程，更新程序文件，保留原数据目录、配置及启动参数，再用 Java 17 启动。程序升级后重新打开页面以加载新版资源。
 
 ## 第一次连接服务器
 

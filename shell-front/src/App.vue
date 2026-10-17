@@ -64,7 +64,7 @@ watchEffect(() => {
 const backgroundDialog = ref(false)
 const hasUpdate = ref(Boolean(getLatestRelease()?.newer))
 onLatestReleaseChange(() => { hasUpdate.value = Boolean(getLatestRelease()?.newer) })
-checkLatestRelease()
+checkLatestRelease().catch(() => { /* The About page reports failures and always offers manual downloads. */ })
 const serverTitle = computed(()=>managedServer.value ? `${managedServer.value.username ? managedServer.value.username+'@' : ''}${managedServer.value.name} · ${managedServer.value.address}:${managedServer.value.port}` : '')
 
 const { preference, themeLabel, setPreference } = useTheme()

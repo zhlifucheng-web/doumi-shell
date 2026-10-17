@@ -1,43 +1,38 @@
 import release from '../../public/version.json'
+import { hasNewerVersion as compareVersions, requestLatestRelease } from './releaseCheck'
 
 export const appVersion = release.version
 export const repositoryUrl = 'https://gitee.com/hahadoumi/web-shell'
 export const releaseUrl = `${repositoryUrl}/releases`
 
-let latestVersion = null
-let latestReleaseUrl = releaseUrl
+let latestResult = null
+let pendingCheck = null
+let pendingRefresh = false
 const listeners = new Set()
 
 export function hasNewerVersion(version, current = appVersion) {
-  const parse = (value) => String(value || '').split('.').map((part) => Number.parseInt(part, 10) || 0)
-  const next = parse(version)
-  const now = parse(current)
-  for (let i = 0; i < Math.max(next.length, now.length); i += 1) {
-    if ((next[i] || 0) !== (now[i] || 0)) return (next[i] || 0) > (now[i] || 0)
-  }
-  return false
+  return compareVersions(version, current)
 }
 
-export async function checkLatestRelease() {
-  try {
-    const response = await fetch('https://gitee.com/api/v5/repos/hahadoumi/web-shell/releases/latest', {
-      cache: 'no-store', signal: AbortSignal.timeout(5000)
-    })
-    if (!response.ok) return null
-    const releaseInfo = await response.json()
-    const tag = String(releaseInfo.tag_name || '').replace(/^v/, '')
-    if (!tag) return null
-    latestVersion = tag
-    latestReleaseUrl = releaseInfo.html_url || `${repositoryUrl}/releases`
-    listeners.forEach((listener) => listener())
-    return { version: tag, url: latestReleaseUrl, newer: hasNewerVersion(tag) }
-  } catch {
-    return null
+export function checkLatestRelease({ refresh = false } = {}) {
+  if (pendingCheck) {
+    if (!refresh || pendingRefresh) return pendingCheck
+    // A user-requested check must not reuse a background response served from the short server cache.
+    return pendingCheck.then(() => checkLatestRelease({ refresh: true }), () => checkLatestRelease({ refresh: true }))
   }
+  pendingRefresh = refresh
+  pendingCheck = requestLatestRelease(appVersion, {
+    apiBase: (import.meta.env.VITE_API_BASE || '').replace(/\/$/, ''), refresh
+  }).then(result => {
+    latestResult = result
+    listeners.forEach((listener) => listener())
+    return result
+  }).finally(() => { pendingCheck = null })
+  return pendingCheck
 }
 
 export function getLatestRelease() {
-  return latestVersion ? { version: latestVersion, url: latestReleaseUrl, newer: hasNewerVersion(latestVersion) } : null
+  return latestResult
 }
 
 export function onLatestReleaseChange(listener) {
