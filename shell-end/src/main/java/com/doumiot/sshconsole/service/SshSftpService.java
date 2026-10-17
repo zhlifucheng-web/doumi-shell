@@ -14,14 +14,21 @@ import lombok.extern.slf4j.Slf4j;
 import net.schmizz.sshj.sftp.FileAttributes;
 import net.schmizz.sshj.sftp.FileMode;
 import net.schmizz.sshj.sftp.RemoteResourceInfo;
+import net.schmizz.sshj.sftp.RemoteFile;
 import net.schmizz.sshj.sftp.SFTPClient;
 import net.schmizz.sshj.sftp.SFTPException;
 import org.springframework.stereotype.Service;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.annotation.Resource;
 import java.io.IOException;
+import java.io.FilterInputStream;
+import java.io.InputStream;
+import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -101,28 +108,38 @@ public class SshSftpService {
         }
     }
 
-    public DownloadPayload download(String sessionToken, String path) throws IOException {
-        SshSessionRegistry.SessionEntry entry = sessionRegistry.get(sessionToken);
+    /** The response owns these resources until its stream is closed. */
+    public ResponseEntity<InputStreamResource> streamDownload(String token, String path) throws IOException {
+        SshSessionRegistry.SessionEntry entry = sessionRegistry.get(token);
         String resolved = SshSftpPathResolver.resolve(path, entry.getDefaultCwd());
-        try (SFTPClient sftp = openSftp(entry)) {
-            if (!sftp.type(resolved).equals(net.schmizz.sshj.sftp.FileMode.Type.REGULAR)) {
-                throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "仅支持下载普通文件");
-            }
-            long size = sftp.stat(resolved).getSize();
-            if (size > properties.getUploadMaxSizeMb() * 1024L * 1024L) {
-                throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY,
-                        "文件过大，超过上传/下载限制 " + properties.getUploadMaxSizeMb() + " MB");
-            }
-            Path tmp = Files.createTempFile("ssh-sftp-dl-", ".bin");
-            try {
-                sftp.get(resolved, tmp.toString());
-                DownloadPayload payload = new DownloadPayload();
-                payload.setFilename(fileNameOf(resolved));
-                payload.setBytes(Files.readAllBytes(tmp));
-                return payload;
-            } finally {
-                Files.deleteIfExists(tmp);
-            }
+        SFTPClient sftp = openSftp(entry);
+        RemoteFile remote = null;
+        try {
+            if (sftp.type(resolved) != FileMode.Type.REGULAR) throw new IOException("仅支持下载普通文件");
+            remote = sftp.open(resolved);
+            long size = remote.length();
+            final RemoteFile opened = remote;
+            InputStream stream = new FilterInputStream(remote.new RemoteFileInputStream()) {
+                private boolean closed;
+                @Override public int read(byte[] bytes, int offset, int length) throws IOException {
+                    sessionRegistry.touchSession(token);
+                    return super.read(bytes, offset, length);
+                }
+                @Override public synchronized void close() throws IOException {
+                    if (closed) return;
+                    closed = true;
+                    try { super.close(); } finally { try { opened.close(); } finally { sftp.close(); } }
+                }
+            };
+            String name = URLEncoder.encode(fileNameOf(resolved), "UTF-8").replace("+", "%20");
+            return ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename*=UTF-8''" + name)
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .contentLength(size).body(new InputStreamResource(stream));
+        } catch (IOException | RuntimeException e) {
+            try { if (remote != null) remote.close(); } catch (IOException cleanup) { e.addSuppressed(cleanup); }
+            try { sftp.close(); } catch (IOException cleanup) { e.addSuppressed(cleanup); }
+            throw e;
         }
     }
 
@@ -290,9 +307,4 @@ public class SshSftpService {
         private List<FileEntry> items;
     }
 
-    @Data
-    public static class DownloadPayload {
-        private String filename;
-        private byte[] bytes;
-    }
 }

@@ -29,14 +29,8 @@
           <el-button size="small" @click="navigateToPath">前往</el-button>
           <el-button size="small" :loading="loading" @click="refresh">刷新</el-button>
           <el-button size="small" type="primary" @click="showMkdir = true">新建目录</el-button>
-          <el-upload
-            class="upload-btn"
-            :show-file-list="false"
-            multiple
-            :http-request="uploadRequest"
-          >
-            <el-button size="small" type="success">上传文件</el-button>
-          </el-upload>
+          <input ref="uploadInput" type="file" hidden multiple @change="uploadFiles" />
+          <el-button size="small" type="success" @click="uploadInput.click()">上传文件</el-button>
           <FolderTransfer ref="folderTransfer" :session-token="sessionToken" :path="currentPath" @uploaded="refresh" />
         </div>
       </div>
@@ -91,6 +85,26 @@
       </el-table>
     </template>
 
+    <p v-if="transferHistoryWarning" role="alert" class="transfer-error">{{ transferHistoryWarning }}</p>
+    <section v-if="transfers.length" class="transfer-list" aria-label="文件传输列表">
+      <div class="transfer-heading"><strong>文件传输（{{ transfers.length }}）</strong><el-button text size="small" @click="clearFinishedTransfers">清除已结束</el-button></div>
+      <p class="transfer-hint">切换页面可继续传输。刷新或关闭页面会中断页面内传输，重开后仅保留最近 200 条历史记录和最后进度，无法自动续传。SSH 断开后需重新发起。浏览器接管的下载请在浏览器下载列表查看。</p>
+      <el-table :data="transfers" size="small" max-height="240">
+        <el-table-column prop="direction" label="方向" width="65" />
+        <el-table-column label="账户" width="80"><template #default="{row}">#{{ row.accountId }}</template></el-table-column>
+        <el-table-column prop="name" label="文件" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="path" label="远程目录" min-width="140" show-overflow-tooltip />
+        <el-table-column label="进度" min-width="180"><template #default="{row}">
+          <span v-if="row.restored" class="transfer-hint">历史记录 · 最后记录进度</span>
+          <template v-if="!['已交给浏览器','交给浏览器中'].includes(row.status)">
+            <el-progress :percentage="row.status === '已完成' ? 100 : Math.min(99, Math.floor(row.loaded / Math.max(row.total,1) * 100))" :status="['失败','无法恢复'].includes(row.status) ? 'exception' : row.status === '已完成' ? 'success' : undefined" />
+            <span>{{ formatSize(row.loaded) }} / {{ formatSize(row.total) }}<template v-if="row.status === '传输中'"> · {{ formatSize(row.speed) }}/s</template></span>
+          </template><span v-else>请在浏览器下载列表查看</span>
+        </template></el-table-column>
+        <el-table-column label="状态" min-width="130"><template #default="{row}">{{ row.status }}<span v-if="row.error" class="transfer-error">{{ row.error }}</span></template></el-table-column>
+        <el-table-column label="操作" width="70"><template #default="{row}"><el-button v-if="['等待中','传输中'].includes(row.status)" link type="danger" @click="row.cancel()">取消</el-button></template></el-table-column>
+      </el-table>
+    </section>
     <el-dialog v-model="showMkdir" title="新建目录" width="400px" destroy-on-close @closed="mkdirName = ''"><el-scrollbar max-height="65vh">
       <el-input v-model="mkdirName" placeholder="目录名" maxlength="255" @keyup.enter="doMkdir" />
       </el-scrollbar><template #footer>
@@ -113,8 +127,10 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Document, Folder } from '@element-plus/icons-vue'
-import { sftpDelete, sftpDownload, sftpList, sftpMkdir, sftpRename, sftpUpload } from '@/api/sshConsole'
+import { sftpDelete, sftpDownloadLarge, sftpList, sftpMkdir, sftpRename, sftpUploadLarge } from '@/api/sshConsole'
+import { transfers, transferHistoryWarning, enqueueTransfer, delegateBrowserDownload, clearFinishedTransfers } from '@/composables/useTransfers'
 import { fileLocation } from '@/composables/useWorkspaceContext'
+import { transferErrorMessage } from '@/composables/transferHistory'
 import FolderTransfer from './FolderTransfer.vue'
 
 const props = defineProps({
@@ -131,6 +147,7 @@ const currentPath = ref('')
 const pathInput = ref('')
 const items = ref([])
 const loading = ref(false)
+const uploadInput = ref()
 const folderTransfer = ref()
 const showMkdir = ref(false)
 const mkdirName = ref('')
@@ -146,10 +163,12 @@ const breadcrumbs = computed(() => {
   return p.split('/').filter(Boolean)
 })
 
-let handledLocation=null,lastToken=''
+let handledLocation=null,lastToken='',listRequest=0
 watch(
   () => [props.sessionToken, props.active, fileLocation.value],
   ([tok, active, location]) => {
+    ++listRequest // Invalidate a response even when the next view has no session.
+    loading.value = false
     if (!active) return
     if (tok) {
       if(tok!==lastToken){currentPath.value='';pathInput.value=props.defaultCwd||'';lastToken=tok}
@@ -196,21 +215,24 @@ function isSessionExpiredError(err) {
 
 async function refresh() {
   if (!props.sessionToken) return
+  const request = ++listRequest, token = props.sessionToken
   loading.value = true
   try {
     const pathArg = currentPath.value || pathInput.value || ''
-    const data = await sftpList(props.sessionToken, pathArg)
+    const data = await sftpList(token, pathArg)
+    if (request !== listRequest || token !== props.sessionToken) return
     currentPath.value = data.path || currentPath.value
     pathInput.value = currentPath.value
     items.value = data.items || []
   } catch (err) {
+    if (request !== listRequest || token !== props.sessionToken) return
     items.value = []
     if (isSessionExpiredError(err)) {
       ElMessage.warning('SSH 会话已失效，请重新建立文件会话或打开终端')
       emit('session-invalid')
     }
   } finally {
-    loading.value = false
+    if (request === listRequest) loading.value = false
   }
 }
 
@@ -221,30 +243,33 @@ function onRowDblClick(row) {
 async function downloadRow(row) {
   const base = currentPath.value || '/'
   const remote = base.endsWith('/') ? base + row.name : `${base}/${row.name}`
+  const token = props.sessionToken
+  const accountId = props.accountId
   try {
-    await sftpDownload(props.sessionToken, remote, row.name)
-    ElMessage.success('下载已开始')
-  } catch {
-    /* apiHandler 已提示 */
+    // Ask for permission in the original click event, before queueing any work.
+    const handle = window.showSaveFilePicker ? await window.showSaveFilePicker({ suggestedName: row.name }) : null
+    if (!handle) {
+      delegateBrowserDownload({ name: row.name, path: base, total: row.size, accountId,
+        run: () => sftpDownloadLarge(token, remote) })
+      return
+    }
+    enqueueTransfer({ name: row.name, direction: '下载', path: base, total: row.size, accountId,
+      run: options => sftpDownloadLarge(token, remote, { ...options, handle }) })
+  } catch (error) {
+    if (error.name !== 'AbortError') ElMessage.error(transferErrorMessage(error, '下载'))
   }
 }
 
-/** Element Plus 自定义上传：拖拽与点击均通过 options.file 拿到原始 File */
-async function uploadRequest(options) {
-  const file = options?.file
-  if (!file || !props.sessionToken) {
-    options?.onError?.(new Error('请选择要上传的文件'))
-    return
-  }
+function uploadFiles(event) {
+  const files = Array.from(event.target.files || [])
+  event.target.value = '' // File references belong to the queue and are released when each task ends.
+  if (!props.sessionToken) return
   const dir = currentPath.value || pathInput.value || ''
-  try {
-    await sftpUpload(props.sessionToken, dir, file)
-    ElMessage.success(`已上传 ${file.name}`)
-    options?.onSuccess?.({})
-    await refresh()
-  } catch (err) {
-    options?.onError?.(err)
-  }
+  const token = props.sessionToken
+  for (const file of files) enqueueTransfer({ name: file.name, direction: '上传', path: dir, total: file.size, accountId: props.accountId, run: async transferOptions => {
+    await sftpUploadLarge(token, dir, file, transferOptions)
+    if (props.sessionToken === token && currentPath.value === dir) void refresh()
+  } })
 }
 
 function remotePathForRow(row) {
@@ -377,6 +402,8 @@ function formatMtime(sec) {
   flex: 1;
   min-height: 0;
 }
+.transfer-list{flex-shrink:0;border-top:1px solid var(--el-border-color-light);padding:8px;max-height:340px;overflow:auto}
+.transfer-heading{display:flex;align-items:center;justify-content:space-between}.transfer-hint{font-size:12px;color:var(--el-text-color-secondary);margin:4px 0 8px}.transfer-error{display:block;color:var(--el-color-danger);overflow-wrap:anywhere}
 .row-ico {
   vertical-align: middle;
   margin-right: 4px;

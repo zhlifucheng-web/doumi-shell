@@ -4,6 +4,7 @@ import com.doumiot.spring.result.NoWrap;
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
 import com.doumiot.sshconsole.service.SshSftpService;
 import com.doumiot.sshconsole.service.SshFolderTransferService;
+import com.doumiot.sshconsole.service.SshUploadService;
 import org.springframework.core.io.InputStreamResource;
 import lombok.Data;
 import org.springframework.http.HttpHeaders;
@@ -24,8 +25,6 @@ import java.io.IOException;
 import java.io.FilterInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
 
 @SshConsoleEnabled
 @Validated
@@ -36,6 +35,7 @@ public class SshSftpController {
     @Resource
     private SshSftpService sshSftpService;
     @Resource private SshFolderTransferService folderTransfer;
+    @Resource private SshUploadService uploads;
 
     @GetMapping("/folder/limits")
     public long folderLimits() { return folderTransfer.maxBytes(); }
@@ -88,23 +88,36 @@ public class SshSftpController {
 
     @NoWrap
     @GetMapping("/download")
-    public ResponseEntity<byte[]> download(
+    public ResponseEntity<InputStreamResource> download(
             @RequestParam @NotBlank String sessionToken,
             @RequestParam @NotBlank String path) throws IOException {
-        SshSftpService.DownloadPayload payload = sshSftpService.download(sessionToken, path);
-        String filename = payload.getFilename();
-        String encoded;
-        try {
-            encoded = URLEncoder.encode(filename, "UTF-8").replace("+", "%20");
-        } catch (UnsupportedEncodingException e) {
-            encoded = filename;
-        }
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=\"" + filename + "\"; filename*=UTF-8''" + encoded)
-                .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                .contentLength(payload.getBytes().length)
-                .body(payload.getBytes());
+        return sshSftpService.streamDownload(sessionToken, path);
+    }
+
+    @PostMapping("/upload/start")
+    public String startUpload(@RequestParam @NotBlank String sessionToken,
+            @RequestParam(required=false) String path, @RequestParam @NotBlank String name,
+            @RequestParam long total) throws IOException {
+        return uploads.start(sessionToken, path, name, total);
+    }
+
+    @PostMapping("/upload/chunk")
+    public void uploadChunk(@RequestParam @NotBlank String sessionToken,
+            @RequestParam @NotBlank String uploadId,
+            @RequestParam long offset, @RequestParam("file") MultipartFile file) throws IOException {
+        uploads.chunk(sessionToken, uploadId, offset, file);
+    }
+
+    @PostMapping("/upload/complete")
+    public void completeUpload(@RequestParam @NotBlank String sessionToken,
+            @RequestParam @NotBlank String uploadId) throws IOException {
+        uploads.complete(sessionToken, uploadId);
+    }
+
+    @PostMapping("/upload/cancel")
+    public void cancelUpload(@RequestParam @NotBlank String sessionToken,
+            @RequestParam @NotBlank String uploadId) throws IOException {
+        uploads.cancel(sessionToken, uploadId);
     }
 
     @PostMapping("/upload")

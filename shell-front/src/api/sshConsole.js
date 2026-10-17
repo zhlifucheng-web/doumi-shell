@@ -131,6 +131,85 @@ export function sftpUpload(sessionToken, path, file) {
   return post(`${BASE}/sftp/upload?${q.toString()}`, form, { showSuccess: false })
 }
 
+export async function sftpUploadLarge(sessionToken, path, file, { signal, onProgress, onCommitting } = {}) {
+  const chunkSize = 4 * 1024 * 1024
+  let uploadId
+  const request = (action, params, body = null, requestSignal = signal, timeout = 0) => handleApiResponse(
+    apiClient.post(`${BASE}/sftp/upload/${action}`, body, {
+      params: { sessionToken, ...params }, timeout, signal: requestSignal
+    }), { showSuccess: false, showFailure: false })
+  try {
+    signal?.throwIfAborted()
+    uploadId = await request('start', { path, name: file.name, total: file.size })
+    for (let offset = 0; offset < file.size; offset += chunkSize) {
+      signal?.throwIfAborted()
+      const end = Math.min(file.size, offset + chunkSize)
+      const form = new FormData()
+      form.append('file', file.slice(offset, end), file.name)
+      await request('chunk', { uploadId, offset }, form)
+      onProgress?.(end, file.size)
+    }
+    signal?.throwIfAborted()
+    // Final rename is a commit: do not interrupt it and report a successful replacement as cancelled.
+    onCommitting?.()
+    await request('complete', { uploadId }, null, null)
+  } catch (error) {
+    if (uploadId) {
+      try { await request('cancel', { uploadId }, null, null, 15000) }
+      catch { error.cleanupWarning = '临时文件清理未确认，服务端将重试；连接断开时可能残留 .doumi-upload-*.part' }
+    }
+    throw error
+  }
+}
+
+export async function sftpDownloadLarge(sessionToken, path, { handle, signal, onProgress, onCommitting } = {}) {
+  const url = new URL(`${API_BASE}${BASE}/sftp/download`, window.location.origin)
+  url.search = new URLSearchParams({ sessionToken, path }).toString()
+  if (!handle) {
+    // Native downloads stream to disk without retaining a Blob in JavaScript memory.
+    const link = document.createElement('a')
+    link.href = url.href
+    link.download = ''
+    link.target = '_blank'
+    link.rel = 'noopener'
+    link.click()
+    return 'browser'
+  }
+  signal?.throwIfAborted()
+  const response = await fetch(url, { signal })
+  if (!response.ok || response.headers.get('content-type')?.includes('json')) {
+    let message = '下载失败'
+    try { const error = await response.json(); message = error.externMessage || error.message || message } catch { /* Invalid error body. */ }
+    throw new Error(message)
+  }
+  const total = Number(response.headers.get('content-length')) || 0
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('浏览器无法读取下载流')
+  let writable, loaded = 0
+  try {
+    writable = await handle.createWritable()
+    while (true) {
+      signal?.throwIfAborted()
+      const { done, value } = await reader.read()
+      if (done) break
+      await writable.write(value)
+      loaded += value.byteLength
+      onProgress?.(loaded, total)
+    }
+    signal?.throwIfAborted()
+    if (total && loaded !== total) throw new Error('下载中断，文件大小不完整')
+    onCommitting?.()
+    await writable.close()
+    return 'done'
+  } catch (error) {
+    try { await writable?.abort() } catch { /* Preserve original error. */ }
+    throw error
+  } finally {
+    await reader.cancel().catch(() => {})
+    reader.releaseLock()
+  }
+}
+
 /** 下载为浏览器保存（@NoWrap 二进制响应） */
 export function fetchHostMetrics(sessionToken, { signal } = {}) {
   return handleApiResponse(apiClient.get(`${BASE}/host/metrics`, {

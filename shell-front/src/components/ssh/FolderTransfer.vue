@@ -5,6 +5,7 @@
     <el-radio-group v-model="compressed"><el-radio :label="false">逐文件上传</el-radio><el-radio :label="true">压缩上传</el-radio></el-radio-group>
     <p class="hint">保留文件夹名称和层级。压缩上传会先在本机生成 ZIP，传到 Doumi Shell 后通过 SFTP 还原，无需服务器安装解压工具。</p>
     <p class="hint">同名文件会覆盖；中断后已传输的文件保留。单次最多 10000 项、64 层，总大小受服务端传输上限限制（默认 512 MB）。</p>
+    <p class="hint">刷新或关闭页面后无法恢复文件夹传输或进度，请检查已完成的文件后重新选择文件夹上传。</p>
     <p v-if="!canPick" class="hint">当前浏览器使用文件夹文件选择器，无法读取空目录；若需保留空目录，请用 Chrome / Edge 从 localhost 打开。</p>
     <template #footer><el-button :disabled="busy" @click="showUpload=false">取消</el-button><el-button type="primary" :loading="busy" @click="chooseUpload">选择文件夹并上传</el-button></template>
   </el-dialog>
@@ -12,6 +13,7 @@
     <el-radio-group v-model="compressed"><el-radio :label="true">压缩下载（ZIP）</el-radio><el-radio :label="false">{{ canPick ? '直接保存文件夹' : '无压缩 ZIP' }}</el-radio></el-radio-group>
     <p class="hint">{{ canPick ? '直接保存会选择本机目录并保留文件夹层级，已有同名文件会覆盖。' : '此浏览器不支持直接写入本机目录，无压缩方式使用 ZIP 容器保留文件夹层级，解压后即可使用。' }}</p>
     <p class="hint">支持空目录和中文名称，不跟随符号链接。传输中断后，已保存的文件保留。</p>
+    <p class="hint">刷新或关闭页面后无法恢复文件夹传输或进度，请检查本机已保存的文件后重新下载。</p>
     <template #footer><el-button :disabled="busy" @click="showDownload=false">取消</el-button><el-button type="primary" :loading="busy" @click="download">选择并下载</el-button></template>
   </el-dialog>
   <el-dialog :model-value="busy" title="文件夹传输" width="480px" append-to-body :show-close="false" :close-on-click-modal="false" :close-on-press-escape="false">
@@ -19,13 +21,19 @@
   </el-dialog>
 </template>
 <script setup>
-import { ref } from 'vue'
+import { ref, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
-import { sftpBlob, sftpDownload, sftpFolderTree, sftpFolderUpload, sftpFolderLimit, sftpFolderMkdir } from '@/api/sshConsole'
+import { sftpDownloadLarge, sftpDownload, sftpFolderTree, sftpFolderUpload, sftpFolderLimit, sftpFolderMkdir } from '@/api/sshConsole'
 const props=defineProps({sessionToken:String,path:String})
 const emit=defineEmits(['uploaded'])
 const canPick=!!window.showDirectoryPicker
 const folderInput=ref(),showUpload=ref(false),showDownload=ref(false),compressed=ref(true),downloadTarget=ref(null),busy=ref(false),percent=ref(0),status=ref('')
+function warnBeforeLeave(event){event.preventDefault();event.returnValue=''}
+watch(busy, value => {
+  if(value)window.addEventListener('beforeunload',warnBeforeLeave)
+  else window.removeEventListener('beforeunload',warnBeforeLeave)
+},{flush:'sync'})
+onBeforeUnmount(()=>window.removeEventListener('beforeunload',warnBeforeLeave))
 const join=(base,name)=>`${base.replace(/\/$/,'')}/${name}`
 function openDownload(row){if(busy.value)return;downloadTarget.value={name:row.name,path:join(props.path,row.name)};showDownload.value=true}
 defineExpose({openDownload})
@@ -87,9 +95,8 @@ async function download(){
         status.value=`正在保存 ${entry.path}`
         if(entry.directory)await dir.getDirectoryHandle(parts.at(-1),{create:true})
         else {
-          const blob=await sftpBlob(token,join(tree.path,entry.path))
-          const handle=await dir.getFileHandle(parts.at(-1),{create:true}),writable=await handle.createWritable()
-          try{await writable.write(blob);await writable.close()}catch(e){await writable.abort();throw e}
+          const handle=await dir.getFileHandle(parts.at(-1),{create:true})
+          await sftpDownloadLarge(token,join(tree.path,entry.path),{handle})
         }
         percent.value=Math.round((i+1)/Math.max(1,tree.items.length)*100)
       }
