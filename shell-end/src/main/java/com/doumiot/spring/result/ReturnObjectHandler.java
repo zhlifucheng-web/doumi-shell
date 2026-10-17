@@ -1,7 +1,6 @@
 package com.doumiot.spring.result;
 
-import com.google.gson.Gson;
-import com.doumiot.spring.exception.BusinessRuntimeException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.HttpStatus;
@@ -29,7 +28,8 @@ public class ReturnObjectHandler implements ResponseBodyAdvice<Object> {
     private static final int HTTP_SUCCESS_START = HttpStatus.OK.value();
     private static final int HTTP_SUCCESS_END = HttpStatus.MULTIPLE_CHOICES.value();
 
-    private final Gson gson = new Gson();
+    // Use the same getter-based contract as normal JSON responses, including Result.isSuccess().
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
      * 判断是否需要对返回结果进行包装
@@ -83,6 +83,7 @@ public class ReturnObjectHandler implements ResponseBodyAdvice<Object> {
         // 处理String类型（特殊处理避免类型转换问题）
         if (body instanceof String) {
             log.trace("String类型返回值包装, 路径: {}, 方法: {}", requestPath, methodInfo);
+            response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
             return handleStringResult((String) body, requestPath, methodInfo);
         }
 
@@ -126,13 +127,10 @@ public class ReturnObjectHandler implements ResponseBodyAdvice<Object> {
     private Object handleStringResult(Result result, String requestPath, String methodInfo) {
 
         try {
-            return gson.toJson(result);
+            return objectMapper.writeValueAsString(result);
         } catch (Exception e) {
             log.error("String类型结果序列化失败, 路径: {}, 方法: {}", requestPath, methodInfo, e);
-            return gson.toJson(Result.failure(
-                    BusinessRuntimeException.ServerExceptionEnum.SERIALIZATION_ERROR,
-                    "响应序列化失败: " + e.getMessage()
-            ));
+            throw new IllegalStateException("响应序列化失败", e);
         }
     }
 

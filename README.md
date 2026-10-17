@@ -23,19 +23,19 @@ Windows 安装包自带运行环境，Linux 压缩包需要安装 Java 17；两�
 
 ### Windows
 
-1. 从 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `Doumi Shell-1.0.18.msi` 并双击安装。
+1. 从 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `Doumi Shell-1.0.19.msi` 并双击安装。
 2. 选择安装目录，按需创建桌面和开始菜单快捷方式。
 3. 安装完成时勾选 **Open Doumi Shell in browser now**，或稍后通过快捷方式启动。
 4. 程序就绪后自动打开浏览器，也可以访问 **http://localhost/**。
 
 ### Linux
 
-1. 在 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `doumi-shell-1.0.18-linux-x64.tar.gz`。
+1. 在 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `doumi-shell-1.0.19-linux-x64.tar.gz`。
 2. 解压并进入目录，确认已安装 Java 17，然后运行启动脚本：
 
    ```bash
-   tar -xzf doumi-shell-1.0.18-linux-x64.tar.gz
-   cd doumi-shell-1.0.18
+   tar -xzf doumi-shell-1.0.19-linux-x64.tar.gz
+   cd doumi-shell-1.0.19
    chmod +x run-linux.sh
    ./run-linux.sh
    ```
