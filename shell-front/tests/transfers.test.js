@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { enqueueTransfer, delegateBrowserDownload, transfers, clearFinishedTransfers } from '../src/composables/useTransfers.js'
+import { enqueueTransfer, delegateBrowserDownload, transfers, clearFinishedTransfers, transferSessionId } from '../src/composables/useTransfers.js'
+import { transfersForSession } from '../src/composables/transferHistory.js'
 
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 async function settled(task) {
@@ -83,4 +84,33 @@ test('a rejected final commit explicitly requires result verification', async ()
   await settled(task)
   assert.equal(task.status, '结果待确认')
   assert.match(task.error, /提交结果未确认/)
+})
+
+test('connections of the same account and different accounts get isolated opaque session ids', () => {
+  const first = transferSessionId(1, 'private-token-a')
+  assert.equal(transferSessionId(1, 'private-token-a'), first)
+  assert.notEqual(transferSessionId(1, 'private-token-b'), first)
+  assert.notEqual(transferSessionId(2, 'private-token-a'), first)
+  assert.ok(!first.includes('private-token-a'))
+  assert.equal(transferSessionId(1, ''), '')
+})
+
+test('session filtering and clearing preserve other sessions and active transfers', async () => {
+  const gate = deferred()
+  const active = enqueueTransfer({ accountId: 1, sessionId: 'one', run: () => gate.promise })
+  const waiting = enqueueTransfer({ accountId: 1, sessionId: 'two', run: async () => {} })
+  await delegateBrowserDownload({ name: 'one', accountId: 1, sessionId: 'one', run: async () => {} })
+  await delegateBrowserDownload({ name: 'two', accountId: 1, sessionId: 'two', run: async () => {} })
+  await delegateBrowserDownload({ name: 'other', accountId: 2, sessionId: 'one', run: async () => {} })
+  assert.equal(transfersForSession(transfers, 1, 'one').length, 2)
+  assert.equal(transfersForSession(transfers, 1, 'two').length, 2)
+  const selected = new Set(transfersForSession(transfers, 1, 'one'))
+  clearFinishedTransfers(task => selected.has(task))
+  assert.deepEqual(transfersForSession(transfers, 1, 'one'), [active])
+  assert.equal(transfersForSession(transfers, 1, 'two').length, 2)
+  assert.equal(transfersForSession(transfers, 2, 'one').length, 1)
+  assert.equal(waiting.status, '等待中')
+  gate.resolve()
+  await settled(active)
+  await settled(waiting)
 })

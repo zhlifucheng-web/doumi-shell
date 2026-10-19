@@ -51,10 +51,19 @@ if (typeof window !== 'undefined') {
 }
 const queue = []
 let running = false
-export function enqueueTransfer({ name, direction, path, total, accountId, run }) {
+// Tokens stay in memory; only an unrelated identifier is stored with transfer history.
+const sessionIds = new Map()
+export function transferSessionId(accountId, token) {
+  if (accountId == null || !token) return ''
+  let sessions = sessionIds.get(accountId)
+  if (!sessions) { sessions = new Map(); sessionIds.set(accountId, sessions) }
+  if (!sessions.has(token)) sessions.set(token, globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  return sessions.get(token)
+}
+export function enqueueTransfer({ name, direction, path, total, accountId, sessionId, run }) {
   const controller = new AbortController()
   const task = reactive({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, createdAt: Date.now(),
-    name, direction, path, total, accountId, loaded: 0,
+    name, direction, path, total, accountId, sessionId, loaded: 0,
     status: '等待中', error: '', speed: 0, cancel: () => {
       if (!['等待中', '传输中'].includes(task.status)) return
       controller.abort()
@@ -89,9 +98,9 @@ export function enqueueTransfer({ name, direction, path, total, accountId, run }
   drain()
   return task
 }
-export async function delegateBrowserDownload({ name, path, total, accountId, run }) {
+export async function delegateBrowserDownload({ name, path, total, accountId, sessionId, run }) {
   const task = reactive({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, createdAt: Date.now(),
-    name, direction: '下载', path, total, accountId,
+    name, direction: '下载', path, total, accountId, sessionId,
     loaded: 0, status: '交给浏览器中', error: '', speed: 0 })
   transfers.push(task)
   track(task)
@@ -103,10 +112,10 @@ async function drain() {
   running = true
   try { while (queue.length) await queue.shift()() } finally { running = false }
 }
-export function clearFinishedTransfers() {
+export function clearFinishedTransfers(matches = () => true) {
   for (let i = transfers.length - 1; i >= 0; i--) {
     const task = transfers[i]
-    if (!isTransferActive(task)) {
+    if (matches(task) && !isTransferActive(task)) {
       tracking.get(task.id)?.stop()
       tracking.delete(task.id)
       try { if (storage) removeTransferHistory(storage, task) }

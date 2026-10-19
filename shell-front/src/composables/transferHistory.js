@@ -4,8 +4,13 @@ export const isTransferActive = task => ACTIVE.has(task.status)
 
 // Store metadata only: never persist SSH tokens, local File objects or filesystem handles.
 export function transferSnapshot(task) {
-  const { id, name, direction, path, accountId, total, loaded, status, error, createdAt, updatedAt } = task
-  return { id, name, direction, path, accountId, total, loaded, status, error, createdAt, updatedAt }
+  const { id, name, direction, path, accountId, sessionId, total, loaded, status, error, createdAt, updatedAt } = task
+  return { id, name, direction, path, accountId, sessionId, total, loaded, status, error, createdAt, updatedAt }
+}
+
+export function transfersForSession(tasks, accountId, sessionId) {
+  if (accountId == null) return []
+  return tasks.filter(task => task.accountId === accountId && (task.sessionId || '') === sessionId)
 }
 
 export function restoreTransfer(record) {

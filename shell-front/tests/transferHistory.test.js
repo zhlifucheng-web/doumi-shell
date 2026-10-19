@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readTransferHistory, saveTransferHistory, removeTransferHistory, trimTransferHistory,
-  restoreTransfer, transferSnapshot, transferErrorMessage } from '../src/composables/transferHistory.js'
+  restoreTransfer, transferSnapshot, transferErrorMessage, transfersForSession } from '../src/composables/transferHistory.js'
 
 function memoryStorage() {
   const values = new Map()
@@ -40,6 +40,18 @@ test('history never persists credentials, local file objects or handles', () => 
   assert.ok(!('file' in snapshot))
   assert.ok(!('handle' in snapshot))
   assert.ok(!('cancel' in snapshot))
+})
+
+test('restored history keeps session ownership and legacy records stay separate', () => {
+  const storage = memoryStorage()
+  saveTransferHistory(storage, { ...record(), sessionId: 'opaque-session', sessionToken: 'secret-token' })
+  saveTransferHistory(storage, { ...record(), id: 'legacy' })
+  const restored = readTransferHistory(storage)
+  assert.equal(transfersForSession(restored, 1, 'opaque-session').length, 1)
+  assert.equal(transfersForSession(restored, 1, '')[0].id, 'legacy')
+  assert.deepEqual(transfersForSession(restored, 2, 'opaque-session'), [])
+  assert.deepEqual(transfersForSession(restored, null, 'opaque-session'), [])
+  assert.ok(!JSON.stringify(restored).includes('secret-token'))
 })
 test('malformed history is ignored and only latest 200 records are retained', () => {
   const storage = memoryStorage()

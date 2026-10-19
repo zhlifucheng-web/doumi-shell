@@ -87,10 +87,10 @@
     </template>
 
     <p v-if="transferHistoryWarning" role="alert" class="transfer-error">{{ transferHistoryWarning }}</p>
-    <section v-if="transfers.length" class="transfer-list" aria-label="文件传输列表">
-      <div class="transfer-heading"><strong>文件传输（{{ transfers.length }}）</strong><el-tooltip v-if="embedded" :content="transferNotice" placement="top"><span class="transfer-help" tabindex="0">传输说明</span></el-tooltip><el-button text size="small" @click="clearFinishedTransfers">清除已结束</el-button></div>
+    <section v-if="accountTransfers.length" class="transfer-list" aria-label="文件传输列表">
+      <div class="transfer-heading"><strong>文件传输（{{ visibleTransfers.length }}）</strong><el-select v-model="selectedTransferSession" size="small" aria-label="传输记录所属会话" class="transfer-session-select"><el-option v-for="session in transferSessions" :key="session.id" :value="session.id" :label="session.label" /></el-select><el-tooltip v-if="embedded" :content="transferNotice" placement="top"><span class="transfer-help" tabindex="0">传输说明</span></el-tooltip><el-button text size="small" @click="clearVisibleTransfers">清除已结束</el-button></div>
       <p v-if="!embedded" class="transfer-hint">{{ transferNotice }}</p>
-      <el-table :data="transfers" size="small" max-height="240">
+      <el-table :data="visibleTransfers" size="small" max-height="240">
         <el-table-column prop="direction" label="方向" :width="embedded ? 50 : 65" />
         <el-table-column v-if="!embedded" label="账户" width="80"><template #default="{row}">#{{ row.accountId }}</template></el-table-column>
         <el-table-column prop="name" label="文件" :min-width="embedded ? 120 : 150" show-overflow-tooltip />
@@ -129,9 +129,9 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Document, Folder } from '@element-plus/icons-vue'
 import { sftpDelete, sftpDownloadLarge, sftpList, sftpMkdir, sftpRename, sftpUploadLarge } from '@/api/sshConsole'
-import { transfers, transferHistoryWarning, enqueueTransfer, delegateBrowserDownload, clearFinishedTransfers } from '@/composables/useTransfers'
+import { transfers, transferHistoryWarning, enqueueTransfer, delegateBrowserDownload, clearFinishedTransfers, transferSessionId } from '@/composables/useTransfers'
 import { fileLocation } from '@/composables/useWorkspaceContext'
-import { transferErrorMessage } from '@/composables/transferHistory'
+import { transferErrorMessage, transfersForSession } from '@/composables/transferHistory'
 import FolderTransfer from './FolderTransfer.vue'
 
 const props = defineProps({
@@ -145,6 +145,33 @@ const props = defineProps({
 const transferNotice = '切换页面可继续传输。刷新或关闭页面会中断页面内传输，重开后仅保留最近 200 条历史记录和最后进度，无法自动续传。SSH 断开后需重新发起。浏览器接管的下载请在浏览器下载列表查看。'
 
 const emit = defineEmits(['request-session', 'session-invalid'])
+
+const currentTransferSession = ref(''), selectedTransferSession = ref('')
+watch(() => [props.accountId, props.sessionToken], ([accountId, token], [previousAccount] = []) => {
+  if (accountId !== previousAccount) { currentTransferSession.value = ''; selectedTransferSession.value = '' }
+  // Keep the disconnected session visible until a new connection is established.
+  if (token) {
+    currentTransferSession.value = transferSessionId(accountId, token)
+    selectedTransferSession.value = currentTransferSession.value
+  }
+}, { immediate: true })
+const accountTransfers = computed(() => transfers.filter(task => props.accountId != null && task.accountId === props.accountId))
+const visibleTransfers = computed(() => transfersForSession(transfers, props.accountId, selectedTransferSession.value))
+const transferSessions = computed(() => {
+  const sessions = new Map()
+  if (currentTransferSession.value) sessions.set(currentTransferSession.value, { id: currentTransferSession.value, label: '当前会话' })
+  for (const task of [...accountTransfers.value].reverse()) {
+    const id = task.sessionId || ''
+    if (!sessions.has(id)) sessions.set(id, { id, label: id ? `历史会话 · ${new Date(task.createdAt).toLocaleString()}` : '旧版历史（会话未知）' })
+  }
+  return [...sessions.values()]
+})
+function clearVisibleTransfers() {
+  const visible = new Set(visibleTransfers.value)
+  clearFinishedTransfers(task => visible.has(task))
+  if (!transferSessions.value.some(session => session.id === selectedTransferSession.value))
+    selectedTransferSession.value = currentTransferSession.value || transferSessions.value[0]?.id || ''
+}
 
 const currentPath = ref('')
 const pathInput = ref('')
@@ -252,15 +279,16 @@ async function downloadRow(row) {
   const remote = base.endsWith('/') ? base + row.name : `${base}/${row.name}`
   const token = props.sessionToken
   const accountId = props.accountId
+  const sessionId = transferSessionId(accountId, token)
   try {
     // Ask for permission in the original click event, before queueing any work.
     const handle = window.showSaveFilePicker ? await window.showSaveFilePicker({ suggestedName: row.name }) : null
     if (!handle) {
-      delegateBrowserDownload({ name: row.name, path: base, total: row.size, accountId,
+      delegateBrowserDownload({ name: row.name, path: base, total: row.size, accountId, sessionId,
         run: () => sftpDownloadLarge(token, remote) })
       return
     }
-    enqueueTransfer({ name: row.name, direction: '下载', path: base, total: row.size, accountId,
+    enqueueTransfer({ name: row.name, direction: '下载', path: base, total: row.size, accountId, sessionId,
       run: options => sftpDownloadLarge(token, remote, { ...options, handle }) })
   } catch (error) {
     if (error.name !== 'AbortError') ElMessage.error(transferErrorMessage(error, '下载'))
@@ -273,7 +301,8 @@ function uploadFiles(event) {
   if (!props.sessionToken) return
   const dir = currentPath.value || pathInput.value || ''
   const token = props.sessionToken
-  for (const file of files) enqueueTransfer({ name: file.name, direction: '上传', path: dir, total: file.size, accountId: props.accountId, run: async transferOptions => {
+  const accountId = props.accountId, sessionId = transferSessionId(accountId, token)
+  for (const file of files) enqueueTransfer({ name: file.name, direction: '上传', path: dir, total: file.size, accountId, sessionId, run: async transferOptions => {
     await sftpUploadLarge(token, dir, file, transferOptions)
     if (props.sessionToken === token && currentPath.value === dir) void refresh()
   } })
@@ -422,7 +451,7 @@ function formatMtime(sec) {
 .embedded .no-session { padding:0; overflow:auto; }
 .embedded .no-session :deep(.el-empty) { padding:4px; }
 .embedded .no-session :deep(.el-empty__image) { display:none; }
-.transfer-heading{display:flex;align-items:center;justify-content:space-between}.transfer-hint{font-size:12px;color:var(--el-text-color-secondary);margin:4px 0 8px}.transfer-error{display:block;color:var(--el-color-danger);overflow-wrap:anywhere}
+.transfer-heading{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap}.transfer-session-select{width:190px;max-width:100%}.transfer-hint{font-size:12px;color:var(--el-text-color-secondary);margin:4px 0 8px}.transfer-error{display:block;color:var(--el-color-danger);overflow-wrap:anywhere}
 .row-ico {
   vertical-align: middle;
   margin-right: 4px;
