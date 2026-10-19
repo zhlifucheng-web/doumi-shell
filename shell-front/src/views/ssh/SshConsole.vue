@@ -104,7 +104,7 @@
                     @ready="onTerminalReady" @disconnected="onTerminalDisconnected" />
                 </template>
                 <template #files="{ embedded }">
-                  <SshFilePanel v-if="detail.raw?.id" :account-id="detail.raw.id"
+                  <SshFilePanel v-if="detail.raw?.id" :account-id="detail.raw.id" :host-id="detail.raw.hostId"
                     :active="accountTab === 'terminal' || accountTab === 'files'" :embedded="embedded"
                     :session-token="sessionToken" :default-cwd="detail.raw.defaultCwd || ''"
                     :opening-session="openingFileSession" @request-session="establishFileSession"

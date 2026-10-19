@@ -1,6 +1,6 @@
 import { reactive, ref, watch } from 'vue'
 import { isTransferActive, readTransferHistory, saveTransferHistory, removeTransferHistory,
-  trimTransferHistory, transferErrorMessage } from './transferHistory.js'
+  trimTransferHistory, transferErrorMessage, saveTransferHost } from './transferHistory.js'
 
 // Shared across file panels and route changes; only one transfer writes at a time.
 export const transfers = reactive([])
@@ -60,10 +60,21 @@ export function transferSessionId(accountId, token) {
   if (!sessions.has(token)) sessions.set(token, globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`)
   return sessions.get(token)
 }
-export function enqueueTransfer({ name, direction, path, total, accountId, sessionId, run }) {
+export function assignTransferHost(accountId, hostId) {
+  if (accountId == null || hostId == null) return
+  for (const task of transfers) {
+    if (task.accountId !== accountId || task.hostId != null) continue
+    task.hostId = hostId
+    if (storage) {
+      try { saveTransferHost(storage, task) }
+      catch { transferHistoryWarning.value = '服务器归属保存失败，重新打开后需要再次选择对应账户。' }
+    }
+  }
+}
+export function enqueueTransfer({ name, direction, path, total, accountId, hostId, sessionId, run }) {
   const controller = new AbortController()
   const task = reactive({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, createdAt: Date.now(),
-    name, direction, path, total, accountId, sessionId, loaded: 0,
+    name, direction, path, total, accountId, hostId, sessionId, loaded: 0,
     status: '等待中', error: '', speed: 0, cancel: () => {
       if (!['等待中', '传输中'].includes(task.status)) return
       controller.abort()
@@ -98,9 +109,9 @@ export function enqueueTransfer({ name, direction, path, total, accountId, sessi
   drain()
   return task
 }
-export async function delegateBrowserDownload({ name, path, total, accountId, sessionId, run }) {
+export async function delegateBrowserDownload({ name, path, total, accountId, hostId, sessionId, run }) {
   const task = reactive({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, createdAt: Date.now(),
-    name, direction: '下载', path, total, accountId, sessionId,
+    name, direction: '下载', path, total, accountId, hostId, sessionId,
     loaded: 0, status: '交给浏览器中', error: '', speed: 0 })
   transfers.push(task)
   track(task)

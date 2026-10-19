@@ -4,13 +4,18 @@ export const isTransferActive = task => ACTIVE.has(task.status)
 
 // Store metadata only: never persist SSH tokens, local File objects or filesystem handles.
 export function transferSnapshot(task) {
-  const { id, name, direction, path, accountId, sessionId, total, loaded, status, error, createdAt, updatedAt } = task
-  return { id, name, direction, path, accountId, sessionId, total, loaded, status, error, createdAt, updatedAt }
+  const { id, name, direction, path, accountId, hostId, sessionId, total, loaded, status, error, createdAt, updatedAt } = task
+  return { id, name, direction, path, accountId, hostId, sessionId, total, loaded, status, error, createdAt, updatedAt }
 }
 
 export function transfersForSession(tasks, accountId, sessionId) {
   if (accountId == null) return []
   return tasks.filter(task => task.accountId === accountId && (task.sessionId || '') === sessionId)
+}
+
+export function transfersForServer(tasks, hostId) {
+  if (hostId == null) return []
+  return tasks.filter(task => task.hostId === hostId)
 }
 
 export function restoreTransfer(record) {
@@ -46,6 +51,16 @@ export function readTransferHistory(storage) {
 
 export function saveTransferHistory(storage, task) {
   storage.setItem(PREFIX + task.id, JSON.stringify(transferSnapshot(task)))
+}
+export function saveTransferHost(storage, task) {
+  const key = PREFIX + task.id
+  const saved = storage.getItem(key)
+  if (!saved) return
+  const record = JSON.parse(saved)
+  if (record.hostId != null) return
+  // A restored record may still be active in another browser window; update ownership only.
+  record.hostId = task.hostId
+  storage.setItem(key, JSON.stringify(record))
 }
 export function removeTransferHistory(storage, task) { storage.removeItem(PREFIX + task.id) }
 

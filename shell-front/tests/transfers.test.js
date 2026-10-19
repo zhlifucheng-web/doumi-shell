@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { enqueueTransfer, delegateBrowserDownload, transfers, clearFinishedTransfers, transferSessionId } from '../src/composables/useTransfers.js'
-import { transfersForSession } from '../src/composables/transferHistory.js'
+import { enqueueTransfer, delegateBrowserDownload, transfers, clearFinishedTransfers, transferSessionId, assignTransferHost } from '../src/composables/useTransfers.js'
+import { transfersForSession, transfersForServer } from '../src/composables/transferHistory.js'
 
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 async function settled(task) {
@@ -113,4 +113,28 @@ test('session filtering and clearing preserve other sessions and active transfer
   gate.resolve()
   await settled(active)
   await settled(waiting)
+})
+
+test('server lists combine accounts and sessions; clearing leaves other servers and active tasks intact', async () => {
+  const gate = deferred()
+  const active = enqueueTransfer({ accountId: 11, hostId: 101, run: () => gate.promise })
+  await delegateBrowserDownload({ name: 'first', accountId: 11, hostId: 101, sessionId: 'old', run: async () => {} })
+  await delegateBrowserDownload({ name: 'second', accountId: 12, hostId: 101, sessionId: 'new', run: async () => {} })
+  await delegateBrowserDownload({ name: 'other', accountId: 13, hostId: 102, run: async () => {} })
+  assert.equal(transfersForServer(transfers, 101).length, 3)
+  const selected = new Set(transfersForServer(transfers, 101))
+  clearFinishedTransfers(task => selected.has(task))
+  assert.deepEqual(transfersForServer(transfers, 101), [active])
+  assert.equal(transfersForServer(transfers, 102).length, 1)
+  gate.resolve()
+  await settled(active)
+})
+
+test('legacy records acquire server ownership only from their own account', async () => {
+  await delegateBrowserDownload({ name: 'legacy', accountId: 21, run: async () => {} })
+  await delegateBrowserDownload({ name: 'known', accountId: 21, hostId: 203, run: async () => {} })
+  assignTransferHost(21, 201)
+  assert.equal(transfersForServer(transfers, 201).length, 1)
+  assert.equal(transfersForServer(transfers, 203).length, 1)
+  assert.deepEqual(transfersForServer(transfers, null), [])
 })

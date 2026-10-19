@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readTransferHistory, saveTransferHistory, removeTransferHistory, trimTransferHistory,
-  restoreTransfer, transferSnapshot, transferErrorMessage, transfersForSession } from '../src/composables/transferHistory.js'
+  restoreTransfer, transferSnapshot, transferErrorMessage, transfersForSession, transfersForServer, saveTransferHost } from '../src/composables/transferHistory.js'
 
 function memoryStorage() {
   const values = new Map()
@@ -52,6 +52,28 @@ test('restored history keeps session ownership and legacy records stay separate'
   assert.deepEqual(transfersForSession(restored, 2, 'opaque-session'), [])
   assert.deepEqual(transfersForSession(restored, null, 'opaque-session'), [])
   assert.ok(!JSON.stringify(restored).includes('secret-token'))
+})
+
+test('server ownership survives browser reopen and unknown-server records are not mixed in', () => {
+  const storage = memoryStorage()
+  saveTransferHistory(storage, { ...record(), hostId: 55 })
+  saveTransferHistory(storage, { ...record(), id: 'unknown' })
+  const restored = readTransferHistory(storage)
+  assert.equal(transfersForServer(restored, 55).length, 1)
+  assert.equal(transfersForServer(restored, 55)[0].status, '无法恢复')
+  assert.deepEqual(transfersForServer(restored, 56), [])
+})
+
+test('assigning a restored record to a server does not overwrite another window progress or status', () => {
+  const storage = memoryStorage()
+  saveTransferHistory(storage, record())
+  const [restored] = readTransferHistory(storage)
+  saveTransferHistory(storage, { ...record(), loaded: 75 })
+  saveTransferHost(storage, { ...restored, hostId: 55 })
+  const saved = JSON.parse(storage.getItem(storage.key(0)))
+  assert.equal(saved.hostId, 55)
+  assert.equal(saved.loaded, 75)
+  assert.equal(saved.status, '传输中')
 })
 test('malformed history is ignored and only latest 200 records are retained', () => {
   const storage = memoryStorage()
