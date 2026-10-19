@@ -7,6 +7,7 @@
         </el-button>
       </el-empty>
       <p class="hint">也可先在「终端」Tab 连接，连接成功后会自动复用 sessionToken。</p>
+      <el-button size="small" @click="showTransfers = true">{{ transferButtonLabel }}</el-button>
     </div>
     <template v-else>
       <div class="toolbar">
@@ -28,6 +29,7 @@
           />
           <el-button size="small" @click="navigateToPath">前往</el-button>
           <el-button size="small" :loading="loading" @click="refresh">刷新</el-button>
+          <el-button size="small" :type="activeTransferCount ? 'primary' : 'default'" plain @click="showTransfers = true">{{ transferButtonLabel }}</el-button>
           <el-button v-if="embedded" size="small" :aria-pressed="showDetails" @click="showDetails=!showDetails">{{ showDetails ? '精简列表' : '详细信息' }}</el-button>
           <el-button size="small" type="primary" @click="showMkdir = true">新建目录</el-button>
           <input ref="uploadInput" type="file" hidden multiple @change="uploadFiles" />
@@ -86,26 +88,27 @@
       </el-table>
     </template>
 
-    <p v-if="transferHistoryWarning" role="alert" class="transfer-error">{{ transferHistoryWarning }}</p>
-    <section v-if="visibleTransfers.length" class="transfer-list" aria-label="文件传输列表">
-      <div class="transfer-heading"><strong>文件传输（{{ visibleTransfers.length }}）</strong><span class="transfer-server-label">当前服务器</span><el-tooltip v-if="embedded" :content="transferNotice" placement="top"><span class="transfer-help" tabindex="0">传输说明</span></el-tooltip><el-button text size="small" @click="clearVisibleTransfers">清除已结束</el-button></div>
-      <p v-if="!embedded" class="transfer-hint">{{ transferNotice }}</p>
-      <el-table :data="visibleTransfers" size="small" max-height="240">
-        <el-table-column prop="direction" label="方向" :width="embedded ? 50 : 65" />
+    <el-dialog v-model="showTransfers" title="文件传输 · 当前服务器" width="min(1080px, 94vw)" top="8vh" append-to-body destroy-on-close>
+      <p v-if="transferHistoryWarning" role="alert" class="transfer-error">{{ transferHistoryWarning }}</p>
+      <div class="transfer-heading"><strong>共 {{ visibleTransfers.length }} 项<span v-if="activeTransferCount"> · {{ activeTransferCount }} 项进行中</span></strong><el-button text size="small" @click="clearVisibleTransfers">清除已结束</el-button></div>
+      <p class="transfer-hint">关闭弹窗不影响传输。{{ transferNotice }}</p>
+      <el-table :data="visibleTransfers" size="small" max-height="55vh" empty-text="当前服务器暂无传输记录">
+        <el-table-column prop="direction" label="方向" width="65" />
         <el-table-column label="账户" width="80"><template #default="{row}">#{{ row.accountId }}</template></el-table-column>
-        <el-table-column prop="name" label="文件" :min-width="embedded ? 120 : 150" show-overflow-tooltip />
-        <el-table-column v-if="!embedded" prop="path" label="远程目录" min-width="140" show-overflow-tooltip />
-        <el-table-column label="进度" :min-width="embedded ? 150 : 180"><template #default="{row}">
+        <el-table-column prop="name" label="文件" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="path" label="远程目录" min-width="140" show-overflow-tooltip />
+        <el-table-column label="进度" min-width="180"><template #default="{row}">
           <span v-if="row.restored" class="transfer-hint">历史记录 · 最后记录进度</span>
           <template v-if="!['已交给浏览器','交给浏览器中'].includes(row.status)">
             <el-progress :percentage="row.status === '已完成' ? 100 : Math.min(99, Math.floor(row.loaded / Math.max(row.total,1) * 100))" :status="['失败','无法恢复'].includes(row.status) ? 'exception' : row.status === '已完成' ? 'success' : undefined" />
             <span>{{ formatSize(row.loaded) }} / {{ formatSize(row.total) }}<template v-if="row.status === '传输中'"> · {{ formatSize(row.speed) }}/s</template></span>
           </template><span v-else>请在浏览器下载列表查看</span>
         </template></el-table-column>
-        <el-table-column label="状态" :min-width="embedded ? 100 : 130"><template #default="{row}">{{ row.status }}<span v-if="row.error" class="transfer-error">{{ row.error }}</span></template></el-table-column>
+        <el-table-column label="状态" min-width="130"><template #default="{row}">{{ row.status }}<span v-if="row.error" class="transfer-error">{{ row.error }}</span></template></el-table-column>
         <el-table-column label="操作" width="70"><template #default="{row}"><el-button v-if="['等待中','传输中'].includes(row.status)" link type="danger" @click="row.cancel()">取消</el-button></template></el-table-column>
       </el-table>
-    </section>
+      <template #footer><el-button @click="showTransfers = false">关闭</el-button></template>
+    </el-dialog>
     <el-dialog v-model="showMkdir" title="新建目录" width="400px" destroy-on-close @closed="mkdirName = ''"><el-scrollbar max-height="65vh">
       <el-input v-model="mkdirName" placeholder="目录名" maxlength="255" @keyup.enter="doMkdir" />
       </el-scrollbar><template #footer>
@@ -125,13 +128,13 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onDeactivated, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Document, Folder } from '@element-plus/icons-vue'
 import { sftpDelete, sftpDownloadLarge, sftpList, sftpMkdir, sftpRename, sftpUploadLarge } from '@/api/sshConsole'
 import { transfers, transferHistoryWarning, enqueueTransfer, delegateBrowserDownload, clearFinishedTransfers, assignTransferHost } from '@/composables/useTransfers'
 import { fileLocation } from '@/composables/useWorkspaceContext'
-import { transferErrorMessage, transfersForServer } from '@/composables/transferHistory'
+import { isTransferActive, transferErrorMessage, transfersForServer } from '@/composables/transferHistory'
 import FolderTransfer from './FolderTransfer.vue'
 
 const props = defineProps({
@@ -152,6 +155,13 @@ watch(() => [props.accountId, props.hostId], ([accountId, hostId]) => {
   assignTransferHost(accountId, hostId)
 }, { immediate: true })
 const visibleTransfers = computed(() => transfersForServer(transfers, props.hostId))
+const showTransfers = ref(false)
+const activeTransferCount = computed(() => visibleTransfers.value.filter(isTransferActive).length)
+const transferButtonLabel = computed(() => activeTransferCount.value
+  ? `传输列表（${activeTransferCount.value} 项进行中）`
+  : `传输列表（${visibleTransfers.value.length}）`)
+watch(() => props.active, active => { if (!active) showTransfers.value = false })
+onDeactivated(() => { showTransfers.value = false })
 function clearVisibleTransfers() {
   const visible = new Set(visibleTransfers.value)
   clearFinishedTransfers(task => visible.has(task))
@@ -422,16 +432,12 @@ function formatMtime(sec) {
   flex: 1;
   min-height: 0;
 }
-.transfer-list{flex-shrink:0;border-top:1px solid var(--el-border-color-light);padding:8px;max-height:340px;overflow:auto}
 .embedded { gap:4px; }
 .embedded .toolbar { gap:4px; flex-shrink:0; }
 .embedded .toolbar-actions { gap:4px; }
 .embedded .toolbar-actions :deep(.el-button + .el-button) { margin-left:0; }
 .embedded .path-input { width:170px; }
 .embedded .file-table { min-height:70px; }
-.embedded .transfer-list { max-height:50%; padding:0 4px 4px; }
-.transfer-help { font-size:12px; color:var(--el-text-color-secondary); cursor:help; }
-.embedded .transfer-hint { font-size:11px; margin:2px 0 4px; }
 .embedded .no-session { padding:0; overflow:auto; }
 .embedded .no-session :deep(.el-empty) { padding:4px; }
 .embedded .no-session :deep(.el-empty__image) { display:none; }
