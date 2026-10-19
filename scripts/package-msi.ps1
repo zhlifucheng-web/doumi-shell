@@ -52,10 +52,13 @@ try {
     Copy-Item -LiteralPath (Join-Path $Root 'README.md') -Destination $inputDirectory -Force
     Copy-Item -LiteralPath (Join-Path $Root 'LICENSE') -Destination $inputDirectory -Force
     Copy-Item -LiteralPath (Join-Path $Root 'docs') -Destination $inputDirectory -Recurse -Force
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'doumi-shell-windows.cmd') `
+        -Destination (Join-Path $inputDirectory 'Start Doumi Shell (Java).cmd') -Force
     $resourceDirectory = Join-Path $buildDirectory 'jpackage-resources'
     & (Join-Path $PSScriptRoot 'prepare-msi-resources.ps1') -JdkHome $JdkHome -Destination $resourceDirectory
     $jpackageArgs = @(
         '--type', 'msi', '--name', 'Doumi Shell', '--app-version', $Version,
+        '--install-dir', 'DoumiShell',
         '--vendor', 'Doumi', '--description', 'Doumi Shell SSH Console',
         '--input', $inputDirectory, '--main-jar', 'doumi-shell.jar',
         '--resource-dir', $resourceDirectory,
