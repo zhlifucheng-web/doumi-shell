@@ -92,36 +92,25 @@
             </div>
           </div>
           <div class="account-tabs route-panels">
-            <div v-show="accountTab === 'terminal'" class="account-tab-pane">
-              <div v-if="detail.raw?.id && terminalVisited" class="terminal-split">
-                <SshMonitorPanel
-                  :account-id="detail.raw.id"
-                  :session-token="sessionToken"
-                  :active="accountTab === 'terminal'"
-                />
-                <SshTerminal
-                  :key="terminalMountKey"
-                  class="terminal-main"
-                  :account-id="detail.raw.id"
-                  :host-remark="accountHostRemark"
-                  :account-remark="detail.raw.remark || ''"
-                  @ready="onTerminalReady"
-                  @disconnected="onTerminalDisconnected"
-                />
-              </div>
-            </div>
-            <div v-show="accountTab === 'files'" class="account-tab-pane">
-              <SshFilePanel
-                :account-id="detail.raw.id"
-                :active="accountTab === 'files'"
-                v-if="detail.raw?.id"
-                v-show="accountTab === 'files'"
-                :session-token="sessionToken"
-                :default-cwd="detail.raw.defaultCwd || ''"
-                :opening-session="openingFileSession"
-                @request-session="establishFileSession"
-                @session-invalid="onFileSessionInvalid"
-              />
+            <div v-show="accountTab === 'terminal' || accountTab === 'files'" class="account-tab-pane">
+              <TerminalFileLayout :terminal-active="accountTab === 'terminal'">
+                <template #monitor>
+                  <SshMonitorPanel v-if="detail.raw?.id && terminalVisited"
+                    :account-id="detail.raw.id" :session-token="sessionToken" :active="accountTab === 'terminal'" />
+                </template>
+                <template #terminal>
+                  <SshTerminal v-if="detail.raw?.id && terminalVisited" :key="terminalMountKey"
+                    :account-id="detail.raw.id" :host-remark="accountHostRemark" :account-remark="detail.raw.remark || ''"
+                    @ready="onTerminalReady" @disconnected="onTerminalDisconnected" />
+                </template>
+                <template #files="{ embedded }">
+                  <SshFilePanel v-if="detail.raw?.id" :account-id="detail.raw.id"
+                    :active="accountTab === 'terminal' || accountTab === 'files'" :embedded="embedded"
+                    :session-token="sessionToken" :default-cwd="detail.raw.defaultCwd || ''"
+                    :opening-session="openingFileSession" @request-session="establishFileSession"
+                    @session-invalid="onFileSessionInvalid" />
+                </template>
+              </TerminalFileLayout>
             </div>
             <div v-show="accountTab === 'processes'" class="account-tab-pane">
               <SshProcessPanel
@@ -282,6 +271,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Expand, Fold, Folder, Monitor, MoreFilled, Plus, Refresh, Search, User } from '@element-plus/icons-vue'
 import { managedServer } from '@/composables/useWorkspaceContext'
 import SshTerminal from '@/components/ssh/SshTerminal.vue'
+import TerminalFileLayout from '@/components/ssh/TerminalFileLayout.vue'
 import SshFilePanel from '@/components/ssh/SshFilePanel.vue'
 import SshMonitorPanel from '@/components/ssh/SshMonitorPanel.vue'
 import ScriptManagement from '@/components/ssh/ScriptManagement.vue'
@@ -1125,17 +1115,6 @@ async function confirmDeleteDetail() {
 .account-tab-pane {
   height: 100%;
   overflow: hidden;
-}
-.terminal-split {
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
-.terminal-main {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
 }
 .account-tabs :deep(.el-tab-pane) {
   height: 100%;

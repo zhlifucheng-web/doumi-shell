@@ -1,5 +1,5 @@
 <template>
-  <div class="ssh-file-panel">
+  <div class="ssh-file-panel" :class="{ embedded }">
     <div v-if="!sessionToken" class="no-session">
       <el-empty description="尚未建立 SSH 会话">
         <el-button type="primary" :loading="openingSession" @click="$emit('request-session')">
@@ -28,6 +28,7 @@
           />
           <el-button size="small" @click="navigateToPath">前往</el-button>
           <el-button size="small" :loading="loading" @click="refresh">刷新</el-button>
+          <el-button v-if="embedded" size="small" :aria-pressed="showDetails" @click="showDetails=!showDetails">{{ showDetails ? '精简列表' : '详细信息' }}</el-button>
           <el-button size="small" type="primary" @click="showMkdir = true">新建目录</el-button>
           <input ref="uploadInput" type="file" hidden multiple @change="uploadFiles" />
           <el-button size="small" type="success" @click="uploadInput.click()">上传文件</el-button>
@@ -57,19 +58,19 @@
             {{ row.dir ? '—' : formatSize(row.size) }}
           </template>
         </el-table-column>
-        <el-table-column prop="owner" label="属主" width="88" show-overflow-tooltip />
-        <el-table-column prop="group" label="属组" width="88" show-overflow-tooltip />
-        <el-table-column prop="permissions" label="权限" width="108">
+        <el-table-column v-if="!embedded || showDetails" prop="owner" label="属主" width="88" show-overflow-tooltip />
+        <el-table-column v-if="!embedded || showDetails" prop="group" label="属组" width="88" show-overflow-tooltip />
+        <el-table-column v-if="!embedded || showDetails" prop="permissions" label="权限" width="108">
           <template #default="{ row }">
             <span class="perm-cell">{{ row.permissions || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="修改时间" width="168">
+        <el-table-column v-if="!embedded || showDetails" label="修改时间" width="168">
           <template #default="{ row }">
             {{ formatMtime(row.mtime) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" :width="embedded ? 210 : 260" fixed="right">
           <template #default="{ row }">
             <el-button v-if="!row.dir" link type="primary" size="small" @click="downloadRow(row)">
               下载
@@ -87,21 +88,21 @@
 
     <p v-if="transferHistoryWarning" role="alert" class="transfer-error">{{ transferHistoryWarning }}</p>
     <section v-if="transfers.length" class="transfer-list" aria-label="文件传输列表">
-      <div class="transfer-heading"><strong>文件传输（{{ transfers.length }}）</strong><el-button text size="small" @click="clearFinishedTransfers">清除已结束</el-button></div>
-      <p class="transfer-hint">切换页面可继续传输。刷新或关闭页面会中断页面内传输，重开后仅保留最近 200 条历史记录和最后进度，无法自动续传。SSH 断开后需重新发起。浏览器接管的下载请在浏览器下载列表查看。</p>
+      <div class="transfer-heading"><strong>文件传输（{{ transfers.length }}）</strong><el-tooltip v-if="embedded" :content="transferNotice" placement="top"><span class="transfer-help" tabindex="0">传输说明</span></el-tooltip><el-button text size="small" @click="clearFinishedTransfers">清除已结束</el-button></div>
+      <p v-if="!embedded" class="transfer-hint">{{ transferNotice }}</p>
       <el-table :data="transfers" size="small" max-height="240">
-        <el-table-column prop="direction" label="方向" width="65" />
-        <el-table-column label="账户" width="80"><template #default="{row}">#{{ row.accountId }}</template></el-table-column>
-        <el-table-column prop="name" label="文件" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="path" label="远程目录" min-width="140" show-overflow-tooltip />
-        <el-table-column label="进度" min-width="180"><template #default="{row}">
+        <el-table-column prop="direction" label="方向" :width="embedded ? 50 : 65" />
+        <el-table-column v-if="!embedded" label="账户" width="80"><template #default="{row}">#{{ row.accountId }}</template></el-table-column>
+        <el-table-column prop="name" label="文件" :min-width="embedded ? 120 : 150" show-overflow-tooltip />
+        <el-table-column v-if="!embedded" prop="path" label="远程目录" min-width="140" show-overflow-tooltip />
+        <el-table-column label="进度" :min-width="embedded ? 150 : 180"><template #default="{row}">
           <span v-if="row.restored" class="transfer-hint">历史记录 · 最后记录进度</span>
           <template v-if="!['已交给浏览器','交给浏览器中'].includes(row.status)">
             <el-progress :percentage="row.status === '已完成' ? 100 : Math.min(99, Math.floor(row.loaded / Math.max(row.total,1) * 100))" :status="['失败','无法恢复'].includes(row.status) ? 'exception' : row.status === '已完成' ? 'success' : undefined" />
             <span>{{ formatSize(row.loaded) }} / {{ formatSize(row.total) }}<template v-if="row.status === '传输中'"> · {{ formatSize(row.speed) }}/s</template></span>
           </template><span v-else>请在浏览器下载列表查看</span>
         </template></el-table-column>
-        <el-table-column label="状态" min-width="130"><template #default="{row}">{{ row.status }}<span v-if="row.error" class="transfer-error">{{ row.error }}</span></template></el-table-column>
+        <el-table-column label="状态" :min-width="embedded ? 100 : 130"><template #default="{row}">{{ row.status }}<span v-if="row.error" class="transfer-error">{{ row.error }}</span></template></el-table-column>
         <el-table-column label="操作" width="70"><template #default="{row}"><el-button v-if="['等待中','传输中'].includes(row.status)" link type="danger" @click="row.cancel()">取消</el-button></template></el-table-column>
       </el-table>
     </section>
@@ -136,10 +137,12 @@ import FolderTransfer from './FolderTransfer.vue'
 const props = defineProps({
   accountId: { type: Number, default: null },
   active: { type: Boolean, default: true },
+  embedded: { type: Boolean, default: false },
   sessionToken: { type: String, default: '' },
   defaultCwd: { type: String, default: '' },
   openingSession: { type: Boolean, default: false }
 })
+const transferNotice = '切换页面可继续传输。刷新或关闭页面会中断页面内传输，重开后仅保留最近 200 条历史记录和最后进度，无法自动续传。SSH 断开后需重新发起。浏览器接管的下载请在浏览器下载列表查看。'
 
 const emit = defineEmits(['request-session', 'session-invalid'])
 
@@ -150,6 +153,7 @@ const loading = ref(false)
 const uploadInput = ref()
 const folderTransfer = ref()
 const showMkdir = ref(false)
+const showDetails = ref(false)
 const mkdirName = ref('')
 const mkdirLoading = ref(false)
 const showRename = ref(false)
@@ -163,15 +167,18 @@ const breadcrumbs = computed(() => {
   return p.split('/').filter(Boolean)
 })
 
-let handledLocation=null,lastToken='',listRequest=0
+let handledLocation=null,lastAccount=null,listRequest=0
 watch(
-  () => [props.sessionToken, props.active, fileLocation.value],
-  ([tok, active, location]) => {
+  () => [props.sessionToken, props.active, fileLocation.value, props.accountId],
+  ([tok, active, location, accountId]) => {
     ++listRequest // Invalidate a response even when the next view has no session.
     loading.value = false
+    if (accountId !== lastAccount) {
+      currentPath.value='';pathInput.value=props.defaultCwd||'';lastAccount=accountId
+      handledLocation=null;items.value=[]
+    }
     if (!active) return
     if (tok) {
-      if(tok!==lastToken){currentPath.value='';pathInput.value=props.defaultCwd||'';lastToken=tok}
       if(location&&location!==handledLocation&&location.accountId===props.accountId){currentPath.value=location.path;pathInput.value=location.path;handledLocation=location}
       refresh()
     } else {
@@ -403,6 +410,18 @@ function formatMtime(sec) {
   min-height: 0;
 }
 .transfer-list{flex-shrink:0;border-top:1px solid var(--el-border-color-light);padding:8px;max-height:340px;overflow:auto}
+.embedded { gap:4px; }
+.embedded .toolbar { gap:4px; flex-shrink:0; }
+.embedded .toolbar-actions { gap:4px; }
+.embedded .toolbar-actions :deep(.el-button + .el-button) { margin-left:0; }
+.embedded .path-input { width:170px; }
+.embedded .file-table { min-height:70px; }
+.embedded .transfer-list { max-height:50%; padding:0 4px 4px; }
+.transfer-help { font-size:12px; color:var(--el-text-color-secondary); cursor:help; }
+.embedded .transfer-hint { font-size:11px; margin:2px 0 4px; }
+.embedded .no-session { padding:0; overflow:auto; }
+.embedded .no-session :deep(.el-empty) { padding:4px; }
+.embedded .no-session :deep(.el-empty__image) { display:none; }
 .transfer-heading{display:flex;align-items:center;justify-content:space-between}.transfer-hint{font-size:12px;color:var(--el-text-color-secondary);margin:4px 0 8px}.transfer-error{display:block;color:var(--el-color-danger);overflow-wrap:anywhere}
 .row-ico {
   vertical-align: middle;
