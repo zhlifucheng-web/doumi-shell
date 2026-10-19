@@ -75,7 +75,7 @@ async function scan(target){
   try{const data=await scanDiskUsage(token,requested,minimumMb.value);if(version===generation&&token===props.sessionToken){result.value=data;path.value=data.path}}
   catch(e){if(version===generation)error.value=e?.message||'扫描失败'}finally{if(version===generation)loading.value=false}
 }
-function openFiles(target){fileLocation.value={accountId:props.accountId,path:target};router.push('/files')}
+function openFiles(target){fileLocation.value={accountId:props.accountId,path:target};router.push('/terminal')}
 async function rename(row){
   const token=props.sessionToken,account=props.accountId
   try{const {value}=await ElMessageBox.prompt(`路径：${row.path}`,'重命名',{confirmButtonText:'保存',cancelButtonText:'取消',inputValue:row.path.split('/').pop(),inputValidator:v=>!!v&&v!=='.'&&v!=='..'&&!v.includes('/')||'请输入单个文件名'});if(token!==props.sessionToken||account!==props.accountId)return;await sftpRename(token,row.path,value);ElMessage.success('已重命名');await scan(result.value.path)}catch{/* canceled or API message */}

@@ -69,7 +69,7 @@ const serverTitle = computed(()=>managedServer.value ? `${managedServer.value.us
 
 const { preference, themeLabel, setPreference } = useTheme()
 const navigation = [
-  { path: '/terminal', label: '终端与监控' }, { path: '/files', label: '文件' },
+  { path: '/terminal', label: '终端与监控' },
   { path: '/scripts', label: '脚本与定时任务' }, { path: '/processes', label: '进程' }, { path: '/disk-usage', label: '存储管理' },
   { path: '/data-management', label: '数据管理' }
 ]

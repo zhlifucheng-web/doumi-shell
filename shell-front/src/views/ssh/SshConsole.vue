@@ -92,8 +92,8 @@
             </div>
           </div>
           <div class="account-tabs route-panels">
-            <div v-show="accountTab === 'terminal' || accountTab === 'files'" class="account-tab-pane">
-              <TerminalFileLayout :terminal-active="accountTab === 'terminal'">
+            <div v-show="accountTab === 'terminal'" class="account-tab-pane">
+              <TerminalFileLayout>
                 <template #monitor>
                   <SshMonitorPanel v-if="detail.raw?.id && terminalVisited"
                     :account-id="detail.raw.id" :session-token="sessionToken" :active="accountTab === 'terminal'" />
@@ -103,9 +103,9 @@
                     :account-id="detail.raw.id" :host-remark="accountHostRemark" :account-remark="detail.raw.remark || ''"
                     @ready="onTerminalReady" @disconnected="onTerminalDisconnected" />
                 </template>
-                <template #files="{ embedded }">
+                <template #files>
                   <SshFilePanel v-if="detail.raw?.id" :account-id="detail.raw.id" :host-id="detail.raw.hostId"
-                    :active="accountTab === 'terminal' || accountTab === 'files'" :embedded="embedded"
+                    :active="accountTab === 'terminal'" embedded
                     :session-token="sessionToken" :default-cwd="detail.raw.defaultCwd || ''"
                     :opening-session="openingFileSession" @request-session="establishFileSession"
                     @session-invalid="onFileSessionInvalid" />
@@ -592,7 +592,7 @@ function onFileSessionInvalid() {
 }
 
 watch([accountTab,()=>detail.value.raw?.id], ([tab]) => {
-  const needsSession = ['files','scripts','processes','disk-usage'].includes(tab)
+  const needsSession = ['scripts','processes','disk-usage'].includes(tab)
   if (needsSession && detail.value.type==='ACCOUNT' && detail.value.raw?.id && !sessionToken.value && !openingFileSession.value) {
     establishFileSession()
   }
