@@ -136,6 +136,8 @@ import { transfers, transferHistoryWarning, enqueueTransfer, delegateBrowserDown
 import { fileLocation } from '@/composables/useWorkspaceContext'
 import { isTransferActive, transferErrorMessage, transfersForServer } from '@/composables/transferHistory'
 import FolderTransfer from './FolderTransfer.vue'
+import { useAiChanges } from '@/composables/useAiChanges'
+useAiChanges(/^(file_|ssh_command)/, () => { if (props.sessionToken) return refresh() })
 
 const props = defineProps({
   accountId: { type: Number, default: null },

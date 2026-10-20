@@ -39,6 +39,8 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { useAiChanges } from '@/composables/useAiChanges'
+useAiChanges(/^(process_kill|ssh_command|script_run)/, () => { if (props.active && props.sessionToken) return load() })
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchHostProcesses, killHostProcess } from '@/api/sshConsole'
 

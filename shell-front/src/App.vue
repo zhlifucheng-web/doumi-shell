@@ -8,6 +8,7 @@
       <el-scrollbar class="nav-scroll"><nav class="top-nav" aria-label="主导航">
         <router-link v-for="item in navigation" :key="item.path" :to="item.path">{{ item.label }}</router-link>
       </nav></el-scrollbar>
+      <el-button class="ai-entry" @click="aiDialog = true">AI 助手</el-button>
       <router-link to="/about" class="about-link" title="关于 Doumi Shell">
         <el-badge is-dot :hidden="!hasUpdate"><el-icon><InfoFilled /></el-icon><span>关于</span></el-badge>
       </router-link>
@@ -42,6 +43,7 @@
       </router-view>
     </main>
     <ThemeBackground v-model="backgroundDialog" />
+    <AiAssistant v-model="aiDialog" />
   </div>
 </template>
 
@@ -52,6 +54,7 @@ import { useTheme } from '@/composables/useTheme'
 import { managedServer } from '@/composables/useWorkspaceContext'
 import { useBackground } from '@/composables/useBackground'
 import ThemeBackground from '@/components/ThemeBackground.vue'
+import AiAssistant from '@/components/AiAssistant.vue'
 import { checkLatestRelease, getLatestRelease, onLatestReleaseChange } from '@/utils/versionRefresh'
 
 const { background, style: backgroundStyle } = useBackground()
@@ -62,6 +65,7 @@ watchEffect(() => {
   for(const [name,value] of Object.entries(backgroundStyle.value))root.style.setProperty(name,value)
 })
 const backgroundDialog = ref(false)
+const aiDialog = ref(false)
 const hasUpdate = ref(Boolean(getLatestRelease()?.newer))
 onLatestReleaseChange(() => { hasUpdate.value = Boolean(getLatestRelease()?.newer) })
 checkLatestRelease().catch(() => { /* The About page reports failures and always offers manual downloads. */ })

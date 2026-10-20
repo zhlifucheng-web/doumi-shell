@@ -109,6 +109,7 @@
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ScriptEditor from './ScriptEditor.vue'
+import { useAiChanges } from '@/composables/useAiChanges'
 import CronEditor from './CronEditor.vue'
 import ScriptExecutionHistory from './ScriptExecutionHistory.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -246,6 +247,7 @@ async function run(row) {
 }
 
 onMounted(loadList)
+useAiChanges(/^(script_|configuration_import|cleanup_execute)/, loadList)
 watch(() => props.hostId, loadList)
 </script>
 

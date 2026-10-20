@@ -563,9 +563,9 @@ watch([detail,accountHostMeta],()=>{
   const raw=detail.value.raw
   if(detail.value.type==='ACCOUNT'&&raw) {
     const host=accountHostMeta.value
-    managedServer.value={name:host.name||`主机#${raw.hostId}`,address:host.host||'',port:host.port||22,username:raw.username||''}
+    managedServer.value={hostId:raw.hostId,accountId:raw.id,name:host.name||`主机#${raw.hostId}`,address:host.host||'',port:host.port||22,username:raw.username||''}
   } else if(detail.value.type==='HOST'&&raw) {
-    managedServer.value={name:raw.name||raw.host,address:raw.host||'',port:raw.port||22,username:''}
+    managedServer.value={hostId:raw.id,name:raw.name||raw.host,address:raw.host||'',port:raw.port||22,username:''}
   } else managedServer.value=null
 },{deep:true,immediate:true})
 
