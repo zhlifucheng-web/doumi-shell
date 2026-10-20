@@ -123,9 +123,17 @@ public class SshScriptExecutionService {
                 CountDownLatch writerDone=new CountDownLatch(1);
                 AtomicReference<IOException> writerFailure=new AtomicReference<>();
                 Thread writer=new Thread(() -> {
-                    try(OutputStream stream=command.getOutputStream()) {stream.write(script.getContent().getBytes(StandardCharsets.UTF_8));}
+                    OutputStream stream=null;
+                    try {
+                        stream=command.getOutputStream();
+                        stream.write(script.getContent().getBytes(StandardCharsets.UTF_8));
+                        stream.flush();
+                    }
                     catch(IOException e) {writerFailure.set(e);}
-                    finally {writerDone.countDown();}
+                    finally {
+                        if(stream!=null)try {stream.close();} catch(IOException ignored) { /* The remote command may close stdin on normal exit. */ }
+                        writerDone.countDown();
+                    }
                 },"script-stdin");
                 writer.setDaemon(true);writer.start();
                 long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(properties.getScriptRunTimeoutSec()>0?properties.getScriptRunTimeoutSec():3600);

@@ -113,6 +113,19 @@ class ScriptExecutionTest {
         assertEquals("FAILED",row.get("status"));assertEquals(0,row.get("exit_status"));
         assertTrue(row.get("error").toString().contains("发送失败"));
     }
+    @Test void stdinCloseFailureAfterCompleteWriteDoesNotOverrideRemoteExitStatus() throws Exception {
+        open.set(false);when(command.getExitStatus()).thenReturn(0);
+        ByteArrayOutputStream written=new ByteArrayOutputStream();
+        when(command.getOutputStream()).thenReturn(new OutputStream(){
+            @Override public void write(int value) {written.write(value);}
+            @Override public void write(byte[] data,int offset,int length) {written.write(data,offset,length);}
+            @Override public void close() throws IOException {throw new IOException("Stream closed");}
+        });
+        String id=(String)service.start(1,3,"MANUAL").get("id");Map<String,Object> row=await(id);
+        assertEquals("SUCCESS",row.get("status"));assertEquals(0,row.get("exit_status"));
+        assertEquals("echo 中文",written.toString(StandardCharsets.UTF_8.name()));
+        assertNull(row.get("error"));
+    }
     @Test void queuedExecutionCanBeCancelledImmediatelyWithoutSsh() throws Exception {
         java.util.concurrent.ThreadPoolExecutor workers=(java.util.concurrent.ThreadPoolExecutor)ReflectionTestUtils.getField(service,"workers");
         java.util.concurrent.CountDownLatch entered=new java.util.concurrent.CountDownLatch(4),release=new java.util.concurrent.CountDownLatch(1);
