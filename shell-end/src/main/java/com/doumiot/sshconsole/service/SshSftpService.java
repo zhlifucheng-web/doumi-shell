@@ -34,6 +34,9 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -67,45 +70,39 @@ public class SshSftpService {
     public ListResult list(String sessionToken, String path) throws IOException {
         SshSessionRegistry.SessionEntry entry = sessionRegistry.get(sessionToken);
         String resolved = SshSftpPathResolver.resolveForList(path, entry.getDefaultCwd());
-        // exec 与 SFTP 不宜同连接并发；先拉取属主/属组名再 ls
-        Map<String, String[]> ownerByName = loadOwnerMetadata(entry, resolved);
-        IdNameMaps idNames = loadIdNameMaps(entry);
+        List<RemoteResourceInfo> infos;
         try (SFTPClient sftp = openSftp(entry)) {
-            List<RemoteResourceInfo> infos = sftp.ls(resolved);
-            List<FileEntry> items = new ArrayList<>();
-            for (RemoteResourceInfo info : infos) {
-                String name = info.getName();
-                if (".".equals(name) || "..".equals(name)) {
-                    continue;
-                }
-                FileEntry fe = new FileEntry();
-                fe.setName(name);
-                fe.setDir(info.isDirectory());
-                FileAttributes attrs = info.getAttributes();
-                fe.setSize(attrs != null ? attrs.getSize() : 0L);
-                fe.setMtime(attrs != null ? attrs.getMtime() : 0L);
-                boolean symlink = attrs != null && attrs.getType() == FileMode.Type.SYMLINK;
-                String[] meta = ownerByName.get(name);
-                if (meta != null) {
-                    fe.setOwner(meta[0]);
-                    fe.setGroup(meta[1]);
-                    int mask = SshSftpAttributeFormatter.parseOctalMode(meta[2]);
-                    fe.setPermissions(SshSftpAttributeFormatter.formatPermissionMask(mask, info.isDirectory(), symlink));
-                } else {
-                    int uid = attrs != null ? attrs.getUID() : -1;
-                    int gid = attrs != null ? attrs.getGID() : -1;
-                    fe.setOwner(SshSftpAttributeFormatter.resolveIdName(uid, idNames.uidToName));
-                    fe.setGroup(SshSftpAttributeFormatter.resolveIdName(gid, idNames.gidToName));
-                    fe.setPermissions(SshSftpAttributeFormatter.formatPermissions(attrs, info.isDirectory(), symlink));
-                }
-                items.add(fe);
-            }
-            items.sort(Comparator.comparing(FileEntry::isDir).reversed().thenComparing(FileEntry::getName));
-            ListResult result = new ListResult();
-            result.setPath(resolved);
-            result.setItems(items);
-            return result;
+            infos = sftp.ls(resolved);
         }
+        // Use SFTP attributes as the source of truth, including for unusual filenames.
+        // Finish the SFTP request before using separate exec channels for name resolution.
+        IdNameMaps idNames = loadIdNameMaps(entry, infos);
+        List<FileEntry> items = new ArrayList<>();
+        for (RemoteResourceInfo info : infos) {
+            String name = info.getName();
+            if (".".equals(name) || "..".equals(name)) {
+                continue;
+            }
+            FileEntry fe = new FileEntry();
+            fe.setName(name);
+            fe.setDir(info.isDirectory());
+            FileAttributes attrs = info.getAttributes();
+            fe.setSize(attrs != null ? attrs.getSize() : 0L);
+            fe.setMtime(attrs != null ? attrs.getMtime() : 0L);
+            boolean symlink = attrs != null && attrs.getType() == FileMode.Type.SYMLINK;
+            boolean hasIds = attrs != null && attrs.has(FileAttributes.Flag.UIDGID);
+            Integer uid = hasIds ? attrs.getUID() : null;
+            Integer gid = hasIds ? attrs.getGID() : null;
+            fe.setOwner(SshSftpAttributeFormatter.resolveIdName(uid, idNames.uidToName));
+            fe.setGroup(SshSftpAttributeFormatter.resolveIdName(gid, idNames.gidToName));
+            fe.setPermissions(SshSftpAttributeFormatter.formatPermissions(attrs, info.isDirectory(), symlink));
+            items.add(fe);
+        }
+        items.sort(Comparator.comparing(FileEntry::isDir).reversed().thenComparing(FileEntry::getName));
+        ListResult result = new ListResult();
+        result.setPath(resolved);
+        result.setItems(items);
+        return result;
     }
 
     /** The response owns these resources until its stream is closed. */
@@ -235,50 +232,50 @@ public class SshSftpService {
         return idx >= 0 ? path.substring(idx + 1) : path;
     }
 
-    private Map<String, String[]> loadOwnerMetadata(SshSessionRegistry.SessionEntry entry, String resolved) {
-        String quoted = SshSftpAttributeFormatter.shellSingleQuote(resolved);
-        String[] commands = {
-                "LC_ALL=C find " + quoted + " -mindepth 1 -maxdepth 1 -printf '%f\\t%U\\t%G\\t%#m\\n' 2>/dev/null",
-                "LC_ALL=C sh -c 'cd " + quoted + " && for f in * .[!.]* ..?*; do "
-                        + "[ -e \"$f\" ] || continue; stat -c \"%f\\t%U\\t%G\\t%a\" \"$f\"; done' 2>/dev/null"
-        };
-        for (String cmd : commands) {
-            Map<String, String[]> map = execOwnerLines(entry, cmd);
-            if (!map.isEmpty()) {
-                return map;
+    private IdNameMaps loadIdNameMaps(SshSessionRegistry.SessionEntry entry, List<RemoteResourceInfo> infos) {
+        Set<Integer> uids = new LinkedHashSet<>(), gids = new LinkedHashSet<>();
+        for (RemoteResourceInfo info : infos) {
+            if (".".equals(info.getName()) || "..".equals(info.getName())) continue;
+            FileAttributes attrs = info.getAttributes();
+            if (attrs != null && attrs.has(FileAttributes.Flag.UIDGID)) {
+                uids.add(attrs.getUID());
+                gids.add(attrs.getGID());
             }
         }
-        return Collections.emptyMap();
-    }
-
-    private Map<String, String[]> execOwnerLines(SshSessionRegistry.SessionEntry entry, String cmd) {
-        try {
-            SshRemoteExec.ExecResult result = SshRemoteExec.exec(entry.getClient(), entry.getExecLock(), cmd, 25);
-            if (!StringUtils.hasText(result.getStdout())) {
-                return Collections.emptyMap();
-            }
-            return SshSftpAttributeFormatter.parseFindOwnerLines(result.getStdout());
-        } catch (IOException e) {
-            log.debug("SFTP 列表属主命令失败: {}", e.getMessage());
-            return Collections.emptyMap();
-        }
-    }
-
-    private IdNameMaps loadIdNameMaps(SshSessionRegistry.SessionEntry entry) {
         IdNameMaps maps = new IdNameMaps();
-        try {
-            SshRemoteExec.ExecResult pw = SshRemoteExec.exec(
-                    entry.getClient(), entry.getExecLock(),
-                    "getent passwd 2>/dev/null | awk -F: '{print $3\":\"$1}'", 20);
-            maps.uidToName = SshSftpAttributeFormatter.parseIdNameLines(pw.getStdout());
-            SshRemoteExec.ExecResult gr = SshRemoteExec.exec(
-                    entry.getClient(), entry.getExecLock(),
-                    "getent group 2>/dev/null | awk -F: '{print $3\":\"$1}'", 20);
-            maps.gidToName = SshSftpAttributeFormatter.parseIdNameLines(gr.getStdout());
-        } catch (IOException e) {
-            log.debug("getent 解析属主/属组失败: {}", e.getMessage());
-        }
+        maps.uidToName = loadIdNames(entry, "passwd", uids);
+        maps.gidToName = loadIdNames(entry, "group", gids);
         return maps;
+    }
+
+    private Map<Integer, String> loadIdNames(SshSessionRegistry.SessionEntry entry, String database, Set<Integer> ids) {
+        Map<Integer, String> names = new HashMap<>();
+        List<Integer> requested = new ArrayList<>(ids);
+        // Query only IDs present in the directory. This also supports NSS providers
+        // that allow keyed lookups but disable whole-directory enumeration.
+        for (int start = 0; start < requested.size(); start += 128) {
+            StringBuilder keys = new StringBuilder();
+            for (int i = start; i < Math.min(start + 128, requested.size()); i++) {
+                keys.append(' ').append(Integer.toUnsignedString(requested.get(i)));
+            }
+            // Only fixed database names and numeric IDs enter this command; paths
+            // and filenames never pass through a shell. Local files are a fallback
+            // for minimal Unix systems without getent, not a replacement for NSS.
+            String command = "if command -v getent >/dev/null 2>&1; then getent " + database + keys
+                    + " 2>/dev/null; else cat /etc/" + database + " 2>/dev/null; fi"
+                    + " | awk -F: 'NF >= 4 && $3 ~ /^[0-9]+$/ {print $3\":\"$1}'";
+            try {
+                SshRemoteExec.ExecResult result = SshRemoteExec.exec(
+                        entry.getClient(), entry.getExecLock(), command, 5);
+                // getent may return partial results with exit code 2 for missing IDs.
+                names.putAll(SshSftpAttributeFormatter.parseIdNameLines(result.getStdout()));
+            } catch (IOException e) {
+                log.debug("SFTP {} 名称查询失败: {}", database, e.getMessage());
+                break;
+            }
+        }
+        names.keySet().retainAll(ids);
+        return names;
     }
 
     private static final class IdNameMaps {
