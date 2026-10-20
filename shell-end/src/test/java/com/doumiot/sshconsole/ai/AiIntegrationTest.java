@@ -48,7 +48,7 @@ class AiIntegrationTest {
             chats.approve(conversation,Collections.singletonList(waiting.path("pending").path(0).path("actionId").asText()),true);
             JsonNode complete=awaitIdle(conversation);assertEquals("idle",complete.path("state").asText());assertTrue(complete.toString().contains("操作已完成"));assertEquals(3,rounds.get());
             assertTrue(complete.path("events").toString().contains("timestamp"));
-            assertEquals(0,jdbc.queryForObject("SELECT COUNT(*) FROM ssh_group WHERE id=?",Integer.class,group));
+            assertEquals(0,jdbc.queryForObject("SELECT COUNT(*) FROM ssh_group WHERE id=?",Integer.class,group),complete.path("events").toString());
             assertEquals(conversation,chats.latest(512L,null).path("id").asText());
             assertTrue(chats.history(null).toString().contains("查询数据表并删除测试分组"));
             byte[] stored=jdbc.queryForObject("SELECT events_enc FROM ai_conversation WHERE id=?",byte[].class,conversation);

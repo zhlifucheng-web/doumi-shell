@@ -52,7 +52,7 @@ public class AiTools {
                 (a,o)->groups.update(AiJson.id(a,"id"),body(a,SshGroupService.SshGroupSaveRequest.class)),"id!:integer:分组 ID","data!:object:完整分组字段");
         add("group_move","terminal","移动分组；不填 parentId 表示根分组",true,true,
                 (a,o)->groups.move(AiJson.id(a,"id"),optionalId(a,"parentId")),"id!:integer:分组 ID","parentId:integer:父分组 ID");
-        add("group_delete","terminal","删除空分组",true,true,(a,o)->groups.delete(AiJson.id(a,"id")),"id!:integer:分组 ID");
+        add("group_delete","terminal","级联删除分组及全部子分组、主机、账户和主机脚本；关闭相关连接并保留执行历史；分组内有运行中任务时拒绝删除",true,true,(a,o)->groups.delete(AiJson.id(a,"id")),"id!:integer:分组 ID");
         add("host_get","terminal","读取主机配置",false,false,(a,o)->hosts.getById(AiJson.id(a,"id")),"id!:integer:主机 ID");
         add("host_create","terminal","创建主机，data 必填 groupId/name/host，port 默认22，可填 remark/enabled/sortOrder",false,true,
                 (a,o)->hosts.create(body(a,SshHostService.SshHostSaveRequest.class)),"data!:object:主机字段 {groupId,name,host,port?,remark?,enabled?,sortOrder?}");

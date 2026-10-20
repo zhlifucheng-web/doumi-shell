@@ -105,6 +105,34 @@ class DoumiShellIntegrationTest {
         assertNotNull(groups.getById(ids[0]));
     }
 
+    @Test void deletingGroupCascadesNestedGroupsHostsAccountsScriptsAndKeepsExecutionHistory() {
+        long[] ids = assets();
+        SshGroupService.SshGroupSaveRequest childRequest = new SshGroupService.SshGroupSaveRequest();
+        childRequest.setParentId(ids[0]); childRequest.setName("nested-" + UUID.randomUUID());
+        long childId = groups.create(childRequest).getId();
+        SshHostService.SshHostSaveRequest hostRequest = new SshHostService.SshHostSaveRequest();
+        hostRequest.setGroupId(childId); hostRequest.setName("nested-host"); hostRequest.setHost("127.0.0.1");
+        long hostId = hosts.create(hostRequest).getId();
+        SshAccountService.SshAccountSaveRequest accountRequest = new SshAccountService.SshAccountSaveRequest();
+        accountRequest.setHostId(hostId); accountRequest.setUsername("nested-user"); accountRequest.setAuthType("PASSWORD");
+        CredentialCipher.SshSecretPayload secret = new CredentialCipher.SshSecretPayload(); secret.setPassword("nested-secret");
+        accountRequest.setSecret(secret);
+        long accountId = accounts.create(accountRequest).getId();
+        SshScriptService.SshScriptSaveRequest scriptRequest = new SshScriptService.SshScriptSaveRequest();
+        scriptRequest.setHostId(hostId); scriptRequest.setName("nested-script"); scriptRequest.setContent("echo nested");
+        long scriptId = scripts.create(scriptRequest).getId();
+        String executionId = UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO ssh_script_execution(id,script_id,script_name,account_id,host_id,source,status,started_at) VALUES(?,?,?,?,?,'MANUAL','FAILED','2000-01-01T00:00:00Z')",
+                executionId, scriptId, "nested-script", accountId, hostId);
+
+        assertEquals(2, groups.delete(ids[0]));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM ssh_group WHERE id IN (?,?)", Integer.class, ids[0], childId));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM ssh_host WHERE id IN (?,?)", Integer.class, ids[1], hostId));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM ssh_account WHERE id IN (?,?)", Integer.class, ids[2], accountId));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM ssh_script WHERE host_id IN (?,?)", Integer.class, ids[1], hostId));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM ssh_script_execution WHERE id=?", Integer.class, executionId));
+    }
+
     @Test void failedImportRollsBackAndInvalidSchedulesDoNotSaveScripts() throws Exception {
         SshConfigurationService.Snapshot snapshot = new SshConfigurationService.Snapshot();
         SshGroup valid = new SshGroup(); valid.setId(1L); valid.setName("valid");

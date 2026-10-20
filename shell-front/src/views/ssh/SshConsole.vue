@@ -950,9 +950,16 @@ async function confirmDeleteDetail() {
   if (!n) return
   const message = n.nodeType === 'HOST'
     ? `删除主机「${n.label}」会同时删除其全部账户、主机脚本及定时配置，并关闭这些账户的在线连接。历史执行记录会保留；有脚本运行时不能删除。`
-    : `确定删除「${n.label}」？`
-  await ElMessageBox.confirm(message, n.nodeType === 'HOST' ? '删除主机及关联配置' : '确认', { type: 'warning', confirmButtonText: '删除' })
-  if (n.nodeType === 'GROUP') await deleteGroup(n.id)
+    : n.nodeType === 'GROUP'
+      ? `删除分组「${n.label}」会级联删除其全部子分组、主机、账户、主机脚本和定时配置，并关闭相关在线连接。历史执行记录会保留；分组树中有脚本运行时不能删除。`
+      : `确定删除「${n.label}」？`
+  const title = n.nodeType === 'GROUP' ? '级联删除分组' : n.nodeType === 'HOST' ? '删除主机及关联配置' : '确认'
+  await ElMessageBox.confirm(message, title, { type: 'warning', confirmButtonText: '删除' })
+  if (n.nodeType === 'GROUP') {
+    const saved = readSavedSshAccount()
+    if (saved && await isHostInsideGroup(saved.hostId, n.id)) clearSavedSshAccount()
+    await deleteGroup(n.id)
+  }
   else if (n.nodeType === 'HOST') {
     const saved = readSavedSshAccount()
     if (saved?.hostId === n.id) clearSavedSshAccount()
@@ -966,6 +973,26 @@ async function confirmDeleteDetail() {
   detail.value = { type: null, raw: null }
   treeCurrentNodeKey.value = null
   refreshTree()
+}
+
+async function isHostInsideGroup(hostId, groupId) {
+  if (hostId == null || groupId == null) return false
+  const host = await getHost(hostId).catch(() => null)
+  if (!host) return false
+  const pending = [groupId]
+  const visited = new Set()
+  while (pending.length) {
+    const current = pending.pop()
+    if (visited.has(current)) continue
+    visited.add(current)
+    const nodes = await fetchTreeChildren('GROUP', current).catch(() => [])
+    for (const node of nodes || []) {
+      if (node.nodeType === 'HOST' && node.id === hostId) return true
+      if (node.nodeType === 'GROUP') pending.push(node.id)
+    }
+    if (host.groupId === current) return true
+  }
+  return false
 }
 </script>
 

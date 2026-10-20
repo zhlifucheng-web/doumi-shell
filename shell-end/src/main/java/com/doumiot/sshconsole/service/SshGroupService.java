@@ -10,9 +10,12 @@ import com.doumiot.sshconsole.mapper.SshGroupMapper;
 import com.doumiot.sshconsole.mapper.SshHostMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.util.StringUtils;
 
 import javax.annotation.Resource;
+import java.util.List;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -25,6 +28,10 @@ public class SshGroupService {
     private SshGroupMapper sshGroupMapper;
     @Resource
     private SshHostMapper sshHostMapper;
+    @Resource
+    private SshHostService sshHostService;
+    @Resource
+    private JdbcTemplate jdbc;
 
     public SshGroup create(SshGroupSaveRequest req) {
         validateName(req.getName());
@@ -78,18 +85,31 @@ public class SshGroupService {
         return requireGroup(id);
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public int delete(long id) {
+        jdbc.update("UPDATE ssh_group SET id=id WHERE id=?", id);
         requireGroup(id);
-        Long childGroups = sshGroupMapper.selectCount(
-                new LambdaQueryWrapper<SshGroup>().eq(SshGroup::getParentId, id));
-        if (childGroups != null && childGroups > 0) {
-            throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "请先删除子分组");
+        Set<Long> descendants = collectDescendantIds(id);
+        Set<Long> subtree = new HashSet<>(descendants);
+        subtree.add(id);
+        Set<Long> subtreeHosts = new HashSet<>();
+        for (Long groupId : subtree) {
+            for (SshHost host : sshHostMapper.selectList(
+                    new LambdaQueryWrapper<SshHost>().eq(SshHost::getGroupId, groupId))) {
+                subtreeHosts.add(host.getId());
+            }
         }
-        Long hosts = sshHostMapper.selectCount(new LambdaQueryWrapper<SshHost>().eq(SshHost::getGroupId, id));
-        if (hosts != null && hosts > 0) {
-            throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "请先删除分组下的主机");
-        }
-        return sshGroupMapper.deleteById(id);
+
+        // Remove hosts first so their accounts, scripts, schedules, and sessions are cleaned up too.
+        for (Long hostId : subtreeHosts) sshHostService.delete(hostId);
+
+        // Descendant groups must be removed before their parents.
+        List<Long> deletionOrder = new java.util.ArrayList<>();
+        collectChildrenPostOrder(id, deletionOrder);
+        deletionOrder.add(id);
+        int deleted = 0;
+        for (Long groupId : deletionOrder) deleted += sshGroupMapper.deleteById(groupId);
+        return deleted;
     }
 
     public void assertSiblingNameUnique(Long parentId, String name, Long excludeId) {
@@ -127,6 +147,14 @@ public class SshGroupService {
                 new LambdaQueryWrapper<SshGroup>().eq(SshGroup::getParentId, parentId))) {
             ids.add(g.getId());
             collectChildren(g.getId(), ids);
+        }
+    }
+
+    private void collectChildrenPostOrder(long parentId, java.util.List<Long> order) {
+        for (SshGroup child : sshGroupMapper.selectList(
+                new LambdaQueryWrapper<SshGroup>().eq(SshGroup::getParentId, parentId))) {
+            collectChildrenPostOrder(child.getId(), order);
+            order.add(child.getId());
         }
     }
 

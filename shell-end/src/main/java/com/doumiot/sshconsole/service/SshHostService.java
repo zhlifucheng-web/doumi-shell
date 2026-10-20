@@ -73,6 +73,7 @@ public class SshHostService {
 
     @Transactional(rollbackFor = Exception.class)
     public int delete(long id) {
+        jdbc.update("UPDATE ssh_host SET id=id WHERE id=?", id);
         requireHost(id);
         Integer running = jdbc.queryForObject("SELECT COUNT(*) FROM ssh_script_execution WHERE host_id=? AND status IN ('QUEUED','RUNNING','CANCELLING')", Integer.class, id);
         if (running != null && running > 0)
