@@ -27,13 +27,16 @@ try {
     New-Item -ItemType Directory -Force -Path $staticPath | Out-Null
     Copy-Item -Path (Join-Path $frontendBuild 'dist/*') -Destination $staticPath -Recurse
     Set-Location (Join-Path $Root 'shell-end')
+    $backendBuild = Join-Path $Root 'shell-end/target'
     $mavenArgs = @('clean', 'verify')
     if ($SkipTests) { $mavenArgs += '-DskipTests' }
     & mvn @mavenArgs
     if ($LASTEXITCODE -ne 0) { throw 'Backend build or tests failed' }
-    $outputPath = Join-Path $Root 'release'
+    $outputPath = $env:DOUMI_RELEASE_DIR
+    if (-not $outputPath) { $outputPath = Join-Path $Root 'release' }
+    $outputPath = [IO.Path]::GetFullPath($outputPath)
     New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
-    Copy-Item -LiteralPath (Join-Path $Root 'shell-end/target/shell-end-1.0.0-SNAPSHOT.jar') -Destination (Join-Path $outputPath 'doumi-shell.jar') -Force
+    Copy-Item -LiteralPath (Join-Path $backendBuild 'shell-end-1.0.0-SNAPSHOT.jar') -Destination (Join-Path $outputPath 'doumi-shell.jar') -Force
     foreach ($scriptName in @('run-windows.bat', 'run-linux.sh')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $scriptName) -Destination $outputPath -Force
     }

@@ -2,7 +2,7 @@
 
 接口基础路径为 `/api/ssh-console/ai`，沿用本应用的同源访问方式及业务服务。与管理页面一样，仅向可信网络开放；需要跨网络使用时，在部署入口配置认证和 HTTPS。
 
-除下载外，响应沿用 `{code:200,success:true,data:...}`，失败时 `success:false`，应检查业务状态。配置及对话接口返回 `Cache-Control: no-store`。内置对话采用 OpenAI 兼容 Chat Completions 的 `messages/tools/tool_calls/tool_call_id` 协议，模型需支持工具调用。
+除下载外，响应沿用 `{code:200,success:true,data:...}`，失败时 `success:false`，应检查业务状态。配置及对话接口返回 `Cache-Control: no-store`。内置对话采用 OpenAI 兼容 Chat Completions 的 `messages/tools/tool_calls/tool_call_id` 协议，模型需支持工具调用。前端请求厂商的流式 Chat Completions（`stream: true`），将文本增量通过应用内 SSE 事件推送；工具调用参数会先完整合并和校验，再进入确认或执行流程。若厂商忽略流式选项并返回单个 JSON 响应，也会兼容处理。连接中断或输出未正常结束时，已接收文本保留为不完整状态，未完成工具调用不会执行。
 
 ## 工具 API
 
@@ -61,8 +61,10 @@ Content-Type: application/json
 | `POST /providers` | `{id?,name,baseUrl,model,apiKey?,clearApiKey?}`；编辑时空 Key 保留旧值 |
 | `DELETE /providers/{id}` | 删除配置 |
 | `POST /providers/{id}/test` | 使用已保存配置请求一次普通回复；不验证完整工具能力 |
-| `POST /conversations` | `{providerId}` → `{id,providerId}` |
-| `GET /conversations/{id}?since=0` | 返回 state、running、cursor、revision、events、pending；since 为上次 cursor |
+| `POST /conversations` | `{providerId,authorizationMode?}`，模式为 `ask`（默认）或 `auto` → `{id,providerId,authorizationMode}` |
+| `POST /conversations/{id}/authorization` | `{mode:"ask"|"auto"}`；仅空闲且无待确认操作时可切换。`auto` 会执行本会话中所有要求确认的工具操作 |
+| `POST /conversations/{id}/provider` | `{providerId}`；切换到已配置的厂商/模型并保留会话历史，仅空闲且无待确认操作时可切换 |
+| `GET /conversations/{id}?since=0` | 返回 authorizationMode、providerId、state、running、cursor、revision、events、pending；since 为上次 cursor |
 | `POST /conversations/{id}/messages` | `{text,workspace?,attachmentIds:[]}`，异步开始，随后轮询状态 |
 | `POST /conversations/{id}/approve` | `{actionIds:[...],approved:true或false}`，处理待确认操作并继续对话 |
 | `POST /conversations/{id}/stop` | 停止后续调用，等待当前请求结束；不撤回已启动的远端操作 |
@@ -70,7 +72,7 @@ Content-Type: application/json
 | `POST /conversations/{id}/attachments` | multipart：多项 files，paths 为等长 JSON 字符串数组；使用相对路径，返回附件 id/name/size/text |
 | `GET /downloads/{id}` | 原生文件响应，链接 2 小时后失效，清除所属会话也会失效 |
 
-状态为 idle/running/awaiting_confirmation/stopping/error。轮询中按 `callId` 更新同一工具卡片，按 `sequence` 去重。事件角色为 user/assistant/tool/error/notice。`revision` 在成功修改数据时增加，可用于刷新相关页面；`tool.changed` 标识该操作修改了数据。
+状态为 idle/running/awaiting_confirmation/stopping/error。轮询中按 `callId` 更新同一工具卡片，按 `sequence` 去重。事件角色为 user/assistant/tool/error/notice；自动授权的工具事件 state 为 `auto_authorized`。`revision` 在成功修改数据时增加，可用于刷新相关页面；`tool.changed` 标识该操作修改了数据。自动授权只对明确启用它的单个会话有效，API 客户端应在启用前向操作者说明其影响范围。
 
 服务端最多同时保存 24 个内存会话，2 个任务并行、8 个排队。页面刷新后当前 UI 不恢复会话；服务重启或闲置 2 小时后会话失效。厂商配置单独保存于 SQLite，不随普通服务器配置备份导出。
 

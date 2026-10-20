@@ -38,16 +38,16 @@ class AiWorkflowTest {
         assertTrue(tools.catalog().size()>=45);assertFalse(tools.catalog().toString().toLowerCase().contains("finalshell"));
     }
     @Test void readToolResultIsPassedToTheNextProviderRound() throws Exception {
-        when(completion.complete(any(),anyList(),any())).thenReturn(toolMessage(call("read1","cron_preview",AiJson.object("cron","0 9 * * *"))),AiJson.object("content","查询完成"));
+        when(completion.stream(any(),anyList(),any(),any(),any())).thenReturn(toolMessage(call("read1","cron_preview",AiJson.object("cron","0 9 * * *"))),AiJson.object("content","查询完成"));
         String id=chat();send(id);JsonNode status=done(id);
         assertEquals("idle",status.path("state").asText());assertTrue(status.toString().contains("查询完成"));
-        verify(completion).complete(any(),argThat(messages->messages.stream().anyMatch(m->m.path("tool_call_id").asText().equals("read1")&&m.path("content").asText().contains("result"))),any());
+        verify(completion).stream(any(),argThat(messages->messages.stream().anyMatch(m->m.path("tool_call_id").asText().equals("read1")&&m.path("content").asText().contains("result"))),any(),any(),any());
         assertEquals(status.path("cursor").asInt(),chats.status(id,status.path("cursor").asInt()).path("cursor").asInt());
         assertEquals(0,chats.status(id,status.path("cursor").asInt()).path("events").size());
     }
     @Test void mutationRequiresApprovalAndCannotBeReplayedOrStolen() throws Exception {
         SshGroupService groups=mock(SshGroupService.class);ReflectionTestUtils.setField(tools,"groups",groups);
-        when(completion.complete(any(),anyList(),any())).thenReturn(toolMessage(call("delete1","group_delete",AiJson.object("id",9))),AiJson.object("content","已处理"));
+        when(completion.stream(any(),anyList(),any(),any(),any())).thenReturn(toolMessage(call("delete1","group_delete",AiJson.object("id",9))),AiJson.object("content","已处理"));
         String id=chat();send(id);JsonNode pending=done(id);String action=pending.path("pending").path(0).path("actionId").asText();
         assertEquals("awaiting_confirmation",pending.path("state").asText());verify(groups,never()).delete(anyLong());
         assertThrows(IllegalArgumentException.class,()->tools.confirm("other",action,true));
@@ -55,9 +55,25 @@ class AiWorkflowTest {
         assertEquals(1,result.path("revision").asInt());assertThrows(IllegalArgumentException.class,()->tools.confirm(id,action,true));
         assertThrows(IllegalArgumentException.class,()->chats.approve(id,Collections.singletonList(action),true));
     }
+    @Test void automaticAuthorizationRunsConfirmedMutationAndKeepsAuditEvent() throws Exception {
+        SshGroupService groups=mock(SshGroupService.class);ReflectionTestUtils.setField(tools,"groups",groups);
+        when(completion.stream(any(),anyList(),any(),any(),any())).thenReturn(toolMessage(call("delete-auto","group_delete",AiJson.object("id",9))),AiJson.object("content","已完成"));
+        String id=chat();chats.setAuthorizationMode(id,"auto");send(id);JsonNode status=done(id);
+        verify(groups,times(1)).delete(9);assertEquals(0,status.path("pending").size());assertEquals("auto",status.path("authorizationMode").asText());
+        assertTrue(status.toString().contains("auto_authorized"));assertTrue(status.toString().contains("已完成"));
+    }
+    @Test void authorizationAndProviderCanChangeOnlyWhenConversationIsIdle() throws Exception {
+        when(completion.stream(any(),anyList(),any(),any(),any())).thenReturn(AiJson.object("content","第一条完成"));
+        String id=chat();send(id);done(id);
+        JsonNode switched=chats.setProvider(id,"provider-two");assertEquals("provider-two",switched.path("providerId").asText());
+        assertEquals("ask",switched.path("authorizationMode").asText());
+        JsonNode automatic=chats.setAuthorizationMode(id,"auto");assertEquals("auto",automatic.path("authorizationMode").asText());
+        assertThrows(IllegalArgumentException.class,()->chats.setAuthorizationMode(id,"unknown"));
+        assertTrue(automatic.toString().contains("第一条完成"));
+    }
     @Test void refusalDoesNotExecuteAndResumesConversation() throws Exception {
         SshGroupService groups=mock(SshGroupService.class);ReflectionTestUtils.setField(tools,"groups",groups);
-        when(completion.complete(any(),anyList(),any())).thenReturn(toolMessage(call("delete1","group_delete",AiJson.object("id",9))),AiJson.object("content","取消操作"));
+        when(completion.stream(any(),anyList(),any(),any(),any())).thenReturn(toolMessage(call("delete1","group_delete",AiJson.object("id",9))),AiJson.object("content","取消操作"));
         String id=chat();send(id);String action=done(id).path("pending").path(0).path("actionId").asText();
         chats.approve(id,Collections.singletonList(action),false);assertTrue(done(id).toString().contains("cancelled"));verifyNoInteractions(groups);
     }
@@ -71,13 +87,13 @@ class AiWorkflowTest {
     }
     @Test void stoppingInFlightProviderPreventsNewToolActions() throws Exception {
         CountDownLatch started=new CountDownLatch(1),release=new CountDownLatch(1);
-        when(completion.complete(any(),anyList(),any())).thenAnswer(inv->{started.countDown();release.await(3,TimeUnit.SECONDS);return toolMessage(call("delete1","group_delete",AiJson.object("id",9)));});
+        when(completion.stream(any(),anyList(),any(),any(),any())).thenAnswer(inv->{started.countDown();release.await(3,TimeUnit.SECONDS);return toolMessage(call("delete1","group_delete",AiJson.object("id",9)));});
         String id=chat();send(id);assertTrue(started.await(2,TimeUnit.SECONDS));chats.stop(id);release.countDown();
         JsonNode status=done(id);assertEquals(0,status.path("pending").size());assertEquals("idle",status.path("state").asText());assertTrue(status.toString().contains("已停止"));
-        verify(completion,times(1)).complete(any(),anyList(),any());
+        verify(completion,times(1)).stream(any(),anyList(),any(),any(),any());
     }
     @Test void malformedToolArgumentsProduceAnErrorResultAndNoAction() throws Exception {
-        when(completion.complete(any(),anyList(),any())).thenReturn(toolMessage(AiJson.object("id","bad","function",AiJson.object("name","group_delete","arguments","{bad"))),AiJson.object("content","参数错误"));
+        when(completion.stream(any(),anyList(),any(),any(),any())).thenReturn(toolMessage(AiJson.object("id","bad","function",AiJson.object("name","group_delete","arguments","{bad"))),AiJson.object("content","参数错误"));
         String id=chat();send(id);JsonNode status=done(id);assertTrue(status.toString().contains("error"));assertEquals(0,status.path("pending").size());
     }
     @Test void attachmentsPreserveDirectoriesAndEnforceConversationOwnership() throws Exception {
@@ -95,7 +111,7 @@ class AiWorkflowTest {
         assertThrows(IllegalArgumentException.class,()->files.read("owner",id,0,10));
     }
     @Test void refusalsAndEmptyProviderRepliesAreVisibleToTheUser() throws Exception {
-        when(completion.complete(any(),anyList(),any())).thenReturn(AiJson.object("content",null,"refusal","不能完成此请求"),AiJson.object("content",null));
+        when(completion.stream(any(),anyList(),any(),any(),any())).thenReturn(AiJson.object("content",null,"refusal","不能完成此请求"),AiJson.object("content",null));
         String id=chat();send(id);assertTrue(done(id).toString().contains("不能完成此请求"));
         send(id);JsonNode error=done(id);assertEquals("error",error.path("state").asText());assertTrue(error.toString().contains("未返回文本"));
     }

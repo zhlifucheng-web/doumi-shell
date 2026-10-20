@@ -8,6 +8,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AiCompletionClientTest {
@@ -28,6 +31,33 @@ class AiCompletionClientTest {
     @Test void upstreamErrorsDoNotExposeResponseSecrets() {
         server.createContext("/v1/chat/completions",exchange->{byte[] body="sensitive upstream test-provider-key".getBytes(StandardCharsets.UTF_8);exchange.sendResponseHeaders(401,body.length);exchange.getResponseBody().write(body);exchange.close();});
         Exception e=assertThrows(IllegalArgumentException.class,()->client.complete(provider,Collections.emptyList(),null));assertTrue(e.getMessage().contains("401"));assertFalse(e.getMessage().contains("test-provider-key"));assertFalse(e.getMessage().contains("sensitive"));
+    }
+    @Test void streamsTextAndMergesFragmentedToolCalls() {
+        server.createContext("/v1/chat/completions",exchange->{
+            exchange.getResponseHeaders().set("Content-Type","text/event-stream; charset=UTF-8");
+            exchange.sendResponseHeaders(200,0);
+            String[] packets={
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Hello \"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"world\"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"group_\",\"arguments\":\"{\\\"id\\\":\"}}]}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"get\",\"arguments\":\"7}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n"
+            };
+            for(String packet:packets)exchange.getResponseBody().write(packet.getBytes(StandardCharsets.UTF_8));exchange.close();
+        });
+        List<String> deltas=new ArrayList<>();AiCompletionClient.StreamControl control=new AiCompletionClient.StreamControl();
+        JsonNode reply=client.stream(provider,Collections.singletonList(AiJson.object("role","user","content","test")),AiJson.JSON.createArrayNode().add(AiJson.object("type","function")),deltas::add,control);
+        assertEquals(Arrays.asList("Hello ","world"),deltas);assertEquals("Hello world",reply.path("content").asText());
+        assertEquals("call_1",reply.path("tool_calls").path(0).path("id").asText());assertEquals("group_get",reply.path("tool_calls").path(0).path("function").path("name").asText());
+        assertEquals("{\"id\":7}",reply.path("tool_calls").path(0).path("function").path("arguments").asText());
+    }
+    @Test void incompleteStreamFailsInsteadOfReturningPartialToolCalls() {
+        server.createContext("/v1/chat/completions",exchange->{
+            exchange.getResponseHeaders().set("Content-Type","text/event-stream; charset=UTF-8");exchange.sendResponseHeaders(200,0);
+            String packet="data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"group_delete\",\"arguments\":\"{}\"}}]}}]}\n\n";
+            exchange.getResponseBody().write(packet.getBytes(StandardCharsets.UTF_8));exchange.close();
+        });
+        assertThrows(IllegalArgumentException.class,()->client.stream(provider,Collections.emptyList(),null,s->{},new AiCompletionClient.StreamControl()));
     }
     @Test void invalidProviderAddressesAreRejectedAndFullEndpointIsSupported() {
         for(String url:new String[]{"file:///tmp/a","https://user:password@example.com/v1","https://example.com/v1?apiKey=secret","https://example.com/v1#key"})assertThrows(IllegalArgumentException.class,()->AiProviderService.normalizeBaseUrl(url));

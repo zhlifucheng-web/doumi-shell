@@ -8,7 +8,9 @@
       <el-scrollbar class="nav-scroll"><nav class="top-nav" aria-label="主导航">
         <router-link v-for="item in navigation" :key="item.path" :to="item.path">{{ item.label }}</router-link>
       </nav></el-scrollbar>
-      <el-button class="ai-entry" @click="aiDialog = true">AI 助手</el-button>
+      <el-tooltip content="打开 AI 助手 · Ctrl + Shift + K" placement="bottom">
+        <el-button class="ai-entry" @click="aiDialog = true">AI 助手</el-button>
+      </el-tooltip>
       <router-link to="/about" class="about-link" title="关于 Doumi Shell">
         <el-badge is-dot :hidden="!hasUpdate"><el-icon><InfoFilled /></el-icon><span>关于</span></el-badge>
       </router-link>
@@ -48,7 +50,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watchEffect } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
 import { ArrowDown, InfoFilled, Monitor, Moon, Sunny } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { managedServer } from '@/composables/useWorkspaceContext'
@@ -69,6 +71,14 @@ const aiDialog = ref(false)
 const hasUpdate = ref(Boolean(getLatestRelease()?.newer))
 onLatestReleaseChange(() => { hasUpdate.value = Boolean(getLatestRelease()?.newer) })
 checkLatestRelease().catch(() => { /* The About page reports failures and always offers manual downloads. */ })
+function onGlobalKeydown(event) {
+  if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'k' && !event.altKey && !event.metaKey) {
+    event.preventDefault()
+    aiDialog.value = !aiDialog.value
+  }
+}
+onMounted(() => window.addEventListener('keydown', onGlobalKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
 const serverTitle = computed(()=>managedServer.value ? `${managedServer.value.username ? managedServer.value.username+'@' : ''}${managedServer.value.name} · ${managedServer.value.address}:${managedServer.value.port}` : '')
 
 const { preference, themeLabel, setPreference } = useTheme()

@@ -1,4 +1,4 @@
-import { get, post, del } from '@/utils/apiHandler'
+import { get, post, del, API_BASE } from '@/utils/apiHandler'
 const root = '/api/ssh-console/ai'
 const quiet = { showSuccess: false, silent: true }
 export const aiApi = {
@@ -6,8 +6,11 @@ export const aiApi = {
   saveProvider: data => post(`${root}/providers`, data, quiet),
   deleteProvider: id => del(`${root}/providers/${id}`, quiet),
   testProvider: id => post(`${root}/providers/${id}/test`, {}, { ...quiet, timeout: 110000 }),
-  create: providerId => post(`${root}/conversations`, { providerId }, quiet),
+  create: (providerId, authorizationMode = 'ask') => post(`${root}/conversations`, { providerId, authorizationMode }, quiet),
   status: (id, since) => get(`${root}/conversations/${id}`, { since }, quiet),
+  setAuthorization: (id, mode) => post(`${root}/conversations/${id}/authorization`, { mode }, quiet),
+  setProvider: (id, providerId) => post(`${root}/conversations/${id}/provider`, { providerId }, quiet),
+  eventsUrl: (id, since) => `${API_BASE}${root}/conversations/${encodeURIComponent(id)}/events?since=${since}`,
   send: (id, data) => post(`${root}/conversations/${id}/messages`, data, quiet),
   approve: (id, actionIds, approved) => post(`${root}/conversations/${id}/approve`, { actionIds, approved }, quiet),
   stop: id => post(`${root}/conversations/${id}/stop`, {}, quiet),

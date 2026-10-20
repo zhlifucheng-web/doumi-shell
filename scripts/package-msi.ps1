@@ -10,6 +10,8 @@ if (-not $Version) { $Version = (Get-Content -Raw (Join-Path $Root 'shell-front/
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Version must be x.y.z' }
 $buildDirectory = $env:DOUMI_BUILD_DIR
 if (-not $buildDirectory) { $buildDirectory = Join-Path $Root '.build' }
+$releaseDirectory = $env:DOUMI_RELEASE_DIR
+if (-not $releaseDirectory) { $releaseDirectory = Join-Path $Root 'release' }
 New-Item -ItemType Directory -Force -Path $buildDirectory | Out-Null
 if (-not $JdkHome) {
     $candidates = @($env:JAVA_HOME)
@@ -35,7 +37,7 @@ try {
     $env:JAVA_HOME = $JdkHome
     $env:PATH = (Join-Path $JdkHome 'bin') + ';' + $WixHome + ';' + $previousPath
     if (-not $SkipBuild) { & (Join-Path $PSScriptRoot 'package-release.ps1') -Version $Version }
-    $jarPath = Join-Path $Root 'release/doumi-shell.jar'
+    $jarPath = Join-Path $releaseDirectory 'doumi-shell.jar'
     if (-not (Test-Path -LiteralPath $jarPath)) { throw 'release/doumi-shell.jar does not exist' }
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $jarArchive = [IO.Compression.ZipFile]::OpenRead($jarPath)
@@ -63,7 +65,7 @@ try {
         '--input', $inputDirectory, '--main-jar', 'doumi-shell.jar',
         '--resource-dir', $resourceDirectory,
         '--main-class', 'org.springframework.boot.loader.JarLauncher',
-        '--dest', (Join-Path $Root 'release'),
+        '--dest', $releaseDirectory,
         '--java-options', '-Ddoumi.desktop=true', '--java-options', '-Djava.awt.headless=false',
         '--java-options', '--add-opens=java.base/java.lang=ALL-UNNAMED',
         '--java-options', '--add-opens=java.base/java.lang.invoke=ALL-UNNAMED',
@@ -74,7 +76,7 @@ try {
     )
     & (Join-Path $JdkHome 'bin/jpackage.exe') @jpackageArgs
     if ($LASTEXITCODE -ne 0) { throw 'MSI packaging failed' }
-    $msiPath = Join-Path $Root "release/Doumi Shell-$Version.msi"
+    $msiPath = Join-Path $releaseDirectory "Doumi Shell-$Version.msi"
     if (-not (Test-Path -LiteralPath $msiPath)) { throw 'MSI output missing' }
     $hash = (Get-FileHash -LiteralPath $msiPath -Algorithm SHA256).Hash.ToLowerInvariant()
     Set-Content -LiteralPath "$msiPath.sha256" -Value "$hash  Doumi Shell-$Version.msi" -Encoding ascii
