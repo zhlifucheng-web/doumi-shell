@@ -82,12 +82,12 @@ def main():
             '--request', 'POST', '--form', f'access_token={token}', '--form', f'file=@{artifact}',
             '--output', '-', '--write-out', '\n%{http_code}', f'{BASE}/releases/{release_id}/attach_files',
         ]
-        result = subprocess.run(command, capture_output=True, text=True)
-        body, _, status = result.stdout.rpartition('\n')
-        if result.returncode or status.strip() != '201':
-            detail = result.stderr[:400].replace(token, '[redacted]')
+        result = subprocess.run(command, capture_output=True)
+        body, _, status = result.stdout.rpartition(b'\n')
+        if result.returncode or status.strip() != b'201':
+            detail = result.stderr.decode('utf-8', errors='replace')[:400].replace(token, '[redacted]')
             raise RuntimeError(f'Gitee upload failed for {artifact.name}: HTTP {status.strip()}, curl {result.returncode}; {detail}')
-        return json.loads(body)
+        return json.loads(body.decode('utf-8'))
 
     for artifact in artifacts:
         if contains_attachment(attachments, artifact.name):
