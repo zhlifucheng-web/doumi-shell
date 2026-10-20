@@ -948,9 +948,16 @@ async function runTest() {
 async function confirmDeleteDetail() {
   const n = selectedNode.value
   if (!n) return
-  await ElMessageBox.confirm(`确定删除「${n.label}」？`, '确认', { type: 'warning' })
+  const message = n.nodeType === 'HOST'
+    ? `删除主机「${n.label}」会同时删除其全部账户、主机脚本及定时配置，并关闭这些账户的在线连接。历史执行记录会保留；有脚本运行时不能删除。`
+    : `确定删除「${n.label}」？`
+  await ElMessageBox.confirm(message, n.nodeType === 'HOST' ? '删除主机及关联配置' : '确认', { type: 'warning', confirmButtonText: '删除' })
   if (n.nodeType === 'GROUP') await deleteGroup(n.id)
-  else if (n.nodeType === 'HOST') await deleteHost(n.id)
+  else if (n.nodeType === 'HOST') {
+    const saved = readSavedSshAccount()
+    if (saved?.hostId === n.id) clearSavedSshAccount()
+    await deleteHost(n.id)
+  }
   else {
     const saved = readSavedSshAccount()
     if (saved?.id === n.id) clearSavedSshAccount()

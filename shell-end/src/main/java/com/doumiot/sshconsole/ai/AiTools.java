@@ -59,7 +59,7 @@ public class AiTools {
         add("host_update","terminal","修改主机，先读取再提交完整配置",true,true,
                 (a,o)->hosts.update(AiJson.id(a,"id"),body(a,SshHostService.SshHostSaveRequest.class)),"id!:integer:主机 ID","data!:object:完整主机配置");
         add("host_move","terminal","将主机移至指定分组",true,true,(a,o)->hosts.move(AiJson.id(a,"id"),AiJson.id(a,"groupId")),"id!:integer:主机 ID","groupId!:integer:目标分组 ID");
-        add("host_delete","terminal","删除主机，需要先移除账户",true,true,(a,o)->hosts.delete(AiJson.id(a,"id")),"id!:integer:主机 ID");
+        add("host_delete","terminal","删除主机及其账户、主机脚本和定时配置，并关闭相关连接；历史执行记录保留",true,true,(a,o)->hosts.delete(AiJson.id(a,"id")),"id!:integer:主机 ID");
         add("account_get","terminal","读取账户配置，不返回密码或私钥",false,false,(a,o)->accounts.getById(AiJson.id(a,"id")),"id!:integer:账户 ID");
         add("account_create","terminal","创建账户。data 必填 hostId/username/authType/secret。authType=PASSWORD/PRIVATE_KEY/PRIVATE_KEY_WITH_PASSPHRASE；secret={password?,privateKeyPem?,passphrase?}；enabled=0 禁用未配置凭据的账户",false,true,
                 (a,o)->accounts.create(body(a,SshAccountService.SshAccountSaveRequest.class)),"data!:object:账户配置，可含 defaultCwd/remark/enabled/sortOrder");

@@ -65,11 +65,15 @@ class DoumiShellIntegrationTest {
         long sourceId = scripts.create(script).getId();
         ConfigurationArchive.Archive archive = configuration.exportAll("test-password", true);
         int before = jdbc.queryForObject("SELECT COUNT(*) FROM ssh_script", Integer.class);
-        configuration.importAll(archive, "test-password");
+        Map<String, Integer> imported = configuration.importAll(archive, "test-password");
+        assertEquals(1, imported.get("groups"));
+        assertEquals(1, imported.get("hosts"));
+        assertEquals(1, imported.get("accounts"));
+        assertEquals(1, imported.get("scripts"));
         assertEquals(before * 2, jdbc.queryForObject("SELECT COUNT(*) FROM ssh_script", Integer.class));
-        Long imported = jdbc.queryForObject("SELECT MAX(id) FROM ssh_script WHERE name='backup-script'", Long.class);
-        assertNotEquals(sourceId, imported);
-        SshScriptService.SshScriptVO restored = scripts.getById(imported);
+        Long importedScriptId = jdbc.queryForObject("SELECT MAX(id) FROM ssh_script WHERE name='backup-script'", Long.class);
+        assertNotEquals(sourceId, importedScriptId);
+        SshScriptService.SshScriptVO restored = scripts.getById(importedScriptId);
         assertNotEquals(ids[1], restored.getHostId());
         assertFalse(restored.getSchedule().isEnabled());
         assertNotEquals(ids[2], restored.getSchedule().getAccountId());
@@ -79,6 +83,26 @@ class DoumiShellIntegrationTest {
         int count = jdbc.queryForObject("SELECT COUNT(*) FROM ssh_group", Integer.class);
         assertThrows(IllegalArgumentException.class, () -> configuration.importAll(archive, "wrong-password"));
         assertEquals(count, jdbc.queryForObject("SELECT COUNT(*) FROM ssh_group", Integer.class));
+    }
+
+    @Test void deletingHostCascadesAccountsScriptsAndSchedulesButKeepsExecutionHistory() {
+        long[] ids = assets();
+        SshScriptService.SshScriptSaveRequest request = new SshScriptService.SshScriptSaveRequest();
+        request.setName("host-cascade-script"); request.setContent("echo hello"); request.setHostId(ids[1]);
+        SshScriptScheduleService.Schedule schedule = new SshScriptScheduleService.Schedule();
+        schedule.setAccountId(ids[2]); schedule.setCron("0 0 1 1 *"); request.setSchedule(schedule);
+        long scriptId = scripts.create(request).getId();
+        String executionId = UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO ssh_script_execution(id,script_id,script_name,account_id,host_id,source,status,started_at) VALUES(?,?,?, ?,?,'MANUAL','FAILED','2000-01-01T00:00:00Z')",
+                executionId, scriptId, "host-cascade-script", ids[2], ids[1]);
+
+        assertEquals(1, hosts.delete(ids[1]));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM ssh_host WHERE id=?", Integer.class, ids[1]));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM ssh_account WHERE host_id=?", Integer.class, ids[1]));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM ssh_script WHERE host_id=?", Integer.class, ids[1]));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM ssh_script_schedule WHERE script_id=? OR account_id=?", Integer.class, scriptId, ids[2]));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM ssh_script_execution WHERE id=?", Integer.class, executionId));
+        assertNotNull(groups.getById(ids[0]));
     }
 
     @Test void failedImportRollsBackAndInvalidSchedulesDoNotSaveScripts() throws Exception {

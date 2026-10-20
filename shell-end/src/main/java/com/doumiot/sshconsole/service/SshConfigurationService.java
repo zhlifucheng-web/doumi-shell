@@ -61,6 +61,7 @@ public class SshConfigurationService {
                 || snapshot.getScripts() == null) throw new IllegalArgumentException("配置列表不能为空");
         Map<Long, Long> groupIds = new HashMap<>(), hostIds = new HashMap<>(), accountIds = new HashMap<>();
         Set<Long> scriptIds = new HashSet<>();
+        List<Long> insertedGroups = new ArrayList<>(), insertedHosts = new ArrayList<>(), insertedAccounts = new ArrayList<>(), insertedScripts = new ArrayList<>();
         String suffix = " (导入 " + UUID.randomUUID().toString().substring(0, 8) + ")";
         List<SshGroup> pending = new ArrayList<>(snapshot.getGroups());
         while (!pending.isEmpty()) {
@@ -76,7 +77,9 @@ public class SshConfigurationService {
                 SshGroupService.SshGroupSaveRequest request = json.convertValue(old, SshGroupService.SshGroupSaveRequest.class);
                 request.setParentId(old.getParentId() == null ? null : groupIds.get(old.getParentId()));
                 if (old.getParentId() == null) request.setName(old.getName() + suffix);
-                groupIds.put(old.getId(), groupService.create(request).getId());
+                SshGroup created = groupService.create(request);
+                groupIds.put(old.getId(), created.getId());
+                insertedGroups.add(created.getId());
                 iterator.remove();
                 progressed = true;
             }
@@ -86,13 +89,17 @@ public class SshConfigurationService {
             assertNewId(old == null ? null : old.getId(), hostIds);
             SshHostService.SshHostSaveRequest request = json.convertValue(old, SshHostService.SshHostSaveRequest.class);
             request.setGroupId(reference(groupIds, old.getGroupId(), "主机所属分组"));
-            hostIds.put(old.getId(), hostService.create(request).getId());
+            SshHost created = hostService.create(request);
+            hostIds.put(old.getId(), created.getId());
+            insertedHosts.add(created.getId());
         }
         for (BackupAccount old : snapshot.getAccounts()) {
             assertNewId(old == null ? null : old.getId(), accountIds);
             Long sourceId = old.getId();
             old.setHostId(reference(hostIds, old.getHostId(), "账户所属主机"));
-            accountIds.put(sourceId, accountService.create(old).getId());
+            SshAccountService.SshAccountVO created = accountService.create(old);
+            accountIds.put(sourceId, created.getId());
+            insertedAccounts.add(created.getId());
         }
         for (SshScriptService.SshScriptVO old : snapshot.getScripts()) {
             if (old == null || old.getId() == null || !scriptIds.add(old.getId()))
@@ -103,12 +110,22 @@ public class SshConfigurationService {
                 request.getSchedule().setAccountId(reference(accountIds, request.getSchedule().getAccountId(), "定时执行账户"));
                 request.getSchedule().setEnabled(false);
             }
-            scriptService.create(request);
+            SshScriptService.SshScriptVO created = scriptService.create(request);
+            insertedScripts.add(created.getId());
         }
+        assertPersisted("分组", insertedGroups, id -> groups.selectById(id) != null);
+        assertPersisted("主机", insertedHosts, id -> hosts.selectById(id) != null);
+        assertPersisted("账户", insertedAccounts, id -> accounts.selectById(id) != null);
+        assertPersisted("脚本", insertedScripts, id -> scripts.selectById(id) != null);
         Map<String, Integer> counts = new LinkedHashMap<>();
-        counts.put("groups", groupIds.size()); counts.put("hosts", hostIds.size());
-        counts.put("accounts", accountIds.size()); counts.put("scripts", scriptIds.size());
+        counts.put("groups", insertedGroups.size()); counts.put("hosts", insertedHosts.size());
+        counts.put("accounts", insertedAccounts.size()); counts.put("scripts", insertedScripts.size());
         return counts;
+    }
+
+    private static void assertPersisted(String label, List<Long> ids, java.util.function.LongPredicate exists) {
+        for (Long id : ids) if (id == null || !exists.test(id))
+            throw new IllegalStateException("配置导入未完整写入：" + label + "记录缺失，已回滚本次导入");
     }
 
     private static void assertNewId(Long id, Map<Long, Long> ids) {

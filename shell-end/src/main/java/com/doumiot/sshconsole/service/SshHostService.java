@@ -9,6 +9,11 @@ import com.doumiot.sshconsole.entity.SshHost;
 import com.doumiot.sshconsole.mapper.SshAccountMapper;
 import com.doumiot.sshconsole.mapper.SshGroupMapper;
 import com.doumiot.sshconsole.mapper.SshHostMapper;
+import com.doumiot.sshconsole.mapper.SshScriptMapper;
+import com.doumiot.sshconsole.ssh.SshSessionRegistry;
+import com.doumiot.sshconsole.entity.SshScript;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -24,6 +29,9 @@ public class SshHostService {
     private SshGroupMapper sshGroupMapper;
     @Resource
     private SshAccountMapper sshAccountMapper;
+    @Resource private SshScriptMapper sshScriptMapper;
+    @Resource private SshSessionRegistry sessionRegistry;
+    @Resource private JdbcTemplate jdbc;
     public SshHost create(SshHostSaveRequest req) {
         validate(req);
         if (sshGroupMapper.selectById(req.getGroupId()) == null) {
@@ -63,12 +71,22 @@ public class SshHostService {
         return requireHost(id);
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public int delete(long id) {
         requireHost(id);
-        Long accounts = sshAccountMapper.selectCount(
-                new LambdaQueryWrapper<SshAccount>().eq(SshAccount::getHostId, id));
-        if (accounts != null && accounts > 0) {
-            throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "请先删除主机下的账户");
+        Integer running = jdbc.queryForObject("SELECT COUNT(*) FROM ssh_script_execution WHERE host_id=? AND status IN ('QUEUED','RUNNING','CANCELLING')", Integer.class, id);
+        if (running != null && running > 0)
+            throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "该主机仍有脚本正在运行或排队，请结束任务后再删除");
+        for (SshAccount account : sshAccountMapper.selectList(
+                new LambdaQueryWrapper<SshAccount>().eq(SshAccount::getHostId, id))) {
+            sessionRegistry.closeByAccountId(account.getId());
+            jdbc.update("DELETE FROM ssh_script_schedule WHERE account_id=?", account.getId());
+            sshAccountMapper.deleteById(account.getId());
+        }
+        for (SshScript script : sshScriptMapper.selectList(
+                new LambdaQueryWrapper<SshScript>().eq(SshScript::getHostId, id))) {
+            jdbc.update("DELETE FROM ssh_script_schedule WHERE script_id=?", script.getId());
+            sshScriptMapper.deleteById(script.getId());
         }
         return sshHostMapper.deleteById(id);
     }
