@@ -22,7 +22,8 @@ class AiIntegrationTest {
     @Test void realCompatibleHttpProviderCanReadRequestConfirmationAndComplete() throws Exception {
         com.sun.net.httpserver.HttpServer server=com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1",0),0);
         java.util.concurrent.atomic.AtomicInteger rounds=new java.util.concurrent.atomic.AtomicInteger();
-        long group=tools.call("test","group_create",AiJson.object("data",AiJson.object("name","ai-delete-"+UUID.randomUUID()))).path("result").path("id").asLong();
+        JsonNode create=tools.call("test","group_create",AiJson.object("data",AiJson.object("name","ai-delete-"+UUID.randomUUID())));
+        long group=tools.confirm("test",create.path("actionId").asText(),true).path("result").path("id").asLong();
         assertTrue(group>0);
         server.createContext("/v1/chat/completions",exchange->{
             JsonNode request=AiJson.JSON.readTree(exchange.getRequestBody());int round=rounds.incrementAndGet();JsonNode message;
