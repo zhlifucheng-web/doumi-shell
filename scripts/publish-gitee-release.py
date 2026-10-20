@@ -60,10 +60,10 @@ def main():
     release = call('GET', '/releases/tags/' + tag, allow404=True)
     if release is None:
         notes = (f'## Doumi Shell {version}\n\n'
-                 '- 增加可持久化的 AI 历史会话，可按服务器恢复最近会话，并在数据管理中清理。\n'
-                 '- AI 消息与工具事件显示时间，并以本机密钥加密保存在 SQLite。\n'
-                 '- 服务重启后恢复历史；中断的待确认操作不会自动执行。\n'
-                 '- 保留附件、会话授权与服务器切换等 AI 助手能力。\n')
+                 '- AI 助手默认直接读取信息，仅对命令、创建、修改、删除等写操作逐项询问授权。\n'
+                 '- 可为当前会话启用全部工具权限，写操作自动执行。\n'
+                 '- README 补充产品体验、AI 能力及 Windows/Linux 安装说明。\n'
+                 '- 提供 Windows MSI 与 Linux x64 安装包。\n')
         release = call('POST', '/releases', data={
             'tag_name': tag, 'target_commitish': commit,
             'name': f'Doumi Shell {version}', 'prerelease': 'false', 'body': notes,

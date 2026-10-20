@@ -25,6 +25,7 @@ class AiWorkflowTest {
     @AfterEach void close(){chats.close();files.close();}
     String chat(){return chats.create("provider").path("id").asText();}
     JsonNode call(String id,String name,JsonNode args){return AiJson.object("id",id,"type","function","function",AiJson.object("name",name,"arguments",args.toString()));}
+    JsonNode catalogTool(String name){for(JsonNode item:tools.catalog())if(name.equals(item.path("name").asText()))return item;return AiJson.JSON.nullNode();}
     JsonNode toolMessage(JsonNode... calls){return AiJson.object("role","assistant","content","", "tool_calls",Arrays.asList(calls));}
     void send(String id) throws Exception {AiChatService.MessageRequest request=new AiChatService.MessageRequest();request.setText("处理任务");chats.send(id,request);}
     JsonNode done(String id) throws Exception {
@@ -54,6 +55,14 @@ class AiWorkflowTest {
         chats.approve(id,Collections.singletonList(action),true);JsonNode result=done(id);verify(groups,times(1)).delete(9);
         assertEquals(1,result.path("revision").asInt());assertThrows(IllegalArgumentException.class,()->tools.confirm(id,action,true));
         assertThrows(IllegalArgumentException.class,()->chats.approve(id,Collections.singletonList(action),true));
+    }
+    @Test void askModeRunsReadsDirectlyAndRequiresApprovalForEveryWrite() throws Exception {
+        JsonNode read=tools.call("owner","cron_preview",AiJson.object("cron","0 9 * * *"));
+        assertFalse(read.path("requiresConfirmation").asBoolean());
+        JsonNode create=tools.call("owner","group_create",AiJson.object("data",AiJson.object("name","demo")));
+        assertTrue(create.path("requiresConfirmation").asBoolean());
+        assertTrue(catalogTool("group_create").path("requiresConfirmation").asBoolean());
+        assertFalse(catalogTool("cron_preview").path("requiresConfirmation").asBoolean());
     }
     @Test void automaticAuthorizationRunsConfirmedMutationAndKeepsAuditEvent() throws Exception {
         SshGroupService groups=mock(SshGroupService.class);ReflectionTestUtils.setField(tools,"groups",groups);

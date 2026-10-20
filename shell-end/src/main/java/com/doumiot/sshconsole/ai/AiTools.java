@@ -133,17 +133,17 @@ public class AiTools {
     }
     public JsonNode catalog() {
         ArrayNode result=AiJson.JSON.createArrayNode();
-        operations.values().forEach(op->result.add(AiJson.object("name",op.name,"page",op.page,"description",op.description,"requiresConfirmation",op.confirmation,"writes",op.writes,"parameters",op.parameters)));
+        operations.values().forEach(op->result.add(AiJson.object("name",op.name,"page",op.page,"description",op.description,"requiresConfirmation",op.writes,"writes",op.writes,"parameters",op.parameters)));
         return result;
     }
     JsonNode functions() {
         ArrayNode result=AiJson.JSON.createArrayNode();
-        operations.values().forEach(op->result.add(AiJson.object("type","function","function",AiJson.object("name",op.name,"description",op.description+(op.confirmation?"。执行前由应用请求用户确认":""),"parameters",op.parameters))));
+        operations.values().forEach(op->result.add(AiJson.object("type","function","function",AiJson.object("name",op.name,"description",op.description+(op.writes?"。执行前由应用请求用户确认":""),"parameters",op.parameters))));
         return result;
     }
     public JsonNode call(String owner,String name,JsonNode arguments) throws Exception {
         Operation op=require(name,arguments);
-        if(!op.confirmation)return result(op,arguments,owner);
+        if(!op.writes)return result(op,arguments,owner);
         pending.values().removeIf(p->p.expires<System.currentTimeMillis());
         if(pending.size()>=256)throw new IllegalArgumentException("待确认操作过多，请先处理或取消");
         Pending action=new Pending();action.id=UUID.randomUUID().toString();action.owner=owner;action.name=name;action.args=arguments.deepCopy();action.expires=System.currentTimeMillis()+10*60*1000L;pending.put(action.id,action);

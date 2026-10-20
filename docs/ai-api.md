@@ -12,7 +12,7 @@
 | `POST /tools/call` | 请求 `{name,arguments,conversationId?}`，省略 conversationId 时为外部客户端公共 `api` 工作域 |
 | `POST /tools/confirm` | `{actionId,approved,conversationId?}`，执行或拒绝原操作，不能修改原参数 |
 
-只读操作以及创建分组/主机/账户直接执行；命令、写文件、修改/删除、脚本执行、导入导出、清理等返回 `requiresConfirmation:true` 和 `actionId`。外部 AI 客户端必须把具体参数展示给操作者，再由操作者确认；不要自动确认模型提出的动作。待确认参数保存在服务端，确认时限 600 秒，绑定工作域、单次消费；过期、跨域、重复确认都会失败。多个外部客户端需要隔离时，应各自创建 conversationId 并在调用中携带。
+只读操作直接执行；所有会修改数据或启动远端操作的工具（包括创建分组/主机/账户、命令、写文件、脚本执行、导入和清理）返回 `requiresConfirmation:true` 和 `actionId`。配置导出不修改数据，直接返回供用户下载的链接。外部 AI 客户端必须把具体参数展示给操作者，再由操作者确认；不要自动确认模型提出的动作。待确认参数保存在服务端，确认时限 600 秒，绑定工作域、单次消费；过期、跨域、重复确认都会失败。多个外部客户端需要隔离时，应各自创建 conversationId 并在调用中携带。
 
 直接执行或确认后返回 `{requiresConfirmation:false,name,changed,result}`；拒绝返回 `{cancelled:true,message}`。输出中的结构化密码、私钥和密钥被遮蔽。远端文本、命令输出和附件原文仍可能包含敏感信息，调用方应按实际需要读取。
 
@@ -64,7 +64,7 @@ Content-Type: application/json
 | `POST /conversations` | `{providerId,authorizationMode?,server?}`，模式为 `ask`（默认）或 `auto`；server 可带 accountId、hostId、name、address、port、username，用于按服务器筛选与恢复历史 → `{id,providerId,authorizationMode}` |
 | `GET /conversations/history?accountId=...` | 最近 100 条会话摘要；省略 accountId 时返回全部服务器会话。摘要含 title、server metadata、state、createdAt、updatedAt |
 | `GET /conversations/latest?accountId=...&hostId=...` | 返回指定账户（或无账户时指定主机）的最近会话摘要；都省略时返回未绑定主机的最近会话 |
-| `POST /conversations/{id}/authorization` | `{mode:"ask"|"auto"}`；仅空闲且无待确认操作时可切换。`auto` 会执行本会话中所有要求确认的工具操作 |
+| `POST /conversations/{id}/authorization` | `{mode:"ask"|"auto"}`；仅空闲且无待确认操作时可切换。`ask` 直接执行读取操作并逐项确认所有写操作；`auto` 自动执行本会话中所有写操作 |
 | `POST /conversations/{id}/provider` | `{providerId}`；切换到已配置的厂商/模型并保留会话历史，仅空闲且无待确认操作时可切换 |
 | `GET /conversations/{id}?since=0` | 返回 authorizationMode、providerId、state、running、cursor、revision、events、pending；since 为上次 cursor |
 | `POST /conversations/{id}/messages` | `{text,workspace?,attachmentIds:[]}`，异步开始，随后轮询状态 |

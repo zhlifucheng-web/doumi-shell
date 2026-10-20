@@ -17,10 +17,10 @@
     <div class="ai-permission-row">
       <span>操作授权</span>
       <el-select v-model="authorizationMode" aria-label="AI 操作授权模式" :disabled="busy || submitting || !!pending.length" @change="changeAuthorizationMode">
-        <el-option label="逐项询问" value="ask" />
-        <el-option label="自动授权" value="auto" />
+        <el-option label="仅写操作询问" value="ask" />
+        <el-option label="全部权限（自动执行）" value="auto" />
       </el-select>
-      <small>{{ authorizationMode === 'auto' ? '本对话中命令、修改、删除等操作将自动执行' : '执行敏感操作前逐项确认' }}</small>
+      <small>{{ authorizationMode === 'auto' ? '本对话的读写操作均可执行，写操作不再逐项确认' : '读取操作直接执行；命令、创建、修改、删除等写操作逐项确认' }}</small>
     </div>
     <div class="ai-host-row">
       <span>操作主机</span>
@@ -35,8 +35,8 @@
       <div v-if="!events.length" class="ai-empty">
         <strong>描述你的任务，AI 会调用实际业务接口完成操作</strong>
         <p>例如：查看当前服务器资源、排查进程、编写定时脚本，或分析配置文件并按目录导入。</p>
-        <p v-if="authorizationMode === 'ask'">执行命令、修改文件、导入和删除前，请核对待确认操作。</p>
-        <p v-else>当前对话已启用自动授权，需确认操作将自动执行。</p>
+        <p v-if="authorizationMode === 'ask'">读取操作直接执行；执行命令、创建、修改、删除和导入前会请求确认。</p>
+        <p v-else>当前对话的读写操作均可执行，写操作会自动执行。</p>
       </div>
       <article v-for="entry in events" :key="entry.messageId || entry.callId || entry.sequence" class="ai-message" :class="`ai-message--${entry.role}`">
         <div class="ai-message-title"><span>{{ roleName(entry) }}</span><el-tag v-if="entry.role === 'tool'" size="small" :type="entry.state === 'error' ? 'danger' : entry.state === 'pending' ? 'warning' : 'info'">{{ toolState(entry.state) }}</el-tag><time v-if="entry.timestamp" class="ai-message-time" :datetime="new Date(entry.timestamp).toISOString()">{{ formatMessageTime(entry.timestamp) }}</time></div>
@@ -417,7 +417,7 @@ async function changeAuthorizationMode(value) {
   const previous = previousAuthorizationMode.value
   if (value === 'auto') {
     try {
-      await ElMessageBox.confirm('自动授权只对当前对话生效。AI 请求执行命令、写入、修改、删除、导入等需确认操作时，应用会直接执行；已开始的操作无法由切回模式撤销。', '启用自动授权', { type: 'warning', confirmButtonText: '启用自动授权', cancelButtonText: '保持逐项询问' })
+      await ElMessageBox.confirm('全部权限仅对当前对话生效。AI 可直接执行读写操作，包括命令、文件修改、删除和导入；已开始的操作无法由切回模式撤销。', '启用全部权限', { type: 'warning', confirmButtonText: '启用全部权限', cancelButtonText: '保持仅写操作询问' })
     } catch { authorizationMode.value = previous; return }
   }
   submitting.value = true
