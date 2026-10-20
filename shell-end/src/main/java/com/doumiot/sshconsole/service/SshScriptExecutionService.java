@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** 独立 SSH 连接执行，历史不随配置删除；维护锁协调启动、结束和清理。 */
 @Service
@@ -119,14 +120,30 @@ public class SshScriptExecutionService {
                 launched=true;
                 out=pump(command.getInputStream(),c.stdout,c); err=pump(command.getErrorStream(),c.stderr,c);
                 // 独立写线程避免大脚本写入阻塞取消处理。
-                Thread writer=new Thread(() -> {try(OutputStream stream=command.getOutputStream()) {stream.write(script.getContent().getBytes(StandardCharsets.UTF_8));}catch(IOException ignored) {}},"script-stdin");
+                CountDownLatch writerDone=new CountDownLatch(1);
+                AtomicReference<IOException> writerFailure=new AtomicReference<>();
+                Thread writer=new Thread(() -> {
+                    try(OutputStream stream=command.getOutputStream()) {stream.write(script.getContent().getBytes(StandardCharsets.UTF_8));}
+                    catch(IOException e) {writerFailure.set(e);}
+                    finally {writerDone.countDown();}
+                },"script-stdin");
                 writer.setDaemon(true);writer.start();
                 long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(properties.getScriptRunTimeoutSec()>0?properties.getScriptRunTimeoutSec():3600);
                 while(true) {
                     // SSHJ 的 join(timeout) 会在等待超时后抛异常，轮询通道状态以保留长任务。
                     Thread.sleep(200);
                     persistOutput(id,c);
-                    if(!command.isOpen()) {code=command.getExitStatus();status=code!=null&&code==0?"SUCCESS":"FAILED";break;}
+                    if(!command.isOpen()) {
+                        code=command.getExitStatus();
+                        if(!writerDone.await(5,TimeUnit.SECONDS)) {
+                            status="FAILED";error="等待脚本内容发送完成超时，远端执行结果不确定";
+                        } else if(writerFailure.get()!=null) {
+                            status="FAILED";error="脚本内容发送失败，远端执行结果不确定："+writerFailure.get().getMessage();
+                        } else if(code==null) {
+                            status="FAILED";error="未收到远端退出码，无法确认脚本执行结果";
+                        } else status=code==0?"SUCCESS":"FAILED";
+                        break;
+                    }
                     if(c.cancel || System.nanoTime()>deadline) {
                         try { terminate(client,id); }
                         catch(IOException e) { if(command.isOpen()) throw e; }

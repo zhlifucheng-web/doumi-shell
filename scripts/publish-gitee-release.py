@@ -60,6 +60,8 @@ def main():
     release = call('GET', '/releases/tags/' + tag, allow404=True)
     if release is None:
         notes = (f'## Doumi Shell {version}\n\n'
+                 '- 定时脚本由服务端独立建立 SSH 连接，不依赖浏览器或已有交互会话；未完整发送脚本或未收到远端退出码时不会报告成功。\n'
+                 '- 执行历史对话框支持复制标准输出、错误输出和错误信息。\n'
                  '- AI 助手默认直接读取信息，仅对命令、创建、修改、删除等写操作逐项询问授权。\n'
                  '- 可为当前会话启用全部工具权限，写操作自动执行。\n'
                  '- README 补充产品体验、AI 能力及 Windows/Linux 安装说明。\n'

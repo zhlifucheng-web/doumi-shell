@@ -29,17 +29,17 @@
           <el-button v-if="active(detail)" type="danger" :disabled="detail.status==='CANCELLING'" @click="stop(detail)">结束执行</el-button>
         </div>
         <p>{{ detail.username }}@{{ detail.host_name }} · {{ date(detail.started_at) }} · 退出码 {{ detail.exit_status ?? '—' }}</p>
-        <el-alert v-if="detail.error" :title="detail.error" type="error" :closable="false" />
+        <div v-if="detail.error" class="copyable-error"><el-alert :title="detail.error" type="error" :closable="false" /><el-button size="small" @click="copyText(detail.error)">复制错误</el-button></div>
         <el-alert v-if="detail.truncated" title="输出已达到上限，每个输出通道最多保留 512 KiB。" type="warning" :closable="false" />
-        <h4>标准输出</h4><el-scrollbar max-height="45vh"><pre>{{ detail.stdout || '（暂无输出）' }}</pre></el-scrollbar>
-        <h4>错误输出</h4><el-scrollbar max-height="45vh"><pre>{{ detail.stderr || '（暂无输出）' }}</pre></el-scrollbar>
+        <div class="output-heading"><h4>标准输出</h4><el-button size="small" :disabled="!detail.stdout" @click="copyText(detail.stdout)">复制</el-button></div><el-scrollbar max-height="45vh"><pre>{{ detail.stdout || '（暂无输出）' }}</pre></el-scrollbar>
+        <div class="output-heading"><h4>错误输出</h4><el-button size="small" :disabled="!detail.stderr" @click="copyText(detail.stderr)">复制</el-button></div><el-scrollbar max-height="45vh"><pre>{{ detail.stderr || '（暂无输出）' }}</pre></el-scrollbar>
       </template>
     </el-scrollbar></el-drawer>
   </section></el-scrollbar>
 </template>
 <script setup>
 import { onBeforeUnmount, ref, watch } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { listExecutions, getExecution, stopExecution } from '@/api/sshConsole'
 const props=defineProps({scriptId:{type:Number,default:null},active:{type:Boolean,default:true}})
 const rows=ref([]),total=ref(0),page=ref(1),status=ref(''),source=ref(''),loading=ref(false),drawer=ref(false),detail=ref(null)
@@ -54,6 +54,13 @@ async function load(){
 }
 function reset(){page.value=1;load()}
 async function open(id){detail.value=await getExecution(id);drawer.value=true}
+async function copyText(value){
+  try {
+    if(navigator.clipboard?.writeText) await navigator.clipboard.writeText(value)
+    else {const field=document.createElement('textarea');field.value=value;field.style.position='fixed';field.style.opacity='0';document.body.appendChild(field);try{field.select();if(!document.execCommand('copy'))throw new Error('copy failed')}finally{field.remove()}}
+    ElMessage.success('已复制到剪贴板')
+  } catch { ElMessage.error('复制失败，请手动选择并复制') }
+}
 async function stop(row){
   try {await ElMessageBox.confirm(`结束脚本「${row.script_name}」及其进程组？`,'结束执行',{type:'warning',confirmButtonText:'结束执行'})}catch{return}
   await stopExecution(row.id);await load();if(detail.value?.id===row.id)detail.value=await getExecution(row.id)
@@ -72,4 +79,5 @@ defineExpose({open,load})
 </script>
 <style scoped>
 .history{padding:16px;box-sizing:border-box;height:100%}.filters,.detail-meta{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}.filters span{font-size:12px;color:var(--el-text-color-secondary)}.el-pagination{margin-top:16px}pre{background:#181c24;color:#d4d4d4;border-radius:6px;padding:16px;white-space:pre-wrap;overflow-wrap:anywhere;font-family:Consolas,monospace}h4{margin-bottom:8px}
+.output-heading{display:flex;align-items:center;justify-content:space-between;margin-top:12px}.output-heading h4{margin:0}.copyable-error{display:flex;align-items:center;gap:8px}.copyable-error .el-alert{flex:1;min-width:0}
 </style>

@@ -5,6 +5,7 @@ import com.doumiot.sshconsole.entity.*;
 import com.doumiot.sshconsole.mapper.*;
 import com.doumiot.sshconsole.service.*;
 import com.doumiot.sshconsole.ssh.*;
+import com.doumiot.sshconsole.crypto.CredentialCipher;
 import net.schmizz.sshj.SSHClient;
 import net.schmizz.sshj.connection.channel.direct.Session;
 import org.junit.jupiter.api.*;
@@ -30,6 +31,9 @@ class ScriptExecutionTest {
     SshConsoleProperties properties;
     JdbcTemplate jdbc;
     SSHClient client;
+    SshClientFactory clients;
+    SshAccountService accounts;
+    SshAccount account;
     Session main,kill;
     Session.Command command,killCommand;
     AtomicBoolean open;
@@ -39,11 +43,12 @@ class ScriptExecutionTest {
         jdbc=new JdbcTemplate(ds);
         service=new SshScriptExecutionService();
         SshScriptMapper scripts=mock(SshScriptMapper.class);SshHostMapper hosts=mock(SshHostMapper.class);
-        SshAccountService accounts=mock(SshAccountService.class);SshClientFactory clients=mock(SshClientFactory.class);
+        accounts=mock(SshAccountService.class);clients=mock(SshClientFactory.class);
         SshScript script=new SshScript();script.setId(1L);script.setName("test");script.setContent("echo 中文");script.setInterpreter("bash");
         SshHost host=new SshHost();host.setId(2L);host.setName("host");host.setHost("127.0.0.1");host.setPort(22);
-        SshAccount account=new SshAccount();account.setId(3L);account.setHostId(2L);account.setUsername("test");account.setAuthType("PASSWORD");
+        account=new SshAccount();account.setId(3L);account.setHostId(2L);account.setUsername("test");account.setAuthType("PASSWORD");
         when(scripts.selectById(1L)).thenReturn(script);when(hosts.selectById(2L)).thenReturn(host);when(accounts.requireAccount(3L)).thenReturn(account);
+        when(accounts.loadSecret(account)).thenReturn(new CredentialCipher.SshSecretPayload());
         client=mock(SSHClient.class);main=mock(Session.class);kill=mock(Session.class);command=mock(Session.Command.class);killCommand=mock(Session.Command.class);
         when(clients.connectAndAuth(anyString(),anyInt(),anyString(),anyString(),any())).thenReturn(client);
         when(client.isConnected()).thenReturn(true);when(client.startSession()).thenReturn(main,kill);
@@ -83,6 +88,30 @@ class ScriptExecutionTest {
         Map<String,Object> row=await(id);assertEquals("SUCCESS",row.get("status"));assertEquals(0,row.get("exit_status"));
         jdbc.update("UPDATE ssh_script_execution SET status='RUNNING' WHERE id=?",id);service.recover();
         assertEquals("INTERRUPTED",service.detail(id).get("status"));
+    }
+    @Test void cronExecutionEstablishesItsOwnSshConnectionWithoutInteractiveSession() throws Exception {
+        open.set(false);when(command.getExitStatus()).thenReturn(0);
+        String id=(String)service.start(1,3,"CRON").get("id");
+        assertEquals("SUCCESS",await(id).get("status"));
+        verify(client).startSession();
+        verify(clients).connectAndAuth(eq("127.0.0.1"),eq(22),eq("test"),eq("PASSWORD"),any(CredentialCipher.SshSecretPayload.class));
+        verify(accounts).loadSecret(account);
+    }
+    @Test void missingRemoteExitStatusIsFailedWithExplicitReason() throws Exception {
+        open.set(false);when(command.getExitStatus()).thenReturn(null);
+        String id=(String)service.start(1,3,"MANUAL").get("id");Map<String,Object> row=await(id);
+        assertEquals("FAILED",row.get("status"));assertNull(row.get("exit_status"));
+        assertTrue(row.get("error").toString().contains("未收到远端退出码"));
+    }
+    @Test void stdinWriteFailureCannotBeReportedAsSuccess() throws Exception {
+        open.set(false);when(command.getExitStatus()).thenReturn(0);
+        when(command.getOutputStream()).thenReturn(new OutputStream(){
+            @Override public void write(int value) throws IOException {throw new IOException("broken pipe");}
+            @Override public void write(byte[] data,int offset,int length) throws IOException {throw new IOException("broken pipe");}
+        });
+        String id=(String)service.start(1,3,"MANUAL").get("id");Map<String,Object> row=await(id);
+        assertEquals("FAILED",row.get("status"));assertEquals(0,row.get("exit_status"));
+        assertTrue(row.get("error").toString().contains("发送失败"));
     }
     @Test void queuedExecutionCanBeCancelledImmediatelyWithoutSsh() throws Exception {
         java.util.concurrent.ThreadPoolExecutor workers=(java.util.concurrent.ThreadPoolExecutor)ReflectionTestUtils.getField(service,"workers");

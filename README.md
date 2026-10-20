@@ -18,6 +18,8 @@ Windows 安装包自带运行环境，Linux 压缩包需要安装 Java 17；两�
 | 数据管理 | 导入导出配置，按数据表和时间范围预览、清除本机保存的数据 |
 | AI 助手 | 配置 OpenAI 兼容模型，以流式 Markdown 对话调用五个业务页面的功能，分析附件并协助导入配置 |
 
+定时脚本由 Doumi Shell 服务端按计划执行，并使用已保存的主机地址、账户和凭据独立建立 SSH 连接；不要求浏览器保持打开，也不要求当时已有终端连接。执行记录只有在脚本内容发送完成且收到远端退出码后才会判定成功，连接中断、脚本发送失败或缺少退出码都会明确记录为失败。
+
 界面支持浅色、深色和跟随系统主题，也可以使用自定义背景。自定义背景的不透明度统一应用于导航、侧栏、内容区、终端及弹窗，文字保持清晰。服务器分组侧栏可收起，监控面板可调整宽度，常用界面偏好会自动记忆。
 
 ## 下载与安装
@@ -26,19 +28,19 @@ Windows 安装包自带运行环境，Linux 压缩包需要安装 Java 17；两�
 
 ### Windows
 
-1. 从 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `Doumi Shell-1.0.27.msi` 并双击安装。
+1. 从 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `Doumi Shell-1.0.28.msi` 并双击安装。
 2. 选择安装目录，按需创建桌面和开始菜单快捷方式。
 3. 安装完成时勾选 **Open Doumi Shell in browser now**，或稍后通过快捷方式启动。
 4. 程序就绪后自动打开浏览器，也可以访问 **http://localhost/**。默认安装目录为 `%LOCALAPPDATA%\Programs\DoumiShell\`（用户名含中文时可另选纯英文路径）。
 
 ### Linux
 
-1. 在 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `doumi-shell-1.0.27-linux-x64.tar.gz`。
+1. 在 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载 `doumi-shell-1.0.28-linux-x64.tar.gz`。
 2. 解压并进入目录，确认已安装 Java 17，然后运行启动脚本：
 
    ```bash
-   tar -xzf doumi-shell-1.0.27-linux-x64.tar.gz
-   cd doumi-shell-1.0.27
+   tar -xzf doumi-shell-1.0.28-linux-x64.tar.gz
+   cd doumi-shell-1.0.28
    chmod +x run-linux.sh
    ./run-linux.sh
    ```
