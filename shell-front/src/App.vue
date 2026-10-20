@@ -9,7 +9,10 @@
         <router-link v-for="item in navigation" :key="item.path" :to="item.path">{{ item.label }}</router-link>
       </nav></el-scrollbar>
       <el-tooltip content="打开 AI 助手 · Ctrl + Shift + K" placement="bottom">
-        <el-button class="ai-entry" @click="aiDialog = true">AI 助手</el-button>
+        <el-button class="ai-entry" aria-label="打开 AI 助手" @click="aiDialog = true">
+          <el-icon class="ai-entry__icon"><Cpu /></el-icon>
+          <span>AI 助手</span>
+        </el-button>
       </el-tooltip>
       <router-link to="/about" class="about-link" title="关于 Doumi Shell">
         <el-badge is-dot :hidden="!hasUpdate"><el-icon><InfoFilled /></el-icon><span>关于</span></el-badge>
@@ -51,7 +54,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
-import { ArrowDown, InfoFilled, Monitor, Moon, Sunny } from '@element-plus/icons-vue'
+import { ArrowDown, Cpu, InfoFilled, Monitor, Moon, Sunny } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { managedServer } from '@/composables/useWorkspaceContext'
 import { useBackground } from '@/composables/useBackground'
@@ -140,6 +143,9 @@ function onThemeCommand(cmd) {
 .about-link { flex-shrink:0; color:var(--el-text-color-regular); text-decoration:none; padding:6px 8px; border-radius:6px; font-size:13px }
 .about-link:hover,.about-link.router-link-active { background:var(--el-fill-color-light); color:var(--el-color-primary) }
 .about-link .el-badge { display:inline-flex; align-items:center; gap:4px }
+.ai-entry { flex-shrink:0; display:inline-flex; align-items:center; gap:7px; height:36px; padding:0 12px; border:1px solid color-mix(in srgb, var(--el-color-primary) 48%, var(--el-border-color)); color:var(--el-color-primary); background:color-mix(in srgb, var(--el-color-primary) 12%, var(--el-bg-color)); font-weight:600; box-shadow:0 0 12px color-mix(in srgb, var(--el-color-primary) 18%, transparent); }
+.ai-entry:hover { color:#fff; border-color:var(--el-color-primary); background:var(--el-color-primary); box-shadow:0 0 16px color-mix(in srgb, var(--el-color-primary) 40%, transparent); }
+.ai-entry__icon { font-size:17px; }
 @media (max-width: 1200px) { .app-header { flex-wrap: wrap; } .nav-scroll { order: 3; flex-basis: 100%; } .managed-server{margin-right:auto} }
 .tagline {
   font-size: 13px;

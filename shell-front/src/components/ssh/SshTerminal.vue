@@ -50,7 +50,9 @@ let connectGen = 0
 function terminalTheme(){
   if(!background.value.enabled)return {background:'#1e1e1e',foreground:'#ffffff',cursor:'#ffffff'}
   const foreground=effectiveDark.value?'#e5eaf3':'#303133'
-  return {background:'#00000000',foreground,cursor:foreground,selectionBackground:'#409eff55'}
+  return effectiveDark.value
+    ? {background:'#00000000',foreground,cursor:foreground,selectionBackground:'#409eff55'}
+    : {background:'#00000000',foreground,cursor:foreground,selectionBackground:'#409eff',selectionForeground:'#ffffff'}
 }
 watch([()=>background.value.enabled,effectiveDark],()=>{if(terminal)terminal.options.theme=terminalTheme()})
 
