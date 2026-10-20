@@ -49,8 +49,8 @@ def main():
             response = session.request(method, BASE + path, params={'access_token': token} if method == 'GET' else None,
                                       data=(dict(data or {}, access_token=token) if method != 'GET' else None),
                                       files=files, timeout=(20, 600))
-        except requests.RequestException:
-            raise RuntimeError('Gitee request failed; credential omitted') from None
+        except requests.RequestException as error:
+            raise RuntimeError(f'Gitee {method} {path} transport failed ({type(error).__name__}); credential omitted') from None
         if allow404 and response.status_code == 404:
             return None
         if not 200 <= response.status_code < 300:
@@ -72,14 +72,28 @@ def main():
     attachments = call('GET', f'/releases/{release_id}/attach_files')
     if not isinstance(attachments, list):
         raise RuntimeError('Unexpected Gitee attachment response')
+
+    def contains_attachment(items, name):
+        return any(item.get('name') == name or item.get('filename') == name for item in items)
+
     for artifact in artifacts:
-        if any(item.get('name') == artifact.name or item.get('filename') == artifact.name for item in attachments):
+        if contains_attachment(attachments, artifact.name):
             print('Already uploaded:', artifact.name)
             continue
-        with artifact.open('rb') as stream:
-            call('POST', f'/releases/{release_id}/attach_files',
-                 files={'file': (artifact.name, stream, 'application/octet-stream')})
-        print('Uploaded:', artifact.name)
+        for attempt in range(2):
+            try:
+                with artifact.open('rb') as stream:
+                    call('POST', f'/releases/{release_id}/attach_files',
+                         files={'file': (artifact.name, stream, 'application/octet-stream')})
+                print('Uploaded:', artifact.name)
+                break
+            except RuntimeError as error:
+                attachments = call('GET', f'/releases/{release_id}/attach_files')
+                if contains_attachment(attachments, artifact.name):
+                    print('Upload confirmed after interrupted response:', artifact.name)
+                    break
+                if attempt or 'transport failed' not in str(error):
+                    raise
     print(f'Release: https://gitee.com/hahadoumi/web-shell/releases/tag/{tag}')
 
 
