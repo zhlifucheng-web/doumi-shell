@@ -44,11 +44,11 @@ def main():
 
     session = requests.Session()
 
-    def call(method, path, data=None, files=None, allow404=False):
+    def call(method, path, data=None, allow404=False):
         try:
             response = session.request(method, BASE + path, params={'access_token': token} if method == 'GET' else None,
                                       data=(dict(data or {}, access_token=token) if method != 'GET' else None),
-                                      files=files, timeout=(20, 600))
+                                      timeout=(20, 600))
         except requests.RequestException as error:
             raise RuntimeError(f'Gitee {method} {path} transport failed ({type(error).__name__}); credential omitted') from None
         if allow404 and response.status_code == 404:
@@ -76,16 +76,28 @@ def main():
     def contains_attachment(items, name):
         return any(item.get('name') == name or item.get('filename') == name for item in items)
 
+    def upload(artifact):
+        command = [
+            'curl.exe', '--silent', '--show-error', '--http1.1', '--connect-timeout', '30', '--max-time', '600',
+            '--request', 'POST', '--form', f'access_token={token}', '--form', f'file=@{artifact}',
+            '--output', '-', '--write-out', '\n%{http_code}', f'{BASE}/releases/{release_id}/attach_files',
+        ]
+        result = subprocess.run(command, capture_output=True, text=True)
+        body, _, status = result.stdout.rpartition('\n')
+        if result.returncode or status.strip() != '201':
+            detail = result.stderr[:400].replace(token, '[redacted]')
+            raise RuntimeError(f'Gitee upload failed for {artifact.name}: HTTP {status.strip()}, curl {result.returncode}; {detail}')
+        return json.loads(body)
+
     for artifact in artifacts:
         if contains_attachment(attachments, artifact.name):
             print('Already uploaded:', artifact.name)
             continue
         for attempt in range(2):
             try:
-                with artifact.open('rb') as stream:
-                    call('POST', f'/releases/{release_id}/attach_files',
-                         files={'file': (artifact.name, stream, 'application/octet-stream')})
-                print('Uploaded:', artifact.name)
+                uploaded = upload(artifact)
+                attachments.append(uploaded)
+                print('Uploaded:', uploaded.get('name', artifact.name))
                 break
             except RuntimeError as error:
                 attachments = call('GET', f'/releases/{release_id}/attach_files')
