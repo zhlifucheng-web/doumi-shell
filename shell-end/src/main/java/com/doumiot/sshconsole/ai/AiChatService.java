@@ -87,17 +87,22 @@ public class AiChatService {
         List<Map<String,Object>> rows=accountId==null
                 ?jdbc.queryForList(query+"ORDER BY updated_at DESC LIMIT 100")
                 :jdbc.queryForList(query+"WHERE account_id=? ORDER BY updated_at DESC LIMIT 100",accountId);
-        for(Map<String,Object> row:rows)result.add(summary(row));
+        List<ObjectNode> summaries=new ArrayList<>();
+        for(Map<String,Object> row:rows)summaries.add(summary(row));
+        summaries.sort(Comparator.comparingLong((ObjectNode row)->row.path("latestMessageAt").asLong()).reversed());
+        summaries.forEach(result::add);
         return result;
     }
     public JsonNode latest(Long accountId,Long hostId) {
         if(jdbc==null)return null;
         String query="SELECT id,provider_id,authorization_mode,state,account_id,host_id,server_name,server_address,server_port,username,events_enc,created_at,updated_at FROM ai_conversation ";
         try {
-            Map<String,Object> row=accountId!=null
-                    ?jdbc.queryForMap(query+"WHERE account_id=? ORDER BY updated_at DESC LIMIT 1",accountId)
-                    :hostId!=null?jdbc.queryForMap(query+"WHERE account_id IS NULL AND host_id=? ORDER BY updated_at DESC LIMIT 1",hostId)
-                    :jdbc.queryForMap(query+"WHERE account_id IS NULL AND host_id IS NULL ORDER BY updated_at DESC LIMIT 1");
+            List<Map<String,Object>> rows=accountId!=null
+                    ?jdbc.queryForList(query+"WHERE account_id=?",accountId)
+                    :hostId!=null?jdbc.queryForList(query+"WHERE account_id IS NULL AND host_id=?",hostId)
+                    :jdbc.queryForList(query+"WHERE account_id IS NULL AND host_id IS NULL");
+            Map<String,Object> row=rows.stream().max(Comparator.comparingLong(this::latestMessageAt)).orElse(null);
+            if(row==null)return null;
             return summary(row);
         }catch(EmptyResultDataAccessException e){return null;}
     }
@@ -105,10 +110,22 @@ public class AiChatService {
         JsonNode events=decryptArray((byte[])row.get("events_enc"));
         String title="";
         for(JsonNode item:events)if("user".equals(item.path("role").asText())){title=item.path("text").asText("");break;}
-        ObjectNode result=AiJson.object("id",row.get("id"),"providerId",row.get("provider_id"),"authorizationMode",row.get("authorization_mode"),"state",row.get("state"),"hostId",row.get("host_id"),"serverName",row.get("server_name"),"serverAddress",row.get("server_address"),"serverPort",row.get("server_port"),"username",row.get("username"),"title",AiJson.bounded(title,160),"createdAt",row.get("created_at"),"updatedAt",row.get("updated_at"));
+        ObjectNode result=AiJson.object("id",row.get("id"),"providerId",row.get("provider_id"),"authorizationMode",row.get("authorization_mode"),"state",row.get("state"),"hostId",row.get("host_id"),"serverName",row.get("server_name"),"serverAddress",row.get("server_address"),"serverPort",row.get("server_port"),"username",row.get("username"),"title",AiJson.bounded(title,160),"createdAt",row.get("created_at"),"updatedAt",row.get("updated_at"),"latestMessageAt",latestMessageAt(events,row));
         Object account=row.get("account_id");if(account!=null)result.put("accountId",((Number)account).longValue());
         return result;
     }
+    private long latestMessageAt(Map<String,Object> row) {
+        return latestMessageAt(decryptArray((byte[])row.get("events_enc")),row);
+    }
+    private static long latestMessageAt(JsonNode events,Map<String,Object> row) {
+        return latestMessageAt(events,number(row.get("created_at")));
+    }
+    static long latestMessageAt(JsonNode events,long fallback) {
+        long latest=fallback;
+        for(JsonNode event:events)if(event.path("timestamp").canConvertToLong())latest=Math.max(latest,event.path("timestamp").asLong());
+        return latest;
+    }
+    private static long number(Object value) { return value instanceof Number?((Number)value).longValue():0L; }
     public JsonNode setAuthorizationMode(String id,String mode) {
         validateAuthorizationMode(mode);Conversation s=require(id);
         synchronized(s) {
@@ -214,7 +231,7 @@ public class AiChatService {
             String text=content(raw.path("content"));
             if(text.isEmpty())text=content(raw.path("refusal"));
             JsonNode calls=raw.path("tool_calls");
-            if(calls.size()>8)throw new IllegalArgumentException("AI 单轮请求的操作超过8项，请缩小任务范围后重试");
+            if(calls.size()>AiCompletionClient.MAX_TOOL_CALLS)throw new IllegalArgumentException("AI 单轮工具调用超过"+AiCompletionClient.MAX_TOOL_CALLS+"项，请缩小任务范围后重试");
             if(text.isEmpty()&&calls.size()==0)throw new IllegalArgumentException("AI 未返回文本或工具操作，请检查模型兼容性后重试");
             ObjectNode assistant=AiJson.object("role","assistant","content",text);
             if(raw.path("reasoning_content").isTextual())assistant.set("reasoning_content",raw.get("reasoning_content"));

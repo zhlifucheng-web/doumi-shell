@@ -30,6 +30,7 @@ class DoumiShellIntegrationTest {
     @Autowired CredentialCipher cipher;
     @Autowired SshScriptExecutionService executions;
     @Autowired SshDataCleanupService cleanup;
+    @Autowired SshTreeService tree;
 
     @Test void entryAndVersionAreNeverCachedAndDesktopLaunchUsesMatchingVersion() {
         org.springframework.http.ResponseEntity<String> page=http.getForEntity("/",String.class);
@@ -53,6 +54,90 @@ class DoumiShellIntegrationTest {
         CredentialCipher.SshSecretPayload secret = new CredentialCipher.SshSecretPayload();
         secret.setPassword("roundtrip-secret"); account.setSecret(secret);
         return new long[]{savedGroup.getId(), savedHost.getId(), accounts.create(account).getId()};
+    }
+
+    @Test void clearingGroupParentMovesItToRoot() {
+        SshGroupService.SshGroupSaveRequest rootRequest = new SshGroupService.SshGroupSaveRequest();
+        rootRequest.setName("clear-parent-root-" + UUID.randomUUID());
+        SshGroup root = groups.create(rootRequest);
+        SshGroupService.SshGroupSaveRequest childRequest = new SshGroupService.SshGroupSaveRequest();
+        childRequest.setName("clear-parent-child-" + UUID.randomUUID());
+        childRequest.setParentId(root.getId());
+        SshGroup child = groups.create(childRequest);
+        try {
+            SshGroupService.SshGroupSaveRequest update = new SshGroupService.SshGroupSaveRequest();
+            update.setName(child.getName());
+            update.setRemark(child.getRemark());
+            update.setSortOrder(child.getSortOrder());
+            groups.update(child.getId(), update);
+
+            assertNull(groups.getById(child.getId()).getParentId());
+            assertTrue(tree.listChildren("ROOT", null).stream()
+                    .anyMatch(node -> child.getId().equals(node.getId())));
+        } finally {
+            groups.delete(child.getId());
+            groups.delete(root.getId());
+        }
+    }
+
+    @Test void treeDragMoveReparentsGroupsHostsAndAccountsAndPersistsSiblingOrder() {
+        SshGroupService.SshGroupSaveRequest rootRequest = new SshGroupService.SshGroupSaveRequest();
+        rootRequest.setName("drag-root-a-" + UUID.randomUUID());
+        SshGroup rootA = groups.create(rootRequest);
+        rootRequest = new SshGroupService.SshGroupSaveRequest();
+        rootRequest.setName("drag-root-b-" + UUID.randomUUID());
+        SshGroup rootB = groups.create(rootRequest);
+        try {
+
+        SshGroupService.SshGroupSaveRequest childRequest = new SshGroupService.SshGroupSaveRequest();
+        childRequest.setName("drag-child-" + UUID.randomUUID()); childRequest.setParentId(rootA.getId());
+        SshGroup child = groups.create(childRequest);
+        childRequest = new SshGroupService.SshGroupSaveRequest();
+        childRequest.setName("drag-source-peer-" + UUID.randomUUID()); childRequest.setParentId(rootA.getId());
+        SshGroup sourcePeer = groups.create(childRequest);
+        childRequest = new SshGroupService.SshGroupSaveRequest();
+        childRequest.setName("drag-destination-peer-" + UUID.randomUUID()); childRequest.setParentId(rootB.getId());
+        SshGroup destinationPeer = groups.create(childRequest);
+
+        SshHostService.SshHostSaveRequest hostRequest = new SshHostService.SshHostSaveRequest();
+        hostRequest.setGroupId(rootA.getId()); hostRequest.setName("drag-host-a"); hostRequest.setHost("127.0.0.1");
+        SshHost hostA = hosts.create(hostRequest);
+        hostRequest = new SshHostService.SshHostSaveRequest();
+        hostRequest.setGroupId(rootB.getId()); hostRequest.setName("drag-host-b"); hostRequest.setHost("127.0.0.2");
+        SshHost hostB = hosts.create(hostRequest);
+
+        SshAccountService.SshAccountSaveRequest accountRequest = new SshAccountService.SshAccountSaveRequest();
+        accountRequest.setHostId(hostA.getId()); accountRequest.setUsername("drag-account"); accountRequest.setAuthType("PASSWORD");
+        CredentialCipher.SshSecretPayload secret = new CredentialCipher.SshSecretPayload(); secret.setPassword("test-secret");
+        accountRequest.setSecret(secret);
+        long accountId = accounts.create(accountRequest).getId();
+
+        SshTreeService.ReorderRequest moveGroup = new SshTreeService.ReorderRequest();
+        moveGroup.setNodeType("GROUP"); moveGroup.setId(child.getId()); moveGroup.setParentId(rootB.getId());
+        moveGroup.setOrderedIds(Arrays.asList(child.getId(), destinationPeer.getId()));
+        moveGroup.setSourceOrderedIds(Collections.singletonList(sourcePeer.getId()));
+        tree.moveAndReorder(moveGroup);
+        assertEquals(rootB.getId(), groups.getById(child.getId()).getParentId());
+        assertEquals(0, groups.getById(child.getId()).getSortOrder());
+        assertEquals(0, groups.getById(sourcePeer.getId()).getSortOrder());
+
+        SshTreeService.ReorderRequest moveHost = new SshTreeService.ReorderRequest();
+        moveHost.setNodeType("HOST"); moveHost.setId(hostA.getId()); moveHost.setParentId(rootB.getId());
+        moveHost.setOrderedIds(Arrays.asList(hostB.getId(), hostA.getId())); moveHost.setSourceOrderedIds(Collections.emptyList());
+        tree.moveAndReorder(moveHost);
+        assertEquals(rootB.getId(), hosts.getById(hostA.getId()).getGroupId());
+        assertEquals(1, hosts.getById(hostA.getId()).getSortOrder());
+
+        SshTreeService.ReorderRequest moveAccount = new SshTreeService.ReorderRequest();
+        moveAccount.setNodeType("ACCOUNT"); moveAccount.setId(accountId); moveAccount.setParentId(hostB.getId());
+        moveAccount.setOrderedIds(Collections.singletonList(accountId)); moveAccount.setSourceOrderedIds(Collections.emptyList());
+        tree.moveAndReorder(moveAccount);
+        assertEquals(hostB.getId(), accounts.getById(accountId).getHostId());
+        assertEquals(0, accounts.getById(accountId).getSortOrder());
+        } finally {
+            groups.delete(rootA.getId());
+            groups.delete(rootB.getId());
+        }
     }
 
     @Test void backupRemapsReferencesAndReencryptsCredentialsAndPausesSchedules() throws Exception {

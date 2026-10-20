@@ -46,25 +46,27 @@ public class AiTools {
         add("tree_children","terminal","列出分组、主机或账户；从 parentType=ROOT 开始，GROUP 的 parentId 是分组 ID，HOST 的 parentId 是主机 ID",false,false,
                 (a,o)->tree.listChildren(AiJson.text(a,"parentType"),optionalId(a,"parentId")),"parentType!:string:ROOT/GROUP/HOST","parentId:integer:父节点 ID");
         add("group_get","terminal","读取分组",false,false,(a,o)->groups.getById(AiJson.id(a,"id")),"id!:integer:分组 ID");
-        add("group_create","terminal","创建分组，data 包含 name、可选 parentId/remark/sortOrder",false,true,
+        add("group_create","terminal","创建分组，data 可设置全部业务字段；parentId 不传或为 null 表示根分组",false,true,
                 (a,o)->groups.create(body(a,SshGroupService.SshGroupSaveRequest.class)),"data!:object:分组字段 {name,parentId?,remark?,sortOrder?}");
-        add("group_update","terminal","修改分组，data 包含完整 name、parentId、remark、sortOrder",true,true,
+        add("group_update","terminal","修改分组全部业务字段；parentId 不传或为 null 表示根分组",true,true,
                 (a,o)->groups.update(AiJson.id(a,"id"),body(a,SshGroupService.SshGroupSaveRequest.class)),"id!:integer:分组 ID","data!:object:完整分组字段");
         add("group_move","terminal","移动分组；不填 parentId 表示根分组",true,true,
                 (a,o)->groups.move(AiJson.id(a,"id"),optionalId(a,"parentId")),"id!:integer:分组 ID","parentId:integer:父分组 ID");
         add("group_delete","terminal","级联删除分组及全部子分组、主机、账户和主机脚本；关闭相关连接并保留执行历史；分组内有运行中任务时拒绝删除",true,true,(a,o)->groups.delete(AiJson.id(a,"id")),"id!:integer:分组 ID");
         add("host_get","terminal","读取主机配置",false,false,(a,o)->hosts.getById(AiJson.id(a,"id")),"id!:integer:主机 ID");
-        add("host_create","terminal","创建主机，data 必填 groupId/name/host，port 默认22，可填 remark/enabled/sortOrder",false,true,
+        add("host_create","terminal","创建主机，data 可设置全部业务字段；groupId/name/host 必填，port 默认22",false,true,
                 (a,o)->hosts.create(body(a,SshHostService.SshHostSaveRequest.class)),"data!:object:主机字段 {groupId,name,host,port?,remark?,enabled?,sortOrder?}");
-        add("host_update","terminal","修改主机，先读取再提交完整配置",true,true,
+        add("host_update","terminal","修改主机全部业务字段，先读取再提交完整配置",true,true,
                 (a,o)->hosts.update(AiJson.id(a,"id"),body(a,SshHostService.SshHostSaveRequest.class)),"id!:integer:主机 ID","data!:object:完整主机配置");
         add("host_move","terminal","将主机移至指定分组",true,true,(a,o)->hosts.move(AiJson.id(a,"id"),AiJson.id(a,"groupId")),"id!:integer:主机 ID","groupId!:integer:目标分组 ID");
         add("host_delete","terminal","删除主机及其账户、主机脚本和定时配置，并关闭相关连接；历史执行记录保留",true,true,(a,o)->hosts.delete(AiJson.id(a,"id")),"id!:integer:主机 ID");
         add("account_get","terminal","读取账户配置，不返回密码或私钥",false,false,(a,o)->accounts.getById(AiJson.id(a,"id")),"id!:integer:账户 ID");
         add("account_create","terminal","创建账户。data 必填 hostId/username/authType/secret。authType=PASSWORD/PRIVATE_KEY/PRIVATE_KEY_WITH_PASSPHRASE；secret={password?,privateKeyPem?,passphrase?}；enabled=0 禁用未配置凭据的账户",false,true,
                 (a,o)->accounts.create(body(a,SshAccountService.SshAccountSaveRequest.class)),"data!:object:账户配置，可含 defaultCwd/remark/enabled/sortOrder");
-        add("account_update","terminal","修改账户。先读取，提交完整 username/authType/enabled 等字段；secret 不传则保留。更新后关闭 AI 自有连接",true,true,
+        add("account_update","terminal","修改账户全部业务字段。先读取，提交 hostId/username/authType/defaultCwd/remark/sortOrder/enabled；secret 不传则保留，传入可更新密码、私钥和私钥口令。更新后关闭 AI 自有连接",true,true,
                 (a,o)->{long id=AiJson.id(a,"id"); Object result=accounts.update(id,body(a,SshAccountService.SshAccountSaveRequest.class));connections.close(id);return result;},"id!:integer:账户 ID","data!:object:完整账户配置，secret 可选");
+        add("account_move","terminal","将账户移动到指定主机，保留账户其余配置并关闭相关 AI 连接",true,true,
+                (a,o)->{long id=AiJson.id(a,"id");Object result=accounts.move(id,AiJson.id(a,"hostId"));connections.close(id);return result;},"id!:integer:账户 ID","hostId!:integer:目标主机 ID");
         add("account_delete","terminal","删除账户并关闭连接",true,true,(a,o)->{long id=AiJson.id(a,"id");connections.close(id);return accounts.delete(id);},"id!:integer:账户 ID");
         add("account_test","terminal","测试账户 SSH 连接与认证",false,false,(a,o)->accounts.testConnection(AiJson.id(a,"accountId")),"accountId!:integer:账户 ID");
         add("ssh_connect","terminal","建立或复用 AI 专用 SSH 会话，不影响页面终端",false,false,

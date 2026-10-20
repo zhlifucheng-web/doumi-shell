@@ -5,6 +5,8 @@ import com.doumiot.sshconsole.service.SshTreeService;
 import com.doumiot.sshconsole.vo.TreeNodeVO;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,5 +28,10 @@ public class SshConsoleTreeController {
             @RequestParam String parentType,
             @RequestParam(required = false) Long parentId) {
         return sshTreeService.listChildren(parentType, parentId);
+    }
+
+    @PatchMapping("/tree/reorder")
+    public void moveAndReorder(@RequestBody SshTreeService.ReorderRequest request) {
+        sshTreeService.moveAndReorder(request);
     }
 }

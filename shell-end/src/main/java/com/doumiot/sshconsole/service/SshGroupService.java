@@ -1,6 +1,7 @@
 package com.doumiot.sshconsole.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.doumiot.common.exception.enums.ParamExceptionEnum;
 import com.doumiot.spring.exception.BusinessRuntimeException;
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
@@ -48,6 +49,7 @@ public class SshGroupService {
         return row;
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public SshGroup update(long id, SshGroupSaveRequest req) {
         SshGroup existing = requireGroup(id);
         validateName(req.getName());
@@ -69,6 +71,11 @@ public class SshGroupService {
             existing.setSortOrder(req.getSortOrder());
         }
         sshGroupMapper.updateById(existing);
+        if (newParentId == null) {
+            sshGroupMapper.update(null, new LambdaUpdateWrapper<SshGroup>()
+                    .eq(SshGroup::getId, id)
+                    .set(SshGroup::getParentId, null));
+        }
         return existing;
     }
 

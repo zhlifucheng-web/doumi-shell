@@ -19,6 +19,8 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 
 @Service @SshConsoleEnabled
 public class AiCompletionClient {
+    static final int MAX_TOOL_CALLS = 64;
+
     private final RestTemplate http;
     public AiCompletionClient() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory() {
@@ -136,8 +138,7 @@ public class AiCompletionClient {
             append(reasoning,delta.path("reasoning_content").asText(""),131072);
             append(refusal,delta.path("refusal").asText(""),65536);
             for(JsonNode fragment:delta.path("tool_calls")) {
-                int index=fragment.path("index").asInt(-1);
-                if(index<0||index>=8)throw new IllegalArgumentException("AI 流式工具索引无效或超过8项");
+                int index=toolIndex(fragment);
                 ObjectNode call=calls.computeIfAbsent(index,i->AiJson.object("id","","type","function","function",AiJson.object("name","","arguments","")));
                 merge(call,"id",fragment.path("id"),128);
                 ObjectNode function=(ObjectNode)call.get("function");
@@ -145,6 +146,25 @@ public class AiCompletionClient {
                 merge(function,"arguments",fragment.path("function").path("arguments"),512*1024);
             }
             return false;
+        }
+        private int toolIndex(JsonNode fragment) {
+            JsonNode value=fragment.get("index");
+            if(value!=null&&!value.isNull()) {
+                if(!value.isIntegralNumber()||!value.canConvertToInt())throw new IllegalArgumentException("AI 流式工具索引格式无效");
+                int index=value.intValue();
+                if(index<0||index>=MAX_TOOL_CALLS)throw new IllegalArgumentException("AI 单轮工具调用超过"+MAX_TOOL_CALLS+"项，索引="+index);
+                return index;
+            }
+
+            String id=fragment.path("id").asText();
+            if(!id.isEmpty()) {
+                for(Map.Entry<Integer,ObjectNode> entry:calls.entrySet())
+                    if(id.equals(entry.getValue().path("id").asText()))return entry.getKey();
+                for(int index=0;index<MAX_TOOL_CALLS;index++)if(!calls.containsKey(index))return index;
+            } else if(calls.size()==1) {
+                return calls.firstKey();
+            }
+            throw new IllegalArgumentException("AI 流式工具索引缺失且无法唯一匹配工具调用");
         }
         JsonNode finish() {
             if(!Arrays.asList("stop","tool_calls","function_call").contains(finishReason))

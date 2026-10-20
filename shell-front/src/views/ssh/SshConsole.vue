@@ -44,7 +44,11 @@
           :default-expanded-keys="defaultExpandedKeys"
           :current-node-key="treeCurrentNodeKey"
           :filter-node-method="filterNode"
+          :draggable="!filterText"
+          :allow-drop="allowTreeDrop"
           @node-click="onNodeClick"
+          @node-drag-start="onNodeDragStart"
+          @node-drop="onNodeDrop"
         >
           <template #default="{ data }">
             <div
@@ -75,7 +79,7 @@
             </div>
           </template>
         </el-tree></el-scrollbar>
-        <div class="aside-hint">双击分组/主机编辑；双击账户打开终端</div>
+        <div class="aside-hint">拖拽分组、主机或账户可排序和移动；双击分组/主机编辑，双击账户打开终端</div>
         </div>
       </el-aside>
 
@@ -148,17 +152,9 @@
           <el-input v-model="groupForm.name" maxlength="128" />
         </el-form-item>
         <el-form-item label="父分组">
-          <el-tree-select
-            v-model="groupForm.parentId"
-            :data="groupParentTree"
-            check-strictly
-            clearable
-            filterable
-            placeholder="不选则为根分组"
-            style="width: 100%"
-            :render-after-expand="false"
-            popper-class="ssh-group-tree-popper"
-          />
+          <el-select v-model="groupForm.parentId" clearable filterable placeholder="不选则为根分组" style="width: 100%">
+            <el-option v-for="option in groupParentOptions" :key="option.value" :label="option.label" :value="option.value" />
+          </el-select>
         </el-form-item>
         <el-form-item label="排序">
           <el-input-number v-model="groupForm.sortOrder" :min="0" />
@@ -288,6 +284,7 @@ import {
   getGroup,
   getHost,
   fetchTreeChildren,
+  moveTreeNode,
   testAccount,
   openAccountSession,
   updateAccount,
@@ -310,6 +307,7 @@ const treeRef = ref(null)
 const filterText = ref('')
 const treeVersion = ref(0)
 const treeLoading = ref(false)
+let dragOrigin = null
 const selectedNode = ref(null)
 const defaultExpandedKeys = ref([])
 const treeCurrentNodeKey = ref(savedAccount?.key ?? null)
@@ -321,7 +319,7 @@ const treeProps = { label: 'label', isLeaf: 'leaf' }
 const groupDlg = ref(false)
 const groupForm = ref({})
 const groupFormRef = ref(null)
-const groupParentTree = ref([])
+const groupParentOptions = ref([])
 const hostGroupTree = ref([])
 const groupNameById = ref({})
 
@@ -502,10 +500,94 @@ function mapNodes(list) {
   }))
 }
 
+function onNodeDragStart(node) {
+  const type = node.data.nodeType
+  dragOrigin = {
+    type,
+    parentId: parentIdForNode(type, node.parent),
+    siblingIds: (node.parent?.childNodes || [])
+      .filter((sibling) => sibling.data.nodeType === type)
+      .map((sibling) => sibling.data.id)
+  }
+}
+
+function allowTreeDrop(draggingNode, dropNode, dropType) {
+  const sourceType = draggingNode.data.nodeType
+  const targetType = dropNode.data.nodeType
+  if (dropType === 'inner') {
+    if (sourceType === 'GROUP' && targetType === 'GROUP') {
+      for (let node = dropNode; node && node.level > 0; node = node.parent) {
+        if (node.data.id === draggingNode.data.id) return false
+      }
+      return true
+    }
+    return (sourceType === 'HOST' && targetType === 'GROUP') ||
+      (sourceType === 'ACCOUNT' && targetType === 'HOST')
+  }
+  return (dropType === 'before' || dropType === 'after') && sourceType === targetType
+}
+
+function parentIdForNode(type, parentNode) {
+  if (type === 'GROUP' && parentNode?.level === 0) return null
+  return parentNode?.data?.id ?? null
+}
+
+async function onNodeDrop(draggingNode, dropNode, dropType) {
+  const origin = dragOrigin
+  dragOrigin = null
+  if (!origin) return refreshTree()
+  const type = draggingNode.data.nodeType
+  const destinationParent = dropType === 'inner' ? dropNode : dropNode.parent
+  const parentId = parentIdForNode(type, destinationParent)
+  let orderedIds = (destinationParent?.childNodes || [])
+    .filter((node) => node.data.nodeType === type)
+    .map((node) => node.data.id)
+  if (dropType === 'inner' && !destinationParent.loaded) {
+    try {
+      const parentType = destinationParent.data.nodeType === 'HOST' ? 'HOST' : 'GROUP'
+      const children = await fetchTreeChildren(parentType, parentId)
+      orderedIds = (children || [])
+        .filter((node) => node.nodeType === type)
+        .map((node) => node.id)
+      if (!orderedIds.includes(draggingNode.data.id)) orderedIds.push(draggingNode.data.id)
+    } catch (error) {
+      ElMessage.error(error?.message || '读取目标节点内容失败，移动未保存')
+      refreshTree()
+      return
+    }
+  }
+  const crossParent = origin.parentId !== parentId
+  try {
+    await moveTreeNode({
+      nodeType: type,
+      id: draggingNode.data.id,
+      parentId,
+      orderedIds,
+      sourceOrderedIds: crossParent ? origin.siblingIds.filter((id) => id !== draggingNode.data.id) : null
+    })
+    if (selectedNode.value?.nodeType === type && selectedNode.value.id === draggingNode.data.id) {
+      selectedNode.value = draggingNode.data
+      await loadDetail(draggingNode.data)
+    }
+  } catch (error) {
+    ElMessage.error(error?.message || '移动或排序失败，请刷新后重试')
+    refreshTree()
+  }
+}
+
 function refreshTree() {
+  const current = selectedNode.value
   treeVersion.value += 1
   detail.value = { type: null, raw: null }
-  nextTick(() => restoreSavedAccount())
+  nextTick(async () => {
+    if (current?.nodeType && current.id != null) {
+      await loadDetail(current)
+      treeCurrentNodeKey.value = current.key
+      treeRef.value?.setCurrentKey?.(current.key)
+    } else {
+      await restoreSavedAccount()
+    }
+  })
 }
 
 function onNodeClick(data) {
@@ -754,6 +836,22 @@ function buildGroupParentTree(flat, excludeIds) {
   return roots
 }
 
+function buildGroupParentOptions(flat, excludeIds) {
+  const byId = new Map(flat.map((group) => [group.id, group]))
+  return flat.filter((group) => !excludeIds.has(group.id)).map((group) => {
+    const path = [group.name]
+    const seen = new Set([group.id])
+    let parentId = group.parentId
+    while (parentId != null && byId.has(parentId) && !seen.has(parentId)) {
+      seen.add(parentId)
+      const parent = byId.get(parentId)
+      path.push(parent.name)
+      parentId = parent.parentId
+    }
+    return { value: group.id, label: path.reverse().join(' / ') }
+  })
+}
+
 function applyGroupFlat(flat, editingGroupId) {
   const nameMap = {}
   for (const g of flat) {
@@ -762,7 +860,7 @@ function applyGroupFlat(flat, editingGroupId) {
   groupNameById.value = nameMap
   hostGroupTree.value = buildGroupParentTree(flat, new Set())
   const exclude = editingGroupId != null ? collectDescendantIds(flat, editingGroupId) : new Set()
-  groupParentTree.value = buildGroupParentTree(flat, exclude)
+  groupParentOptions.value = buildGroupParentOptions(flat, exclude)
 }
 
 function groupDisplayName(groupId, fallbackLabel) {
@@ -775,7 +873,7 @@ async function refreshGroupParentOptions(editingGroupId) {
     const flat = await loadAllGroupsFlat()
     applyGroupFlat(flat, editingGroupId)
   } catch {
-    groupParentTree.value = []
+    groupParentOptions.value = []
     hostGroupTree.value = []
     groupNameById.value = {}
   }

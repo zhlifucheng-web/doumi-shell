@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import javax.annotation.Resource;
+import java.time.LocalDateTime;
 
 @SshConsoleEnabled
 @Service
@@ -50,6 +51,7 @@ public class SshHostService {
             throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "分组不存在");
         }
         apply(existing, req);
+        existing.setUpdatedAt(LocalDateTime.now());
         sshHostMapper.updateById(existing);
         return existing;
     }

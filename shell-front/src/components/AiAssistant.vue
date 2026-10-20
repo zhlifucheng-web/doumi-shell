@@ -81,7 +81,7 @@
     <div class="ai-history-toolbar"><el-input v-model="historySearch" clearable placeholder="搜索会话或服务器" /><el-button :loading="historyLoading" @click="loadHistory">刷新</el-button></div>
     <el-table :data="filteredHistory" v-loading="historyLoading" max-height="55vh" empty-text="暂无历史会话">
       <el-table-column label="会话" min-width="220"><template #default="scope"><strong>{{ scope.row.title || '新会话' }}</strong><small class="ai-history-server">{{ historyServerLabel(scope.row) }}</small></template></el-table-column>
-      <el-table-column label="更新时间" width="170"><template #default="scope">{{ formatTime(scope.row.updatedAt) }}</template></el-table-column>
+      <el-table-column label="最新消息" width="170"><template #default="scope">{{ formatTime(scope.row.latestMessageAt || scope.row.updatedAt) }}</template></el-table-column>
       <el-table-column label="状态" width="110"><template #default="scope">{{ stateLabelFor(scope.row.state) }}</template></el-table-column>
       <el-table-column label="操作" width="90" fixed="right"><template #default="scope"><el-button link type="primary" :disabled="busy || submitting || uploading || !!pending.length" @click="openHistory(scope.row)">打开</el-button></template></el-table-column>
     </el-table>

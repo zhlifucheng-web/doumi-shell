@@ -53,12 +53,26 @@ public class SshAccountService {
     public SshAccountVO update(long id, SshAccountSaveRequest req) {
         SshAccount existing = requireAccount(id);
         validateSave(req, false);
-        assertUsernameUnique(existing.getHostId(), req.getUsername(), id);
+        long targetHostId = req.getHostId() != null ? req.getHostId() : existing.getHostId();
+        sshHostService.getById(targetHostId);
+        assertUsernameUnique(targetHostId, req.getUsername(), id);
         applyCommon(existing, req);
         if (req.getSecret() != null) {
             applySecret(existing, req.getAuthType(), req.getSecret());
         }
         sshAccountMapper.updateById(existing);
+        return toVo(existing);
+    }
+
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
+    public SshAccountVO move(long id, long hostId) {
+        SshAccount existing = requireAccount(id);
+        if (existing.getHostId() == hostId) return toVo(existing);
+        SshHost host = sshHostService.getById(hostId);
+        assertUsernameUnique(host.getId(), existing.getUsername(), id);
+        existing.setHostId(host.getId());
+        sshAccountMapper.updateById(existing);
+        sessionRegistry.closeByAccountId(id);
         return toVo(existing);
     }
 

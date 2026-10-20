@@ -38,6 +38,11 @@ class AiWorkflowTest {
         assertEquals(new HashSet<>(Arrays.asList("terminal","scripts","processes","disk-usage","data-management")),pages);
         assertTrue(tools.catalog().size()>=45);assertFalse(tools.catalog().toString().toLowerCase().contains("finalshell"));
     }
+    @Test void conversationOrderingUsesLatestEventTimeAndFallsBackToCreationTime() {
+        JsonNode events=AiJson.JSON.createArrayNode().add(AiJson.object("role","user","timestamp",200L)).add(AiJson.object("role","assistant","timestamp",350L));
+        assertEquals(350L,AiChatService.latestMessageAt(events,100L));
+        assertEquals(100L,AiChatService.latestMessageAt(AiJson.JSON.createArrayNode(),100L));
+    }
     @Test void readToolResultIsPassedToTheNextProviderRound() throws Exception {
         when(completion.stream(any(),anyList(),any(),any(),any())).thenReturn(toolMessage(call("read1","cron_preview",AiJson.object("cron","0 9 * * *"))),AiJson.object("content","查询完成"));
         String id=chat();send(id);JsonNode status=done(id);

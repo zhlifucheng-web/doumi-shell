@@ -37,6 +37,10 @@ export function fetchTreeChildren(parentType, parentId) {
   return get(`${BASE}/tree/children`, params, { showSuccess: false })
 }
 
+export function moveTreeNode(body) {
+  return patch(`${BASE}/tree/reorder`, body)
+}
+
 export function getGroup(id) {
   return get(`${BASE}/groups/${id}`, {}, { showSuccess: false })
 }

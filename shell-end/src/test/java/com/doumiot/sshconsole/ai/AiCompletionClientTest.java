@@ -51,6 +51,35 @@ class AiCompletionClientTest {
         assertEquals("call_1",reply.path("tool_calls").path(0).path("id").asText());assertEquals("group_get",reply.path("tool_calls").path(0).path("function").path("name").asText());
         assertEquals("{\"id\":7}",reply.path("tool_calls").path(0).path("function").path("arguments").asText());
     }
+    @Test void streamsMoreThanEightToolCallsInOneResponse() {
+        server.createContext("/v1/chat/completions",exchange->{
+            exchange.getResponseHeaders().set("Content-Type","text/event-stream; charset=UTF-8");exchange.sendResponseHeaders(200,0);
+            for(int i=0;i<9;i++) {
+                JsonNode call=AiJson.object("index",i,"id","call_"+i,"function",AiJson.object("name","host_get","arguments",AiJson.object("id",i).toString()));
+                JsonNode packet=AiJson.object("choices",Collections.singletonList(AiJson.object("delta",AiJson.object("tool_calls",Collections.singletonList(call)))));
+                exchange.getResponseBody().write(("data: "+packet+"\n\n").getBytes(StandardCharsets.UTF_8));
+            }
+            JsonNode finish=AiJson.object("choices",Collections.singletonList(AiJson.object("delta",AiJson.object(),"finish_reason","tool_calls")));
+            exchange.getResponseBody().write(("data: "+finish+"\n\ndata: [DONE]\n\n").getBytes(StandardCharsets.UTF_8));exchange.close();
+        });
+        JsonNode reply=client.stream(provider,Collections.emptyList(),null,s->{},new AiCompletionClient.StreamControl());
+        assertEquals(9,reply.path("tool_calls").size());
+        assertEquals("{\"id\":8}",reply.path("tool_calls").path(8).path("function").path("arguments").asText());
+    }
+    @Test void infersAnOmittedIndexOnlyWhenTheCallIsUnambiguous() {
+        server.createContext("/v1/chat/completions",exchange->{
+            exchange.getResponseHeaders().set("Content-Type","text/event-stream; charset=UTF-8");exchange.sendResponseHeaders(200,0);
+            JsonNode first=AiJson.object("choices",Collections.singletonList(AiJson.object("delta",AiJson.object("tool_calls",Collections.singletonList(
+                    AiJson.object("index",0,"id","call_1","function",AiJson.object("name","host_","arguments","{\"id\":")))))));
+            JsonNode continuation=AiJson.object("choices",Collections.singletonList(AiJson.object("delta",AiJson.object("tool_calls",Collections.singletonList(
+                    AiJson.object("function",AiJson.object("name","get","arguments","7}")))),"finish_reason","tool_calls")));
+            for(JsonNode packet:Arrays.asList(first,continuation))exchange.getResponseBody().write(("data: "+packet+"\n\n").getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));exchange.close();
+        });
+        JsonNode reply=client.stream(provider,Collections.emptyList(),null,s->{},new AiCompletionClient.StreamControl());
+        assertEquals("host_get",reply.path("tool_calls").path(0).path("function").path("name").asText());
+        assertEquals("{\"id\":7}",reply.path("tool_calls").path(0).path("function").path("arguments").asText());
+    }
     @Test void incompleteStreamFailsInsteadOfReturningPartialToolCalls() {
         server.createContext("/v1/chat/completions",exchange->{
             exchange.getResponseHeaders().set("Content-Type","text/event-stream; charset=UTF-8");exchange.sendResponseHeaders(200,0);
