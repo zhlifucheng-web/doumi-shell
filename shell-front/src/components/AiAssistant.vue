@@ -10,7 +10,8 @@
     <div class="ai-toolbar">
       <el-select v-model="providerId" placeholder="选择已配置模型" :disabled="busy || submitting || !!pending.length" aria-label="AI 模型" @change="changeProvider"><el-option v-for="p in providers" :key="p.id" :label="`${p.name} · ${p.model}`" :value="p.id" /></el-select>
       <el-button @click="settingsVisible = true">厂商配置</el-button>
-      <el-button :disabled="busy || uploading" @click="newChat">新对话</el-button>
+      <el-button @click="showHistory">历史会话</el-button>
+      <el-button :disabled="busy || uploading || submitting || !!pending.length" @click="newChat">新对话</el-button>
       <el-tag :type="busy ? 'warning' : 'info'">{{ stateLabel }}</el-tag>
     </div>
     <div class="ai-permission-row">
@@ -23,7 +24,7 @@
     </div>
     <div class="ai-host-row">
       <span>操作主机</span>
-      <el-select v-model="selectedAccountId" class="ai-host-select" :loading="hostLoading" placeholder="跟随当前页面主机" aria-label="AI 操作主机" @change="onHostChange">
+      <el-select v-model="selectedAccountId" class="ai-host-select" :loading="hostLoading" :disabled="busy || submitting || uploading || !!pending.length" placeholder="跟随当前页面主机" aria-label="AI 操作主机" @change="onHostChange">
         <el-option label="跟随当前页面主机" value="" />
         <el-option v-for="host in hostAccounts" :key="host.accountId" :label="host.label" :value="String(host.accountId)" />
       </el-select>
@@ -38,7 +39,7 @@
         <p v-else>当前对话已启用自动授权，需确认操作将自动执行。</p>
       </div>
       <article v-for="entry in events" :key="entry.messageId || entry.callId || entry.sequence" class="ai-message" :class="`ai-message--${entry.role}`">
-        <div class="ai-message-title">{{ roleName(entry) }}<el-tag v-if="entry.role === 'tool'" size="small" :type="entry.state === 'error' ? 'danger' : entry.state === 'pending' ? 'warning' : 'info'">{{ toolState(entry.state) }}</el-tag></div>
+        <div class="ai-message-title"><span>{{ roleName(entry) }}</span><el-tag v-if="entry.role === 'tool'" size="small" :type="entry.state === 'error' ? 'danger' : entry.state === 'pending' ? 'warning' : 'info'">{{ toolState(entry.state) }}</el-tag><time v-if="entry.timestamp" class="ai-message-time" :datetime="new Date(entry.timestamp).toISOString()">{{ formatMessageTime(entry.timestamp) }}</time></div>
         <template v-if="entry.role === 'tool'">
           <p v-if="entry.description">{{ entry.description }}</p>
           <details :open="entry.state === 'pending'"><summary>操作参数与结果</summary><pre>{{ pretty(entry.arguments) }}</pre><pre v-if="entry.text">{{ entry.text }}</pre></details>
@@ -59,7 +60,7 @@
       <div><el-button :disabled="busy || !!pending.length || uploading" @click="fileInput.click()">添加文件</el-button><el-button :disabled="busy || !!pending.length || uploading" @click="folderInput.click()">添加文件夹</el-button><small v-if="uploading">上传 {{ uploadProgress }}%</small><small v-else>单文件 20 MB / 每次对话 50 MB</small></div>
       <el-button v-if="busy" type="warning" :disabled="submitting || state === 'stopping'" @click="stop">停止</el-button><el-button v-else type="primary" :loading="submitting" :disabled="!providerId || !text.trim() || !!pending.length || uploading" @click="send">发送</el-button>
     </div>
-    <p class="ai-footnote">消息、所选附件及工具结果会发送给你配置的厂商。API Key 在服务端加密保存。对话保留至刷新页面或服务重启；闲置 2 小时后过期。停止不会撤回已启动的操作。</p>
+    <p class="ai-footnote">消息、所选附件及工具结果会发送给你配置的厂商。API Key 在服务端加密保存。历史会话可在历史会话列表中恢复或在数据管理中清理。停止不会撤回已启动的操作。</p>
     <input ref="fileInput" type="file" multiple hidden @change="attach"><input ref="folderInput" type="file" multiple webkitdirectory hidden @change="attach">
     <div v-if="!fullscreen" class="ai-resize-handle" role="separator" aria-label="调整 AI 助手大小" aria-orientation="diagonal" :aria-valuenow="Math.round(panelLayout.width)" tabindex="0" @pointerdown.stop.prevent="startResize" @keydown="resizeByKeyboard"><el-icon><Rank /></el-icon></div>
       </aside>
@@ -76,6 +77,15 @@
       <p v-if="settingsMessage" class="ai-settings-message" role="status">{{ settingsMessage }}</p>
     </el-form>
   </el-dialog>
+  <el-dialog v-model="historyVisible" title="历史会话" width="min(760px, calc(100vw - 32px))" append-to-body>
+    <div class="ai-history-toolbar"><el-input v-model="historySearch" clearable placeholder="搜索会话或服务器" /><el-button :loading="historyLoading" @click="loadHistory">刷新</el-button></div>
+    <el-table :data="filteredHistory" v-loading="historyLoading" max-height="55vh" empty-text="暂无历史会话">
+      <el-table-column label="会话" min-width="220"><template #default="scope"><strong>{{ scope.row.title || '新会话' }}</strong><small class="ai-history-server">{{ historyServerLabel(scope.row) }}</small></template></el-table-column>
+      <el-table-column label="更新时间" width="170"><template #default="scope">{{ formatTime(scope.row.updatedAt) }}</template></el-table-column>
+      <el-table-column label="状态" width="110"><template #default="scope">{{ stateLabelFor(scope.row.state) }}</template></el-table-column>
+      <el-table-column label="操作" width="90" fixed="right"><template #default="scope"><el-button link type="primary" :disabled="busy || submitting || uploading || !!pending.length" @click="openHistory(scope.row)">打开</el-button></template></el-table-column>
+    </el-table>
+  </el-dialog>
 </template>
 
 <script setup>
@@ -88,6 +98,7 @@ import { API_BASE } from '@/utils/apiHandler'
 import { managedServer, fileLocation } from '@/composables/useWorkspaceContext'
 import AiMarkdown from '@/components/AiMarkdown.vue'
 import { fetchTreeChildren } from '@/api/sshConsole'
+import { aiSessionOwner, createAiSessionRegistry } from '@/utils/aiSessionRegistry'
 
 const props = defineProps({ modelValue: Boolean })
 defineEmits(['update:modelValue'])
@@ -99,10 +110,18 @@ const authorizationMode = ref('ask'), previousAuthorizationMode = ref('ask')
 const fullscreen = ref(false), hostAccounts = ref([]), hostLoading = ref(false), selectedAccountId = ref(''), selectedServer = ref(managedServer.value), followsCurrentHost = ref(true)
 const history = ref(), fileInput = ref(), folderInput = ref(), panelElement = ref()
 const settingsVisible = ref(false), editingId = ref(''), saving = ref(false), testing = ref(false), settingsMessage = ref('')
+const historyVisible = ref(false), historyLoading = ref(false), historyRows = ref([]), historySearch = ref('')
+const filteredHistory = computed(() => {
+  const query = historySearch.value.trim().toLowerCase()
+  return historyRows.value.filter(row => !query || `${row.title || ''} ${historyServerLabel(row)}`.toLowerCase().includes(query))
+})
 const emptyForm = () => ({ name: '', baseUrl: '', model: '', apiKey: '', clearApiKey: false, hasApiKey: false })
 const form = ref(emptyForm())
 let cursor = 0, revision = 0, snapshotVersion = 0, timer, polling = false, disposed = false, eventSource = null
 const panelLayout = ref(readPanelLayout())
+const sessionRegistry = createAiSessionRegistry()
+let activeSessionOwner = aiSessionOwner(selectedServer.value)
+let queuedServerSwitch = null
 let pointerAction = null
 const panelStyle = computed(() => ({ left: `${panelLayout.value.x}px`, top: `${panelLayout.value.y}px`, width: `${panelLayout.value.width}px`, height: `${panelLayout.value.height}px` }))
 function readPanelLayout() {
@@ -169,7 +188,13 @@ async function loadProviders() {
   try { providers.value = await aiApi.providers(); if (!providerId.value || !providers.value.some(p => p.id === providerId.value)) providerId.value = providers.value[0]?.id || ''; previousProviderId.value = providerId.value }
   catch (e) { report(e) }
 }
-watch(managedServer, server => { if (followsCurrentHost.value) selectedServer.value = server }, { deep: true })
+watch(managedServer, server => { if (followsCurrentHost.value) void switchServerConversation(server) }, { deep: true })
+watch([busy, submitting, uploading, () => pending.value.length], () => {
+  if (!queuedServerSwitch || busy.value || submitting.value || uploading.value || pending.value.length) return
+  const server = queuedServerSwitch
+  queuedServerSwitch = null
+  void switchServerConversation(server)
+})
 watch(() => props.modelValue, async open => { if (open) { await loadProviders(); if (!hostAccounts.value.length) await loadHostAccounts(); if (conversationId.value) { await poll(); connectEvents() } await scrollBottom() } })
 async function loadHostAccounts() {
   hostLoading.value = true
@@ -194,14 +219,114 @@ async function loadHostAccounts() {
     for (const group of groups) await visitGroup(group)
     hostAccounts.value = accounts
     if (!followsCurrentHost.value && !hostAccounts.value.some(host => String(host.accountId) === selectedAccountId.value)) {
-      selectedAccountId.value = ''; followsCurrentHost.value = true; selectedServer.value = managedServer.value
+      selectedAccountId.value = ''; followsCurrentHost.value = true; void switchServerConversation(managedServer.value)
     }
   } catch (e) { report(e) } finally { hostLoading.value = false }
 }
 function onHostChange(value) {
-  if (!value) { followsCurrentHost.value = true; selectedServer.value = managedServer.value; return }
+  if (!value) { followsCurrentHost.value = true; void switchServerConversation(managedServer.value); return }
   const host = hostAccounts.value.find(item => String(item.accountId) === value)
-  if (host) { followsCurrentHost.value = false; selectedServer.value = host }
+  if (host) { followsCurrentHost.value = false; void switchServerConversation(host) }
+}
+function activeSessionSnapshot() {
+  return {
+    conversationId: conversationId.value, events: events.value, pending: pending.value,
+    state: state.value, busy: busy.value, text: text.value, error: error.value,
+    attachments: attachments.value, authorizationMode: authorizationMode.value,
+    providerId: providerId.value, cursor, revision, snapshotVersion
+  }
+}
+function saveActiveSession() {
+  sessionRegistry.set(selectedServer.value, activeSessionSnapshot())
+}
+function restoreActiveSession(server) {
+  const saved = sessionRegistry.get(server)
+  const session = saved || { conversationId: '', events: [], pending: [], state: 'idle', busy: false, text: '', error: '', attachments: [], authorizationMode: 'ask', providerId: providerId.value, cursor: 0, revision: 0, snapshotVersion: 0 }
+  conversationId.value = session.conversationId
+  events.value = [...session.events]
+  pending.value = [...session.pending]
+  state.value = session.state
+  busy.value = session.busy
+  text.value = session.text
+  error.value = session.error
+  attachments.value = [...session.attachments]
+  authorizationMode.value = session.authorizationMode
+  previousAuthorizationMode.value = session.authorizationMode
+  providerId.value = session.providerId || providerId.value
+  previousProviderId.value = providerId.value
+  cursor = session.cursor || 0
+  revision = session.revision || 0
+  snapshotVersion = session.snapshotVersion || 0
+}
+async function switchServerConversation(server) {
+  const nextOwner = aiSessionOwner(server)
+  if (nextOwner === activeSessionOwner) { selectedServer.value = server; return }
+  if (busy.value || submitting.value || uploading.value || pending.value.length) {
+    queuedServerSwitch = server
+    return
+  }
+  saveActiveSession()
+  closeEvents()
+  clearTimeout(timer)
+  selectedServer.value = server
+  activeSessionOwner = nextOwner
+  queuedServerSwitch = null
+  restoreActiveSession(server)
+  if (conversationId.value) {
+    await poll()
+    connectEvents()
+    await scrollBottom()
+  } else {
+    await restoreLatestServerConversation(server)
+  }
+}
+async function restoreLatestServerConversation(server) {
+  try {
+    const latest = await aiApi.latest(server?.accountId, server?.accountId == null ? server?.hostId : null)
+    if (!latest?.id || activeSessionOwner !== aiSessionOwner(server)) return
+    await openConversation(latest.id)
+    saveActiveSession()
+  } catch (e) { report(e) }
+}
+async function showHistory() {
+  historyVisible.value = true
+  await loadHistory()
+}
+async function loadHistory() {
+  historyLoading.value = true
+  try { historyRows.value = (await aiApi.history()).filter(row => row.title) }
+  catch (e) { report(e) }
+  finally { historyLoading.value = false }
+}
+function historyServerLabel(row) {
+  const endpoint = row.serverAddress ? `${row.serverAddress}:${row.serverPort || 22}` : '未绑定服务器'
+  return `${row.serverName || '服务器'} (${endpoint})${row.username ? ` · ${row.username}` : ''}`
+}
+function formatTime(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString()
+}
+function formatMessageTime(value) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString()
+}
+function stateLabelFor(value) { return ({ idle: '已完成', running: '服务中断', stopping: '服务中断', awaiting_confirmation: '待确认', error: '中断/失败' })[value] || '已完成' }
+async function openHistory(row) {
+  if (busy.value || submitting.value || uploading.value || pending.value.length) return
+  const server = { accountId: row.accountId ?? null, hostId: row.hostId ?? null, name: row.serverName || '', address: row.serverAddress || '', port: row.serverPort || 22, username: row.username || '' }
+  if (row.accountId != null) { selectedAccountId.value = String(row.accountId); followsCurrentHost.value = false }
+  else { selectedAccountId.value = ''; followsCurrentHost.value = true }
+  await switchServerConversation(server)
+  if (conversationId.value !== row.id) await openConversation(row.id)
+  saveActiveSession()
+  historyVisible.value = false
+  await scrollBottom()
+}
+async function openConversation(id) {
+  closeEvents(); clearTimeout(timer)
+  conversationId.value = id; events.value = []; pending.value = []; cursor = 0; revision = 0; snapshotVersion = 0
+  apply(await aiApi.status(id, 0)); connectEvents()
 }
 function schedule() { clearTimeout(timer); if (!disposed && conversationId.value && !eventSource) timer = setTimeout(poll, busy.value ? 250 : 10000) }
 function closeEvents() { if (eventSource) eventSource.close(); eventSource = null }
@@ -253,7 +378,7 @@ async function poll() {
 }
 async function ensureChat() {
   if (!providerId.value) throw new Error('请先配置并选择 AI 厂商')
-  if (!conversationId.value) { const chat = await aiApi.create(providerId.value, authorizationMode.value); conversationId.value = chat.id; previousProviderId.value = providerId.value; previousAuthorizationMode.value = authorizationMode.value; cursor = 0; revision = 0; snapshotVersion = 0; connectEvents() }
+  if (!conversationId.value) { const chat = await aiApi.create(providerId.value, authorizationMode.value, selectedServer.value); conversationId.value = chat.id; previousProviderId.value = providerId.value; previousAuthorizationMode.value = authorizationMode.value; cursor = 0; revision = 0; snapshotVersion = 0; connectEvents() }
 }
 async function send() {
   if (!text.value.trim() || busy.value || submitting.value || pending.value.length || uploading.value) return
@@ -308,10 +433,9 @@ async function approve(ids, approved) {
 }
 async function stop() { try { apply(await aiApi.stop(conversationId.value)) } catch (e) { report(e) } }
 async function newChat() {
-  if (busy.value || uploading.value || submitting.value) return
-  try { if (conversationId.value) await aiApi.remove(conversationId.value) }
-  catch (e) { report(e); if (!/不存在|过期/.test(e.message || '')) return }
+  if (busy.value || uploading.value || submitting.value || pending.value.length) return
   closeEvents(); clearTimeout(timer); conversationId.value = ''; events.value = []; pending.value = []; attachments.value = []; cursor = 0; revision = 0; snapshotVersion = 0; state.value = 'idle'; authorizationMode.value = 'ask'; previousAuthorizationMode.value = 'ask'; error.value = ''
+  saveActiveSession()
 }
 async function attach(event) {
   const selected = Array.from(event.target.files || []); event.target.value = ''
@@ -343,7 +467,7 @@ onBeforeUnmount(() => { disposed = true; closeEvents(); clearTimeout(timer); end
 </script>
 
 <style scoped>
-.ai-panel{box-sizing:border-box;position:fixed;z-index:1800;top:68px;right:12px;bottom:12px;width:min(500px,calc(100vw - 24px));display:flex;flex-direction:column;padding:0 16px 14px;background:var(--el-bg-color);color:var(--el-text-color-primary);border:1px solid var(--el-border-color);border-radius:8px;box-shadow:var(--el-box-shadow-dark);overflow:hidden}.ai-panel--fullscreen{inset:12px;width:auto;height:auto;max-height:none}.ai-panel-header{display:flex;align-items:center;gap:6px;min-height:48px;border-bottom:1px solid var(--el-border-color-light);margin-bottom:10px}.ai-panel-title{display:flex;flex-direction:column;gap:2px;margin-right:auto}.ai-panel-title strong{font-size:15px}.ai-panel-title small{font-size:11px;color:var(--el-text-color-secondary)}.ai-toolbar,.ai-actions,.ai-compose-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.ai-toolbar .el-select{flex:1;min-width:150px}.ai-host-row{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;color:var(--el-text-color-secondary)}.ai-host-select{flex:1;min-width:0}.ai-host-row>.el-button{font-size:18px;padding:7px}.ai-context,.ai-footnote,small{font-size:12px;color:var(--el-text-color-secondary)}.ai-context{padding:8px 0;overflow-wrap:anywhere}.ai-history{flex:1;min-height:100px;overflow:auto;border:1px solid var(--el-border-color);border-radius:8px;padding:12px;background:var(--el-bg-color)}.ai-empty{padding:24px 8px;color:var(--el-text-color-secondary);line-height:1.8}.ai-empty p{margin:8px 0}.ai-message{margin:0 0 12px;padding:10px;border-radius:8px;background:var(--el-fill-color-light);overflow-wrap:anywhere}.ai-message--user{background:var(--el-color-primary-light-9);margin-left:20px}.ai-message--error,.ai-error{color:var(--el-color-danger)}.ai-message-title{font-weight:600;display:flex;gap:8px;align-items:center;margin-bottom:7px}.ai-message>pre{font:inherit;white-space:pre-wrap;word-break:break-word;margin:8px 0;line-height:1.6}.ai-message--tool pre{font-family:monospace;font-size:12px;max-height:200px;overflow:auto}.ai-message summary{cursor:pointer;color:var(--el-text-color-secondary)}.ai-message a{color:var(--el-color-primary)}.ai-actions{margin:9px 0}.ai-attachments{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0;max-height:72px;overflow:auto}.ai-attachments .el-tag{max-width:100%;height:auto;white-space:normal;overflow-wrap:anywhere}.ai-compose-actions{justify-content:space-between;margin-top:8px}.ai-compose-actions>div{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.ai-compose-actions .el-button+.el-button{margin-left:0}.ai-footnote{line-height:1.5;margin-bottom:0;font-size:11px}.ai-provider-form{margin-top:16px}.ai-provider-form small{line-height:1.5}.ai-working{padding:8px;color:var(--el-color-primary)}.ai-settings-message{white-space:pre-wrap;overflow-wrap:anywhere}.ai-error{padding:6px 0}.ai-stream-status,.ai-stream-interrupted{display:block;color:var(--el-text-color-secondary);font-size:11px;margin-top:6px}.ai-stream-interrupted{color:var(--el-color-danger)}
+.ai-panel{box-sizing:border-box;position:fixed;z-index:1800;top:68px;right:12px;bottom:12px;width:min(500px,calc(100vw - 24px));display:flex;flex-direction:column;padding:0 16px 14px;background:var(--el-bg-color);color:var(--el-text-color-primary);border:1px solid var(--el-border-color);border-radius:8px;box-shadow:var(--el-box-shadow-dark);overflow:hidden}.ai-panel--fullscreen{inset:12px;width:auto;height:auto;max-height:none}.ai-panel-header{display:flex;align-items:center;gap:6px;min-height:48px;border-bottom:1px solid var(--el-border-color-light);margin-bottom:10px}.ai-panel-title{display:flex;flex-direction:column;gap:2px;margin-right:auto}.ai-panel-title strong{font-size:15px}.ai-panel-title small{font-size:11px;color:var(--el-text-color-secondary)}.ai-toolbar,.ai-actions,.ai-compose-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.ai-toolbar .el-select{flex:1;min-width:150px}.ai-host-row{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;color:var(--el-text-color-secondary)}.ai-host-select{flex:1;min-width:0}.ai-host-row>.el-button{font-size:18px;padding:7px}.ai-context,.ai-footnote,small{font-size:12px;color:var(--el-text-color-secondary)}.ai-context{padding:8px 0;overflow-wrap:anywhere}.ai-history{flex:1;min-height:100px;overflow:auto;border:1px solid var(--el-border-color);border-radius:8px;padding:12px;background:var(--el-bg-color)}.ai-empty{padding:24px 8px;color:var(--el-text-color-secondary);line-height:1.8}.ai-empty p{margin:8px 0}.ai-message{margin:0 0 12px;padding:10px;border-radius:8px;background:var(--el-fill-color-light);overflow-wrap:anywhere}.ai-message--user{background:var(--el-color-primary-light-9);margin-left:20px}.ai-message--error,.ai-error{color:var(--el-color-danger)}.ai-message-title{font-weight:600;display:flex;gap:8px;align-items:center;margin-bottom:7px}.ai-message-time{margin-left:auto;font-weight:400;font-size:11px;color:var(--el-text-color-secondary);white-space:nowrap}.ai-message>pre{font:inherit;white-space:pre-wrap;word-break:break-word;margin:8px 0;line-height:1.6}.ai-message--tool pre{font-family:monospace;font-size:12px;max-height:200px;overflow:auto}.ai-message summary{cursor:pointer;color:var(--el-text-color-secondary)}.ai-message a{color:var(--el-color-primary)}.ai-actions{margin:9px 0}.ai-attachments{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0;max-height:72px;overflow:auto}.ai-attachments .el-tag{max-width:100%;height:auto;white-space:normal;overflow-wrap:anywhere}.ai-compose-actions{justify-content:space-between;margin-top:8px}.ai-compose-actions>div{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.ai-compose-actions .el-button+.el-button{margin-left:0}.ai-footnote{line-height:1.5;margin-bottom:0;font-size:11px}.ai-provider-form{margin-top:16px}.ai-provider-form small{line-height:1.5}.ai-working{padding:8px;color:var(--el-color-primary)}.ai-settings-message{white-space:pre-wrap;overflow-wrap:anywhere}.ai-error{padding:6px 0}.ai-stream-status,.ai-stream-interrupted{display:block;color:var(--el-text-color-secondary);font-size:11px;margin-top:6px}.ai-stream-interrupted{color:var(--el-color-danger)}.ai-history-toolbar{display:flex;gap:8px;margin-bottom:12px}.ai-history-server{display:block;margin-top:4px;font-weight:400}
 </style>
 <style scoped>
 .ai-panel{right:auto;bottom:auto}.ai-panel--fullscreen{inset:12px;right:12px;bottom:12px}

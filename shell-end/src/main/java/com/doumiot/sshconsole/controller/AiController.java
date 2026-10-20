@@ -41,7 +41,9 @@ public class AiController {
         if(!body.path("approved").isBoolean())throw new IllegalArgumentException("请明确确认或拒绝操作");
         return tools.confirm(owner,body.path("actionId").asText(),body.path("approved").asBoolean());
     }
-    @PostMapping("/conversations") public Object create(@RequestBody JsonNode body){return chats.create(body.path("providerId").asText(),body.path("authorizationMode").asText("ask"));}
+    @PostMapping("/conversations") public Object create(@RequestBody JsonNode body){return chats.create(body.path("providerId").asText(),body.path("authorizationMode").asText("ask"),body.path("server"));}
+    @GetMapping("/conversations/history") public Object history(@RequestParam(required=false) Long accountId){return chats.history(accountId);}
+    @GetMapping("/conversations/latest") public Object latest(@RequestParam(required=false) Long accountId,@RequestParam(required=false) Long hostId){return chats.latest(accountId,hostId);}
     @GetMapping("/conversations/{id}") public Object status(@PathVariable String id,@RequestParam(defaultValue="0") int since){return chats.status(id,since);}
     @PostMapping("/conversations/{id}/authorization") public Object authorization(@PathVariable String id,@RequestBody JsonNode body){return chats.setAuthorizationMode(id,body.path("mode").asText());}
     @PostMapping("/conversations/{id}/provider") public Object provider(@PathVariable String id,@RequestBody JsonNode body){return chats.setProvider(id,body.path("providerId").asText());}

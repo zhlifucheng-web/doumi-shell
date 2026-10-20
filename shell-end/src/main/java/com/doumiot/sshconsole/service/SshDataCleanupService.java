@@ -1,6 +1,7 @@
 package com.doumiot.sshconsole.service;
 
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
+import com.doumiot.sshconsole.ai.AiChatService;
 import com.doumiot.sshconsole.ssh.SshSessionRegistry;
 import lombok.Data;
 import org.springframework.stereotype.Service;
@@ -19,9 +20,10 @@ public class SshDataCleanupService {
     @Resource private PlatformTransactionManager transactions;
     @Resource private SshScriptExecutionService executions;
     @Resource private SshSessionRegistry sessions;
+    @Resource private AiChatService chats;
     private final Map<String,Ticket> tickets=new ConcurrentHashMap<>();
-    private static final List<String> TABLES=Arrays.asList("ssh_script_execution","ssh_script_schedule","ssh_script","ssh_account","ssh_host","ssh_group");
-    private static final List<String> LABELS=Arrays.asList("脚本执行历史","定时计划","脚本","SSH 账户","主机","分组");
+    private static final List<String> TABLES=Arrays.asList("ssh_script_execution","ssh_script_schedule","ssh_script","ssh_account","ssh_host","ssh_group","ai_conversation");
+    private static final List<String> LABELS=Arrays.asList("脚本执行历史","定时计划","脚本","SSH 账户","主机","分组","AI 会话历史");
     @Data public static class Request {
         private List<String> tables;
         private String from;
@@ -82,6 +84,7 @@ public class SshDataCleanupService {
                 return current;
             });
             for(String id:result.ids.get("ssh_account")) sessions.closeByAccountId(Long.parseLong(id));
+            if(chats!=null)chats.forgetDeleted(result.ids.get("ai_conversation"));
             return result.counts;
         }
     }
@@ -92,7 +95,7 @@ public class SshDataCleanupService {
             all.put(table,jdbc.queryForList("SELECT "+columns(table)+" FROM "+table));
             Set<String> ids=new LinkedHashSet<>();
             if(request.getTables().contains(table)) {
-                String time=table.equals("ssh_script_execution")?"julianday(started_at)":"julianday(created_at,'utc')";
+                String time=table.equals("ssh_script_execution")?"julianday(started_at)":table.equals("ai_conversation")?"julianday(created_at/1000.0,'unixepoch')":"julianday(created_at,'utc')";
                 String sql="SELECT "+key(table)+" FROM "+table;
                 List<Map<String,Object>> candidates=request.isAllTime()?jdbc.queryForList(sql):jdbc.queryForList(sql+" WHERE "+time+">=julianday(?) AND "+time+"<=julianday(?)",request.getFrom(),request.getTo());
                 for(Map<String,Object> row:candidates)ids.add(String.valueOf(row.get(key(table))));
@@ -103,6 +106,8 @@ public class SshDataCleanupService {
             p.ids.get("ssh_script_execution").remove(str(row,"id"));
             p.ids.get("ssh_script").remove(str(row,"script_id"));p.ids.get("ssh_account").remove(str(row,"account_id"));p.ids.get("ssh_host").remove(str(row,"host_id"));
         }
+        for(Map<String,Object> row:all.get("ai_conversation")) if(Arrays.asList("running","stopping","awaiting_confirmation").contains(row.get("state")))
+            p.ids.get("ai_conversation").remove(str(row,"id"));
         boolean changed;
         do {
             changed=false;
@@ -129,6 +134,7 @@ public class SshDataCleanupService {
     private static String columns(String table) {
         switch(table) {
             case "ssh_script_execution":return "id,script_id,account_id,host_id,status";
+            case "ai_conversation":return "id,state";
             case "ssh_script_schedule":return "script_id,account_id";
             case "ssh_script":case "ssh_account":return "id,host_id";
             case "ssh_host":return "id,group_id";

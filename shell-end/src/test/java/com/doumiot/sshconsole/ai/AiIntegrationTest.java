@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.util.ReflectionTestUtils;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -37,13 +38,27 @@ class AiIntegrationTest {
         });server.start();String provider=null,conversation=null;
         try {
             AiProviderService.Settings settings=new AiProviderService.Settings();settings.setName("fake-openai-e2e");settings.setBaseUrl("http://127.0.0.1:"+server.getAddress().getPort()+"/v1");settings.setModel("fake-tools-model");
-            provider=((JsonNode)providers.save(settings)).path("id").asText();conversation=chats.create(provider).path("id").asText();
+            provider=((JsonNode)providers.save(settings)).path("id").asText();
+            JsonNode serverContext=AiJson.object("accountId",512,"hostId",44,"name","history-test","address","192.0.2.10","port",22,"username","tester");
+            conversation=chats.create(provider,"ask",serverContext).path("id").asText();
             AiChatService.MessageRequest request=new AiChatService.MessageRequest();request.setText("查询数据表并删除测试分组");chats.send(conversation,request);
             JsonNode waiting=awaitIdle(conversation);assertEquals("awaiting_confirmation",waiting.path("state").asText());assertEquals(2,rounds.get());
             assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM ssh_group WHERE id=?",Integer.class,group));
             chats.approve(conversation,Collections.singletonList(waiting.path("pending").path(0).path("actionId").asText()),true);
             JsonNode complete=awaitIdle(conversation);assertEquals("idle",complete.path("state").asText());assertTrue(complete.toString().contains("操作已完成"));assertEquals(3,rounds.get());
+            assertTrue(complete.path("events").toString().contains("timestamp"));
             assertEquals(0,jdbc.queryForObject("SELECT COUNT(*) FROM ssh_group WHERE id=?",Integer.class,group));
+            assertEquals(conversation,chats.latest(512L,null).path("id").asText());
+            assertTrue(chats.history(null).toString().contains("查询数据表并删除测试分组"));
+            byte[] stored=jdbc.queryForObject("SELECT events_enc FROM ai_conversation WHERE id=?",byte[].class,conversation);
+            assertFalse(new String(stored,StandardCharsets.UTF_8).contains("操作已完成"));
+            assertTrue(cipher.decryptToJson(stored).contains("操作已完成"));
+            AiChatService restarted=new AiChatService();
+            ReflectionTestUtils.setField(restarted,"jdbc",jdbc);ReflectionTestUtils.setField(restarted,"cipher",cipher);
+            ReflectionTestUtils.setField(restarted,"tools",tools);ReflectionTestUtils.setField(restarted,"files",new AiFiles());
+            restarted.initialize();
+            try { assertTrue(restarted.status(conversation,0).toString().contains("操作已完成")); }
+            finally { restarted.close(); }
         }finally{server.stop(0);if(conversation!=null)chats.delete(conversation);if(provider!=null)providers.delete(provider);}
     }
     private JsonNode awaitIdle(String id) throws Exception {

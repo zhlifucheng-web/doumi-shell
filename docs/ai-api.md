@@ -61,7 +61,9 @@ Content-Type: application/json
 | `POST /providers` | `{id?,name,baseUrl,model,apiKey?,clearApiKey?}`；编辑时空 Key 保留旧值 |
 | `DELETE /providers/{id}` | 删除配置 |
 | `POST /providers/{id}/test` | 使用已保存配置请求一次普通回复；不验证完整工具能力 |
-| `POST /conversations` | `{providerId,authorizationMode?}`，模式为 `ask`（默认）或 `auto` → `{id,providerId,authorizationMode}` |
+| `POST /conversations` | `{providerId,authorizationMode?,server?}`，模式为 `ask`（默认）或 `auto`；server 可带 accountId、hostId、name、address、port、username，用于按服务器筛选与恢复历史 → `{id,providerId,authorizationMode}` |
+| `GET /conversations/history?accountId=...` | 最近 100 条会话摘要；省略 accountId 时返回全部服务器会话。摘要含 title、server metadata、state、createdAt、updatedAt |
+| `GET /conversations/latest?accountId=...&hostId=...` | 返回指定账户（或无账户时指定主机）的最近会话摘要；都省略时返回未绑定主机的最近会话 |
 | `POST /conversations/{id}/authorization` | `{mode:"ask"|"auto"}`；仅空闲且无待确认操作时可切换。`auto` 会执行本会话中所有要求确认的工具操作 |
 | `POST /conversations/{id}/provider` | `{providerId}`；切换到已配置的厂商/模型并保留会话历史，仅空闲且无待确认操作时可切换 |
 | `GET /conversations/{id}?since=0` | 返回 authorizationMode、providerId、state、running、cursor、revision、events、pending；since 为上次 cursor |
@@ -74,7 +76,7 @@ Content-Type: application/json
 
 状态为 idle/running/awaiting_confirmation/stopping/error。轮询中按 `callId` 更新同一工具卡片，按 `sequence` 去重。事件角色为 user/assistant/tool/error/notice；自动授权的工具事件 state 为 `auto_authorized`。`revision` 在成功修改数据时增加，可用于刷新相关页面；`tool.changed` 标识该操作修改了数据。自动授权只对明确启用它的单个会话有效，API 客户端应在启用前向操作者说明其影响范围。
 
-服务端最多同时保存 24 个内存会话，2 个任务并行、8 个排队。页面刷新后当前 UI 不恢复会话；服务重启或闲置 2 小时后会话失效。厂商配置单独保存于 SQLite，不随普通服务器配置备份导出。
+会话消息和事件以应用凭据主密钥加密保存在 SQLite，页面刷新和服务重启后可通过历史列表读取。服务重启时 running、stopping 或 awaiting_confirmation 会话会恢复为中断状态；待确认操作不会在重启后自动执行。附件原文件、下载链接和未完成附件不持久化，历史中保存的附件消息内容仍可查看，但重启后不能重新读取附件。数据管理的清理表包含“AI 会话历史”；活动中及等待确认的会话受到保护。厂商配置也单独保存于 SQLite，不随普通服务器配置备份导出。
 
 ## 通用配置导入
 

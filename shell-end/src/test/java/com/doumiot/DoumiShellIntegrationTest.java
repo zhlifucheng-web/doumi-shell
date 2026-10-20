@@ -216,4 +216,22 @@ class DoumiShellIntegrationTest {
         assertThrows(IllegalArgumentException.class,()->executions.detail(execution));
     }
 
+    @Test void cleanupIncludesAiHistoryAndProtectsUnfinishedConversations() {
+        long now=System.currentTimeMillis();
+        String idle="ai-idle-"+UUID.randomUUID(),pending="ai-pending-"+UUID.randomUUID();
+        byte[] messages=cipher.encryptSecretJson("[]"),events=cipher.encryptSecretJson("[]");
+        for(String[] row:new String[][]{{idle,"idle"},{pending,"awaiting_confirmation"}})
+            jdbc.update("INSERT INTO ai_conversation(id,provider_id,authorization_mode,state,messages_enc,events_enc,sequence,revision,created_at,updated_at) VALUES(?, 'test-provider', 'ask', ?, ?, ?, 0, 0, ?, ?)",row[0],row[1],messages,events,now,now);
+        SshDataCleanupService.Request request=cleanupRequest("ai_conversation");request.setAllTime(true);
+        Map<String,Object> plan=preview(request);
+        List<Map<String,Object>> counts=(List<Map<String,Object>>)plan.get("rows");
+        assertEquals(2,((Number)counts.get(0).get("matched")).intValue());
+        assertEquals(1,((Number)counts.get(0).get("deletable")).intValue());
+        assertEquals(1,((Number)counts.get(0).get("protected")).intValue());
+        cleanup.clear((String)plan.get("token"));
+        assertEquals(0,jdbc.queryForObject("SELECT COUNT(*) FROM ai_conversation WHERE id=?",Integer.class,idle));
+        assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM ai_conversation WHERE id=?",Integer.class,pending));
+        jdbc.update("DELETE FROM ai_conversation WHERE id=?",pending);
+    }
+
 }
