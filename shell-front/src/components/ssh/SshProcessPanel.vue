@@ -56,6 +56,7 @@ const rows = ref([])
 const sortKey = ref('cpu')
 const filterText = ref('')
 const expandedUsers = ref([])
+let requestVersion = 0
 
 function compareRows(a, b) {
   if (sortKey.value === 'cpu') return b.cpuPercent - a.cpuPercent
@@ -136,14 +137,18 @@ async function load() {
     emit('request-session')
     return
   }
+  const version = ++requestVersion
+  const token = props.sessionToken
   loading.value = true
   try {
-    rows.value = await fetchHostProcesses(props.sessionToken)
+    const result = await fetchHostProcesses(token)
+    if (version !== requestVersion || token !== props.sessionToken) return
+    rows.value = result || []
     expandedUsers.value = grouped.value.slice(0, 5).map((g) => g.user)
   } catch {
-    rows.value = []
+    if (version === requestVersion && token === props.sessionToken) rows.value = []
   } finally {
-    loading.value = false
+    if (version === requestVersion) loading.value = false
   }
 }
 
@@ -154,6 +159,7 @@ onMounted(() => {
 watch(
   () => [props.sessionToken, props.active],
   () => {
+    requestVersion++
     if (props.active && props.sessionToken) load()
   }
 )

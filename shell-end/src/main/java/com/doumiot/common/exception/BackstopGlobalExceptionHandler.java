@@ -2,6 +2,7 @@ package com.doumiot.common.exception;
 
 import com.doumiot.spring.exception.BusinessRuntimeException;
 import com.doumiot.spring.result.Result;
+import com.doumiot.common.exception.enums.ParamExceptionEnum;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -58,8 +59,28 @@ public class BackstopGlobalExceptionHandler {
     @ResponseBody
     @ExceptionHandler(value = Exception.class)
     public Result exceptionHandler(Exception e) {
+        Throwable disconnect = findSshDisconnect(e);
+        if (disconnect != null) {
+            log.debug("SSH 连接在请求期间断开: {}", disconnect.getMessage());
+            return Result.failure(ParamExceptionEnum.IN_PARAM_EMPTY,
+                    "SSH 会话已断开，请重新连接");
+        }
         Result result = Result.failure(BusinessRuntimeException.ServerExceptionEnum.GENERAL_ERROR, e.getMessage());
         log.error("系统未处理异常: {}", result, e);
         return result;
+    }
+
+    private static Throwable findSshDisconnect(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            String type = cause.getClass().getSimpleName();
+            String message = cause.getMessage();
+            if ("Disconnected".equals(type)
+                    || (message != null && ("disconnected".equalsIgnoreCase(message.trim())
+                    || ("ConnectionException".equals(type)
+                    && message.toLowerCase().contains("disconnected"))))) {
+                return cause;
+            }
+        }
+        return null;
     }
 }

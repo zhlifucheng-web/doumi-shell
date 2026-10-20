@@ -108,7 +108,7 @@ export function openAccountSession(id) {
 export function sftpList(sessionToken, path = '') {
   const params = { sessionToken }
   if (path) params.path = path
-  return get(`${BASE}/sftp/list`, params, { showSuccess: false })
+  return get(`${BASE}/sftp/list`, params, { showSuccess: false, showFailure: false })
 }
 
 export function sftpMkdir(sessionToken, path) {
@@ -222,13 +222,15 @@ export function fetchHostMetrics(sessionToken, { signal } = {}) {
 }
 
 export function fetchHostProcesses(sessionToken) {
-  return get(`${BASE}/host/processes`, { sessionToken }, { showSuccess: false })
+  // 进程面板在终端重连时可能仍有一次旧 token 请求；这属于预期竞态，
+  // 由面板按 token 版本丢弃，不应触发全局错误提示。
+  return get(`${BASE}/host/processes`, { sessionToken }, { showSuccess: false, showFailure: false })
 }
 
 export function scanDiskUsage(sessionToken, path, minimumMb) {
   return handleApiResponse(apiClient.get(`${BASE}/host/disk-usage`, {
     params: { sessionToken, path, minimumMb }, timeout: 105000
-  }), { showSuccess: false })
+  }), { showSuccess: false, showFailure: false })
 }
 
 export function listRemoteDirectories(sessionToken, path) {
@@ -318,7 +320,7 @@ export async function runScriptStream(id, sessionToken, handlers = {}) {
   }
 }
 
-export const sftpFolderTree = (sessionToken, path) => handleApiResponse(apiClient.get(`${BASE}/sftp/folder/tree`, {params:{sessionToken,path},timeout:120000}), {showSuccess:false})
+export const sftpFolderTree = (sessionToken, path) => handleApiResponse(apiClient.get(`${BASE}/sftp/folder/tree`, {params:{sessionToken,path},timeout:120000}), {showSuccess:false,showFailure:false})
 export const sftpFolderLimit = () => get(`${BASE}/sftp/folder/limits`, {}, {showSuccess:false})
 export const sftpFolderMkdir = (sessionToken,path,relativePath) => handleApiResponse(apiClient.post(`${BASE}/sftp/folder/mkdir`,null,{params:{sessionToken,path,relativePath}}),{showSuccess:false})
 export function sftpFolderUpload(sessionToken,path,file,{archive=false,relativePath=''}={}) {

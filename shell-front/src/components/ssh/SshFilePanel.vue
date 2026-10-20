@@ -258,7 +258,8 @@ async function refresh() {
     if (request !== listRequest || token !== props.sessionToken) return
     items.value = []
     if (isSessionExpiredError(err)) {
-      ElMessage.warning('SSH 会话已失效，请重新建立文件会话或打开终端')
+      // 页面刷新/终端重连时旧 token 会被服务端主动清理；终端 ready
+      // 后会自动提供新 token，不在这个过渡窗口弹出全局告警。
       emit('session-invalid')
     }
   } finally {
