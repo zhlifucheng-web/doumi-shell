@@ -12,6 +12,7 @@
       <el-button @click="settingsVisible = true">厂商配置</el-button>
       <el-button @click="showHistory">历史会话</el-button>
       <el-button :disabled="busy || uploading || submitting || !!pending.length" @click="newChat">新对话</el-button>
+      <el-switch v-model="autoOpen" size="small" active-text="启动时打开" aria-label="启动时自动打开 AI 助手" @change="saveAutoOpen" />
       <el-tag :type="busy ? 'warning' : 'info'">{{ stateLabel }}</el-tag>
     </div>
     <div class="ai-permission-row">
@@ -110,6 +111,7 @@ const authorizationMode = ref('ask'), previousAuthorizationMode = ref('ask')
 const fullscreen = ref(false), hostAccounts = ref([]), hostLoading = ref(false), selectedAccountId = ref(''), selectedServer = ref(managedServer.value), followsCurrentHost = ref(true)
 const history = ref(), fileInput = ref(), folderInput = ref(), panelElement = ref()
 const settingsVisible = ref(false), editingId = ref(''), saving = ref(false), testing = ref(false), settingsMessage = ref('')
+const autoOpen = ref(readAutoOpen())
 const historyVisible = ref(false), historyLoading = ref(false), historyRows = ref([]), historySearch = ref('')
 const filteredHistory = computed(() => {
   const query = historySearch.value.trim().toLowerCase()
@@ -123,6 +125,13 @@ const sessionRegistry = createAiSessionRegistry()
 let activeSessionOwner = aiSessionOwner(selectedServer.value)
 let queuedServerSwitch = null
 let pointerAction = null
+const AI_AUTO_OPEN_KEY = 'doumi-ai-auto-open'
+function readAutoOpen() {
+  try { return localStorage.getItem(AI_AUTO_OPEN_KEY) === 'true' } catch { return false }
+}
+function saveAutoOpen(value) {
+  try { localStorage.setItem(AI_AUTO_OPEN_KEY, String(Boolean(value))) } catch { /* 偏好设置失败不影响助手使用 */ }
+}
 const panelStyle = computed(() => ({ left: `${panelLayout.value.x}px`, top: `${panelLayout.value.y}px`, width: `${panelLayout.value.width}px`, height: `${panelLayout.value.height}px` }))
 function readPanelLayout() {
   const mobile = window.innerWidth <= 600

@@ -71,6 +71,7 @@ watchEffect(() => {
 })
 const backgroundDialog = ref(false)
 const aiDialog = ref(false)
+const AI_AUTO_OPEN_KEY = 'doumi-ai-auto-open'
 const hasUpdate = ref(Boolean(getLatestRelease()?.newer))
 onLatestReleaseChange(() => { hasUpdate.value = Boolean(getLatestRelease()?.newer) })
 checkLatestRelease().catch(() => { /* The About page reports failures and always offers manual downloads. */ })
@@ -80,7 +81,10 @@ function onGlobalKeydown(event) {
     aiDialog.value = !aiDialog.value
   }
 }
-onMounted(() => window.addEventListener('keydown', onGlobalKeydown))
+onMounted(() => {
+  try { aiDialog.value = localStorage.getItem(AI_AUTO_OPEN_KEY) === 'true' } catch { /* 默认不自动打开 */ }
+  window.addEventListener('keydown', onGlobalKeydown)
+})
 onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
 const serverTitle = computed(()=>managedServer.value ? `${managedServer.value.username ? managedServer.value.username+'@' : ''}${managedServer.value.name} · ${managedServer.value.address}:${managedServer.value.port}` : '')
 
