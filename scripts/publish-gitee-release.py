@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -18,14 +19,14 @@ def main():
         raise RuntimeError('Set GITEE_TOKEN for this process before publishing')
 
     version = json.loads((ROOT / 'shell-front/public/version.json').read_text(encoding='utf-8'))['version']
-    if not isinstance(version, str) or not version.replace('.', '').isdigit() or version.count('.') != 2:
+    if not isinstance(version, str) or not re.fullmatch(r'\d+\.\d+\.\d+', version):
         raise RuntimeError('Invalid application version')
     tag = 'v' + version
-    commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    commit = subprocess.check_output(['git', 'rev-parse', tag + '^{}'], cwd=ROOT, text=True).strip()
     if subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip():
         raise RuntimeError('Commit all source changes before publishing')
 
-    release_dir = ROOT / 'release'
+    release_dir = Path(os.environ.get('DOUMI_RELEASE_DIR', ROOT / 'release'))
     artifacts = [
         release_dir / f'Doumi Shell-{version}.msi',
         release_dir / f'Doumi Shell-{version}.msi.sha256',
