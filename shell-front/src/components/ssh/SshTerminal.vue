@@ -221,9 +221,17 @@ function connect() {
   })
   terminal.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true
+    if (event.key === 'Insert' && event.shiftKey) {
+      void pasteTerminalClipboard()
+      return false
+    }
     const modifier = event.ctrlKey || event.metaKey
     if (!modifier) return true
-    if (event.key.toLowerCase() === 'c' && (event.shiftKey || terminal.hasSelection())) {
+    if (event.key.toLowerCase() === 'c' && terminal.hasSelection()) {
+      void copyTerminalSelection()
+      return false
+    }
+    if (event.key === 'Insert' && !event.shiftKey) {
       void copyTerminalSelection()
       return false
     }
