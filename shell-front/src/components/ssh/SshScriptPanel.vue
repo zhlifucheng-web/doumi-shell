@@ -19,15 +19,11 @@
         </template>
       </el-table-column>
       <el-table-column prop="remark" label="备注" min-width="100" show-overflow-tooltip />
-      <el-table-column label="定时执行" min-width="180">
+      <el-table-column label="定时执行" width="170">
         <template #default="{ row }">
-          <div v-if="row.schedule">
-            <el-tag size="small" :type="row.schedule.enabled ? 'success' : 'info'">{{ row.schedule.enabled ? '已启用' : '已暂停' }}</el-tag>
-            <code> {{ row.schedule.cron }}</code>
-            <div class="schedule-detail">{{ row.schedule.zone }} · 账户 #{{ row.schedule.accountId }}</div>
-            <div v-if="row.schedule.nextRunAt" class="schedule-detail">下次：{{ row.schedule.nextRunAt }}</div>
-            <el-button v-if="row.schedule.lastStatus" link size="small" @click="showLastRun(row)">最近：{{ row.schedule.lastStatus }}</el-button>
-          </div>
+          <el-tooltip v-if="row.schedule" placement="top" :content="scheduleTooltip(row.schedule)">
+            <div class="schedule-compact"><el-tag size="small" :type="row.schedule.enabled ? 'success' : 'info'">{{ row.schedule.enabled ? '启用' : '暂停' }}</el-tag><code>{{ scheduleSummary(row.schedule.cron) }}</code></div>
+          </el-tooltip>
           <span v-else>未配置</span>
         </template>
       </el-table-column>
@@ -152,6 +148,19 @@ const historyDrawer = ref(false)
 const historyScriptId = ref(null)
 const historyRef = ref(null)
 function workDirLabel(workDir) { return workDir?.trim() || '~ (用户家目录)' }
+function scheduleSummary(cron) {
+  const value = String(cron || '').trim()
+  return value.length > 18 ? `${value.slice(0, 17)}…` : value
+}
+function scheduleTooltip(schedule) {
+  return [
+    `${schedule.enabled ? '已启用' : '已暂停'} · ${schedule.cron || '未设置 Cron'}`,
+    schedule.zone ? `时区：${schedule.zone}` : '',
+    schedule.accountId != null ? `账户：#${schedule.accountId}` : '',
+    schedule.nextRunAt ? `下次：${schedule.nextRunAt}` : '',
+    schedule.lastStatus ? `最近：${schedule.lastStatus}` : ''
+  ].filter(Boolean).join('\n')
+}
 function showHistory(row) {historyScriptId.value=row.id;historyDrawer.value=true}
 function showLastRun(row) {showHistory(row)}
 
@@ -260,7 +269,8 @@ watch(() => props.hostId, loadList)
   min-height: 0;
   padding: 8px;
 }
-.schedule-detail { font-size: 11px; color: var(--el-text-color-secondary); line-height: 1.6; }
+.schedule-compact { display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden; white-space:nowrap; }
+.schedule-compact code { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cron-preview { width: 100%; font-family: Consolas, monospace; margin-top: 8px; }
 .toolbar {
   display: flex;

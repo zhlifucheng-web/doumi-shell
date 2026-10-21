@@ -1,4 +1,4 @@
-import { get, post, del, API_BASE } from '@/utils/apiHandler'
+import { get, post, put, del, API_BASE } from '@/utils/apiHandler'
 const root = '/api/ssh-console/ai'
 const quiet = { showSuccess: false, silent: true }
 export const aiApi = {
@@ -9,6 +9,13 @@ export const aiApi = {
   create: (providerId, authorizationMode = 'ask', server = null) => post(`${root}/conversations`, { providerId, authorizationMode, server }, quiet),
   history: accountId => get(`${root}/conversations/history`, accountId == null ? {} : { accountId }, quiet),
   latest: (accountId, hostId) => get(`${root}/conversations/latest`, { ...(accountId == null ? {} : { accountId }), ...(hostId == null ? {} : { hostId }) }, quiet),
+  active: (accountId, hostId) => get(`${root}/conversations/active`, { ...(accountId == null ? {} : { accountId }), ...(hostId == null ? {} : { hostId }) }, quiet),
+  setActive: (accountId, hostId, conversationId) => {
+    const params = new URLSearchParams()
+    if (accountId != null) params.set('accountId', accountId)
+    if (hostId != null) params.set('hostId', hostId)
+    return put(`${root}/conversations/active?${params}`, { conversationId }, quiet)
+  },
   status: (id, since) => get(`${root}/conversations/${id}`, { since }, quiet),
   setAuthorization: (id, mode) => post(`${root}/conversations/${id}/authorization`, { mode }, quiet),
   setProvider: (id, providerId) => post(`${root}/conversations/${id}/provider`, { providerId }, quiet),

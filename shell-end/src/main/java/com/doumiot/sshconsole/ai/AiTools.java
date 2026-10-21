@@ -22,6 +22,7 @@ public class AiTools {
     @Resource private SshHostService hosts;
     @Resource private SshAccountService accounts;
     @Resource private SshHostMonitorService monitor;
+    @Resource private SshMonitorConfigService monitorConfig;
     @Resource private SshSftpService sftp;
     @Resource private SshFolderTransferService folders;
     @Resource private SshScriptService scripts;
@@ -76,6 +77,40 @@ public class AiTools {
                 (a,o)->{SshSessionRegistry.SessionEntry s=connections.session(AiJson.id(a,"accountId"));return SshRemoteExec.exec(s.getClient(),s.getExecLock(),AiJson.text(a,"command"),integer(a,"timeoutSeconds",30,1,60));},
                 "accountId!:integer:账户 ID","command!:string:完整命令","timeoutSeconds:integer:1 至 60 秒，默认30");
         add("host_metrics","terminal","采样 CPU、内存、Swap、网络、磁盘监控",false,false,(a,o)->monitor.sample(token(a)),"accountId!:integer:账户 ID");
+        add("monitor_script","terminal","执行当前账户的自定义监控指标脚本并返回结构化输出。脚本应只读并优先输出 JSON；脚本执行前需要授权确认，超时时间由采样间隔自动限制为其60%且不超过8秒",true,true,
+                (a,o)->monitor.runCustomScript(token(a),AiJson.text(a,"script"),integer(a,"sampleIntervalMs",5000,3000,300000)),
+                "accountId!:integer:账户 ID","script!:string:只读 shell 指标脚本，最多12000字符","sampleIntervalMs:integer:采样间隔毫秒，3000至300000，默认5000");
+        add("monitor_dashboard_list","terminal","列出指定账户的监控面板 ID、名称和已关联卡片 ID；当前选中面板属于浏览器操作习惯，不由服务端判断",false,false,
+                (a,o)->AiJson.object("accountId",AiJson.id(a,"accountId"),"dashboards",monitorConfig.listDashboards(AiJson.id(a,"accountId"))),
+                "accountId!:integer:账户 ID");
+        add("monitor_dashboard_update","terminal","修改指定监控面板的系统卡片、自定义卡片显示关联、排序、趋势范围或网卡；先调用 monitor_dashboard_list 确认 dashboardId",true,true,
+                (a,o)->AiJson.object("accountId",AiJson.id(a,"accountId"),"dashboard",monitorConfig.updateDashboard(AiJson.id(a,"accountId"),AiJson.text(a,"dashboardId"),a.get("layout"))),
+                "accountId!:integer:账户 ID","dashboardId!:string:监控面板 ID","layout!:object:需要修改的面板字段，可包含 selectedCards、customCardIds、cardOrder、minutes、iface");
+        add("monitor_card_create","terminal","为指定账户和监控面板创建自定义指标卡片；必须先调用 monitor_dashboard_list 确认目标面板。脚本必须只读并只输出一行合法 JSON：text 输出 {text:string}；value 输出 {value:number,unit?:string}；progress 输出 {value:0-100,label?:string}；json 输出任意 JSON 对象并以键值表展示；line 可输出每次采样的 {value:number} 或 {series:[{name:string,value:number}]} 形成最近30分钟时间趋势，也可输出 {labels?:string[],series:[{name:string,data:number[]|{x:string,y:number}[]}],xAxisName?:string,yAxisName?:string}；bar 输出 {labels?:string[],series:[{name:string,data:number[]|{x:string,y:number}[]}]}; pie 输出 {data:[{name:string,value:number}]}。emptyText 是尚无有效数据时的卡片提示，最多100字符。type 可选 text、value、progress、json、line、bar、pie",true,true,
+                (a,o)->{
+                    long accountId=AiJson.id(a,"accountId");
+                    String name=AiJson.text(a,"name").trim();
+                    String script=AiJson.text(a,"script");
+                    String type=AiJson.text(a,"type").trim();
+                    if(name.isEmpty()||name.length()>50)throw new IllegalArgumentException("卡片名称长度须为1至50个字符");
+                    if(script.length()==0||script.length()>12000)throw new IllegalArgumentException("监控脚本长度须为1至12000个字符");
+                    if(!Arrays.asList("text","value","progress","json","line","bar","pie").contains(type))throw new IllegalArgumentException("卡片类型无效，必须选择 text、value、progress、json、line、bar 或 pie");
+                    String dashboardId=AiJson.text(a,"dashboardId");
+                    return AiJson.object("monitorCard",monitorConfig.createCard(accountId,name,script,type,optionalText(a,"emptyText"),dashboardId),"dashboardId",dashboardId);
+                },
+                "accountId!:integer:账户 ID","name!:string:卡片名称，最多50个字符","script!:string:只读 shell 指标脚本，最多12000字符","type!:string:必须根据目标和输出选择 line/bar/pie/value/progress/json/text","emptyText:string:无有效数据时显示的提示，最多100个字符","dashboardId!:string:目标监控面板 ID");
+        add("monitor_card_list","terminal","列出指定账户的卡片及所属面板 ID；dashboardId 可筛选某个面板",false,false,
+                (a,o)->AiJson.object("accountId",AiJson.id(a,"accountId"),"dashboardId",optionalText(a,"dashboardId"),"cards",monitorConfig.listCards(AiJson.id(a,"accountId"),optionalText(a,"dashboardId"))),
+                "accountId!:integer:账户 ID","dashboardId:string:只列出该监控面板中的卡片");
+        add("monitor_card_get","terminal","读取指定账户的一张自定义监控卡片及其所属面板；可指定面板验证归属",false,false,
+                (a,o)->AiJson.object("accountId",AiJson.id(a,"accountId"),"card",monitorConfig.getCard(AiJson.id(a,"accountId"),AiJson.text(a,"cardId"),optionalText(a,"dashboardId"))),
+                "accountId!:integer:账户 ID","cardId!:string:卡片 ID","dashboardId:string:验证卡片属于此面板");
+        add("monitor_card_update","terminal","修改账户级卡片字段；也可指定 dashboardId 与 visible 在某面板显示或隐藏，不影响其他面板",true,true,
+                (a,o)->AiJson.object("accountId",AiJson.id(a,"accountId"),"card",monitorConfig.updateCard(AiJson.id(a,"accountId"),AiJson.text(a,"cardId"),optionalText(a,"name"),optionalText(a,"script"),optionalText(a,"type"),optionalText(a,"emptyText"),a.has("enabled")&&!a.get("enabled").isNull()?a.get("enabled").asBoolean():null,optionalText(a,"dashboardId"),a.has("visible")&&!a.get("visible").isNull()?a.get("visible").asBoolean():null)),
+                "accountId!:integer:账户 ID","cardId!:string:卡片 ID","name:string:新名称，最多50个字符","script:string:只读 shell 脚本，最多12000字符","type:string:新类型 text/value/progress/json/line/bar/pie","emptyText:string:无有效数据时显示的提示，最多100个字符","enabled:boolean:是否启用","dashboardId:string:需要改变显示状态的面板 ID","visible:boolean:true 显示，false 隐藏；必须同时提供 dashboardId");
+        add("monitor_card_delete","terminal","提供 dashboardId 时只从该监控面板移除卡片，卡片仍保留在账户；省略 dashboardId 才会从账户所有面板永久删除",true,true,
+                (a,o)->AiJson.object("accountId",AiJson.id(a,"accountId"),"result",monitorConfig.deleteCard(AiJson.id(a,"accountId"),AiJson.text(a,"cardId"),optionalText(a,"dashboardId"))),
+                "accountId!:integer:账户 ID","cardId!:string:卡片 ID","dashboardId:string:仅从此面板移除；省略则永久删除账户级卡片");
         add("file_list","terminal","列出远端目录及文件属性",false,false,(a,o)->sftp.list(token(a),optionalText(a,"path")),"accountId!:integer:账户 ID","path:string:远端目录，默认账户目录");
         add("file_directories","terminal","仅列出远端子目录，便于选择路径",false,false,(a,o)->sftp.directories(token(a),optionalText(a,"path")),"accountId!:integer:账户 ID","path:string:远端目录");
         add("file_read","terminal","读取远端 UTF-8 文本，默认前16384字节，最大65536字节",false,false,(a,o)->files.remoteRead(AiJson.id(a,"accountId"),AiJson.text(a,"path"),integer(a,"limit",16384,1,65536)),"accountId!:integer:账户 ID","path!:string:远端文件路径","limit:integer:字节上限");

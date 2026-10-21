@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Service @SshConsoleEnabled
 public class AiFiles {
+    /** AI attachments are intentionally temporary: they live in temp files and expire after TTL. */
     private static final long TTL = 2 * 60 * 60 * 1000L;
     private static final int TOTAL_BYTES = 50 * 1024 * 1024, FILE_BYTES = 20 * 1024 * 1024;
     @Resource private AiConnections connections;

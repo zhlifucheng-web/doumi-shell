@@ -48,37 +48,31 @@
 </template>
 
 <script setup>
-import { onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
+import { onActivated, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { Star } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { appVersion, checkLatestRelease, getLatestRelease, onLatestReleaseChange, repositoryUrl, releaseUrl } from '@/utils/versionRefresh'
+import { appVersion, repositoryUrl, releaseUrl } from '@/utils/versionRefresh'
+import { useReleaseStore } from '@/stores/release'
 
-const latest = ref(getLatestRelease())
-const checking = ref(false)
+const releaseStore = useReleaseStore()
+const { latest, checking, error: checkError } = storeToRefs(releaseStore)
 const checked = ref(Boolean(latest.value))
-const checkError = ref('')
-let stopListening
 
 async function check(showMessage = true) {
-  if (checking.value) return
-  checking.value = true
   checked.value = false
-  checkError.value = ''
   try {
-    latest.value = await checkLatestRelease({ refresh: true })
+    await releaseStore.check({ refresh: true })
     checked.value = true
     if (showMessage) ElMessage.success(latest.value.newer ? `发现新版本 v${latest.value.version}，请下载安装` : '未发现更新版本')
   } catch (error) {
     checkError.value = error.message || '无法完成版本检查，请打开 Gitee 下载页面查看'
     if (showMessage) ElMessage.warning('检查更新失败，请查看页面提示或直接打开 Gitee 下载页面')
-  } finally { checking.value = false }
+  }
 }
 
-onMounted(() => {
-  stopListening = onLatestReleaseChange(() => { latest.value = getLatestRelease(); checked.value = true; checkError.value = '' })
-})
-onActivated(() => check(false))
-onBeforeUnmount(() => stopListening?.())
+onMounted(() => { checked.value = Boolean(latest.value) })
+onActivated(() => { void releaseStore.check().then(() => { checked.value = true }).catch(() => {}) })
 </script>
 
 <style scoped>

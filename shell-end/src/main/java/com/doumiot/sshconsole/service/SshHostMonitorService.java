@@ -7,6 +7,8 @@ import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
 import java.io.IOException;
 import java.util.*;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** 无常驻远端代理；快速指标与低频磁盘采集分开记录时间和错误。 */
@@ -14,7 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SshHostMonitorService {
     private static final String LIGHT_SAMPLE_CMD = "echo __M1__;awk '/^cpu/{print}' /proc/stat 2>/dev/null;"
             + "echo __M2__;cat /proc/meminfo 2>/dev/null;echo __M3__;cat /proc/net/dev 2>/dev/null;"
-            + "echo __M4__;cat /proc/loadavg 2>/dev/null;echo __M5__;cat /proc/uptime 2>/dev/null";
+            + "echo __M4__;cat /proc/loadavg 2>/dev/null;echo __M5__;cat /proc/uptime 2>/dev/null;"
+            + "echo __M6__;if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null; fi";
     private static final String DF_CMD = "echo __D1__;LC_ALL=C df -kP 2>/dev/null;echo __D2__;LC_ALL=C df -Pi 2>/dev/null";
     @Resource private SshSessionRegistry sessionRegistry;
     @Resource private SshConsoleProperties properties;
@@ -57,6 +60,29 @@ public class SshHostMonitorService {
 
     public void clearState(String token) {states.remove(token);}
 
+    public CustomScriptResult runCustomScript(String token, String script, Integer sampleIntervalMs) throws IOException {
+        if (script == null || script.trim().isEmpty() || script.length() > 12000) {
+            throw new IOException("监控脚本不能为空且不能超过 12000 个字符");
+        }
+        SshSessionRegistry.SessionEntry entry = sessionRegistry.get(token);
+        String encoded = Base64.getEncoder().encodeToString(script.getBytes(StandardCharsets.UTF_8));
+        int interval = sampleIntervalMs == null ? 5000 : Math.max(3000, Math.min(300000, sampleIntervalMs));
+        int timeoutMs = Math.max(1000, Math.min(8000, interval * 3 / 5));
+        int timeoutSec = Math.max(1, (timeoutMs + 999) / 1000);
+        String command = "printf '%s' '" + encoded + "' | base64 -d | timeout " + timeoutSec + "s sh";
+        SshRemoteExec.ExecResult result = SshRemoteExec.exec(entry.getClient(), entry.getExecLock(), command, timeoutSec + 2);
+        CustomScriptResult output = new CustomScriptResult();
+        output.setExitStatus(result.getExitStatus());
+        output.setOutput(limit(result.getStdout()));
+        output.setError(limit(result.getStderr()));
+        return output;
+    }
+
+    private static String limit(String value) {
+        if (value == null) return "";
+        return value.length() <= 8192 ? value : value.substring(0, 8192) + "\n[输出已截断]";
+    }
+
     static HostMetricsSnapshot parseLight(String text,SampleState state,long timestamp) {
         HostMetricsSnapshot snap=new HostMetricsSnapshot();snap.setTimestamp(timestamp);
         Double uptime=number(section(text,"__M5__",null).split("\\s+")[0]);
@@ -70,6 +96,7 @@ public class SshHostMonitorService {
         if(snap.getCpu().getCores()==null)snap.getErrors().put("cpu","CPU 信息不可用");
         if(snap.getCpu().getLoad1()==null)snap.getErrors().put("load","系统负载不可用");
         parseMemory(section(text,"__M2__","__M3__"),snap);
+        snap.setGpus(parseGpus(section(text,"__M6__",null)));
         // /proc/uptime 是远端单调时间，避免网络延迟或本机时钟跳变扭曲速率。
         boolean remoteClock=uptime!=null;
         if(state.remoteClock!=null && state.remoteClock!=remoteClock){state.interfaces.clear();state.lastNetSeconds=null;}
@@ -78,6 +105,22 @@ public class SshHostMonitorService {
         snap.setNetwork(parseNetwork(section(text,"__M3__","__M4__"),state,seconds));
         if(snap.getNetwork().getInterfaces().isEmpty())snap.getErrors().put("network","未读取到可用网卡");
         return snap;
+    }
+
+    static List<GpuBlock> parseGpus(String text) {
+        List<GpuBlock> result = new ArrayList<>();
+        for (String raw : text == null ? new String[0] : text.split("\\n")) {
+            String[] p = raw.trim().split("\\s*,\\s*", 6);
+            if (p.length < 6) continue;
+            try {
+                GpuBlock gpu = new GpuBlock();
+                gpu.setIndex(Integer.valueOf(p[0])); gpu.setName(p[1].trim());
+                gpu.setUtilizationPercent(Double.valueOf(p[2])); gpu.setMemoryUsedMb(Double.valueOf(p[3]));
+                gpu.setMemoryTotalMb(Double.valueOf(p[4])); gpu.setTemperatureC(Double.valueOf(p[5]));
+                result.add(gpu);
+            } catch (NumberFormatException ignored) { }
+        }
+        return result;
     }
 
     static CpuBlock parseCpu(String text,SampleState state) {
@@ -169,7 +212,7 @@ public class SshHostMonitorService {
     private static double gb(long kb){return Math.round(kb/(1024.0*1024)*100)/100.0;}
     private static HostMetricsSnapshot copy(HostMetricsSnapshot source){
         HostMetricsSnapshot copy=new HostMetricsSnapshot();copy.setTimestamp(source.getTimestamp());copy.setDiskTimestamp(source.getDiskTimestamp());copy.setPollIntervalMs(source.getPollIntervalMs());copy.setStatus(source.getStatus());copy.setErrors(source.getErrors());
-        copy.setCpu(source.getCpu());copy.setMemory(source.getMemory());copy.setSwap(source.getSwap());copy.setNetwork(source.getNetwork());copy.setDisks(source.getDisks());copy.setUptimeSeconds(source.getUptimeSeconds());return copy;
+        copy.setCpu(source.getCpu());copy.setMemory(source.getMemory());copy.setSwap(source.getSwap());copy.setNetwork(source.getNetwork());copy.setDisks(source.getDisks());copy.setGpus(source.getGpus());copy.setUptimeSeconds(source.getUptimeSeconds());return copy;
     }
 
     static class SampleState {
@@ -180,8 +223,9 @@ public class SshHostMonitorService {
     @Data public static class HostMetricsSnapshot {
         private Long timestamp,diskTimestamp;private int pollIntervalMs;private boolean throttled;
         private String status;private Map<String,String> errors=new LinkedHashMap<>();private Double uptimeSeconds;
-        private CpuBlock cpu;private MemoryBlock memory;private SwapBlock swap;private NetworkBlock network;private List<DiskBlock> disks;
+        private CpuBlock cpu;private MemoryBlock memory;private SwapBlock swap;private NetworkBlock network;private List<DiskBlock> disks;private List<GpuBlock> gpus;
     }
+    @Data public static class CustomScriptResult { private int exitStatus; private String output; private String error; }
     @Data public static class CpuBlock {private Double usagePercent,iowaitPercent,load1,load5,load15;private Integer cores;}
     @Data public static class MemoryBlock {private Double totalMb,usedMb,availableMb,usagePercent;}
     @Data public static class SwapBlock {private boolean enabled;private Double totalMb,usedMb,usagePercent;}
@@ -190,4 +234,5 @@ public class SshHostMonitorService {
         private String name;private Long rxBytes,txBytes,rxBytesPerSec,txBytesPerSec,rxErrors,txErrors,rxDropped,txDropped;private boolean includedByDefault;
     }
     @Data public static class DiskBlock {private String filesystem,mount;private Double totalGb,usedGb,availableGb,usagePercent,inodeUsagePercent;private Long inodesTotal,inodesAvailable;}
+    @Data public static class GpuBlock {private Integer index;private String name;private Double utilizationPercent,memoryUsedMb,memoryTotalMb,temperatureC;}
 }

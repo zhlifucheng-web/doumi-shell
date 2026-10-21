@@ -132,8 +132,9 @@ import { computed, onDeactivated, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Document, Folder } from '@element-plus/icons-vue'
 import { sftpDelete, sftpDownloadLarge, sftpList, sftpMkdir, sftpRename, sftpUploadLarge } from '@/api/sshConsole'
-import { transfers, transferHistoryWarning, enqueueTransfer, delegateBrowserDownload, clearFinishedTransfers, assignTransferHost } from '@/composables/useTransfers'
-import { fileLocation } from '@/composables/useWorkspaceContext'
+import { useTransfers } from '@/composables/useTransfers'
+import { storeToRefs } from 'pinia'
+import { useWorkspaceStore } from '@/stores/workspace'
 import { isTransferActive, transferErrorMessage, transfersForServer } from '@/composables/transferHistory'
 import FolderTransfer from './FolderTransfer.vue'
 import { useAiChanges } from '@/composables/useAiChanges'
@@ -148,6 +149,8 @@ const props = defineProps({
   defaultCwd: { type: String, default: '' },
   openingSession: { type: Boolean, default: false }
 })
+const { transfers, transferHistoryWarning, enqueueTransfer, delegateBrowserDownload, clearFinishedTransfers, assignTransferHost } = useTransfers()
+const { fileLocation } = storeToRefs(useWorkspaceStore())
 const transferNotice = '切换页面可继续传输。刷新或关闭页面会中断页面内传输，重开后仅保留最近 200 条历史记录和最后进度，无法自动续传。SSH 断开后需重新发起。浏览器接管的下载请在浏览器下载列表查看。'
 
 const emit = defineEmits(['request-session', 'session-invalid'])

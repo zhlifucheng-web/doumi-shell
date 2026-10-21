@@ -87,30 +87,35 @@
         <ScriptManagement v-if="scriptsVisited" v-show="accountTab==='scripts'" :active="accountTab==='scripts'" :host-id="detail.type==='ACCOUNT' ? detail.raw?.hostId : detail.type==='HOST' ? detail.raw?.id : null" :account-id="detail.type==='ACCOUNT' ? detail.raw?.id : null" :session-token="sessionToken" :opening-session="openingFileSession" @request-session="establishFileSession" />
         <el-empty v-if="!detail.type && accountTab!=='scripts'" description="在左侧选择分组、主机或账户" />
         <div v-else-if="detail.type === 'ACCOUNT'" v-show="accountTab!=='scripts'" class="account-workspace">
-          <div class="detail-head account-head">
-            <h2>{{ accountTabTitle }}</h2>
-            <div class="detail-actions">
-              <el-button :loading="testing" @click="runTest">测试连接</el-button>
-              <el-button type="primary" @click="openEditFromDetail">编辑</el-button>
-              <el-button type="danger" plain @click="confirmDeleteDetail">删除</el-button>
-            </div>
-          </div>
           <div class="account-tabs route-panels">
             <div v-show="accountTab === 'terminal'" class="account-tab-pane">
               <TerminalFileLayout>
                 <template #monitor>
-                  <SshMonitorPanel v-if="detail.raw?.id && terminalVisited"
-                    :account-id="detail.raw.id" :session-token="sessionToken" :active="accountTab === 'terminal'" />
+                  <SshMonitorPanel v-if="activeTerminalTab && terminalVisited"
+                    :account-id="activeTerminalTab.accountId" :session-token="sessionToken" :active="accountTab === 'terminal'" />
                 </template>
                 <template #terminal>
-                  <SshTerminal v-if="detail.raw?.id && terminalVisited" :key="terminalMountKey"
-                    :account-id="detail.raw.id" :host-remark="accountHostRemark" :account-remark="detail.raw.remark || ''"
-                    @ready="onTerminalReady" @disconnected="onTerminalDisconnected" />
+                  <div v-if="terminalTabs.length" class="terminal-tabs">
+                    <div class="terminal-tab-bar" role="tablist" aria-label="已打开的终端">
+                      <button v-for="tab in terminalTabs" :key="tab.accountId" type="button" role="tab"
+                        class="terminal-tab" :class="{ 'is-active': activeTerminalId === tab.accountId }"
+                        :aria-selected="activeTerminalId === tab.accountId" @click="activateTerminalTab(tab.accountId)">
+                        <span>{{ tab.label }}</span>
+                        <el-icon class="terminal-tab-close" title="关闭终端" @click.stop="closeTerminalTab(tab.accountId)"><Close /></el-icon>
+                      </button>
+                    </div>
+                    <div v-for="tab in terminalTabs" :key="`terminal-${tab.accountId}`" v-show="activeTerminalId === tab.accountId" class="terminal-tab-content">
+                      <SshTerminal :account-id="tab.accountId"
+                        @ready="payload => onTerminalReady(tab.accountId, payload)"
+                        @disconnected="() => onTerminalDisconnected(tab.accountId)" />
+                    </div>
+                  </div>
+                  <el-empty v-else description="从左侧选择账户以打开终端" />
                 </template>
                 <template #files>
-                  <SshFilePanel v-if="detail.raw?.id" :account-id="detail.raw.id" :host-id="detail.raw.hostId"
+                  <SshFilePanel v-if="activeTerminalTab" :account-id="activeTerminalTab.accountId" :host-id="activeTerminalTab.hostId"
                     :active="accountTab === 'terminal'" embedded
-                    :session-token="sessionToken" :default-cwd="detail.raw.defaultCwd || ''"
+                    :session-token="sessionToken" :default-cwd="activeTerminalTab.defaultCwd || ''"
                     :opening-session="openingFileSession" @request-session="establishFileSession"
                     @session-invalid="onFileSessionInvalid" />
                 </template>
@@ -262,10 +267,11 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Expand, Fold, Folder, Monitor, MoreFilled, Plus, Refresh, Search, User } from '@element-plus/icons-vue'
-import { managedServer } from '@/composables/useWorkspaceContext'
+import { Close, Expand, Fold, Folder, Monitor, MoreFilled, Plus, Refresh, Search, User } from '@element-plus/icons-vue'
+import { useWorkspaceStore } from '@/stores/workspace'
 import SshTerminal from '@/components/ssh/SshTerminal.vue'
 import TerminalFileLayout from '@/components/ssh/TerminalFileLayout.vue'
 import SshFilePanel from '@/components/ssh/SshFilePanel.vue'
@@ -285,7 +291,6 @@ import {
   getHost,
   fetchTreeChildren,
   moveTreeNode,
-  testAccount,
   openAccountSession,
   updateAccount,
   updateGroup,
@@ -299,6 +304,7 @@ import {
 } from '@/utils/sshConsoleStorage'
 
 const savedAccount = readSavedSshAccount()
+const { managedServer } = storeToRefs(useWorkspaceStore())
 const sidebarCollapsed = ref(false)
 try { sidebarCollapsed.value=localStorage.getItem('doumi-sidebar-collapsed')==='true' } catch { /* Default expanded. */ }
 watch(sidebarCollapsed, value=>{try{localStorage.setItem('doumi-sidebar-collapsed',String(value))}catch{/* Preference only. */}})
@@ -312,7 +318,6 @@ const selectedNode = ref(null)
 const defaultExpandedKeys = ref([])
 const treeCurrentNodeKey = ref(savedAccount?.key ?? null)
 const saving = ref(false)
-const testing = ref(false)
 
 const treeProps = { label: 'label', isLeaf: 'leaf' }
 
@@ -348,7 +353,9 @@ watch(accountTab, tab => { if (tab === 'scripts') scriptsVisited.value = true })
 watch(accountTab, tab => { if (tab === 'terminal') terminalVisited.value = true })
 const accountHostMeta = ref({ name: '', remark: '' })
 const sessionToken = ref('')
-const terminalMountKey = ref(0)
+const terminalTabs = ref([])
+const activeTerminalId = ref(null)
+const activeTerminalTab = computed(() => terminalTabs.value.find(item => item.accountId === activeTerminalId.value) || null)
 const openingFileSession = ref(false)
 
 const groupRules = { name: [{ required: true, message: '请输入名称', trigger: 'blur' }] }
@@ -597,18 +604,25 @@ function onNodeClick(data) {
 }
 
 async function loadDetail(data) {
-  sessionToken.value = ''
   try {
     if (data.nodeType === 'GROUP') {
+      sessionToken.value = ''
       detail.value = { type: 'GROUP', raw: await getGroup(data.id) }
     } else if (data.nodeType === 'HOST') {
+      sessionToken.value = ''
       detail.value = { type: 'HOST', raw: await getHost(data.id) }
     } else {
       const raw = await getAccount(data.id)
       detail.value = { type: 'ACCOUNT', raw }
       terminalVisited.value = accountTab.value === 'terminal'
-      terminalMountKey.value += 1
-      await loadAccountHostMeta(raw.hostId)
+      activateTerminalForAccount(raw)
+      const hostMeta = await loadAccountHostMeta(raw.hostId)
+      const openedTab = terminalTabs.value.find(item => item.accountId === raw.id)
+      if (openedTab) {
+        openedTab.hostName = hostMeta.name
+        openedTab.hostAddress = hostMeta.host
+        openedTab.label = terminalTabLabel(raw, hostMeta)
+      }
       let groupId = null
       if (raw.hostId) {
         try {
@@ -631,13 +645,15 @@ async function loadDetail(data) {
 async function loadAccountHostMeta(hostId) {
   if (!hostId) {
     accountHostMeta.value = { name: '', remark: '' }
-    return
+    return accountHostMeta.value
   }
   try {
     const h = await getHost(hostId)
     accountHostMeta.value = { name: h.name || '', remark: h.remark || '', host: h.host || '', port: h.port || 22 }
+    return accountHostMeta.value
   } catch {
     accountHostMeta.value = { name: '', remark: '' }
+    return accountHostMeta.value
   }
 }
 
@@ -651,26 +667,73 @@ watch([detail,accountHostMeta],()=>{
   } else managedServer.value=null
 },{deep:true,immediate:true})
 
-const accountHostRemark = computed(() => accountHostMeta.value.remark || '')
-
-const accountTabTitle = computed(() => {
-  const r = detail.value.raw
-  if (!r) return ''
-  const hostLabel = accountHostMeta.value.name || `主机#${r.hostId}`
-  const remark = r.remark ? ` — ${r.remark}` : ''
-  return `${r.username}@${hostLabel}${remark}`
-})
-
-function onTerminalReady(payload) {
-  sessionToken.value = payload?.sessionToken || ''
+function terminalTabLabel(account, host = accountHostMeta.value) {
+  const hostLabel = `${host.name || account.host || `主机#${account.hostId}`} (${host.host || account.host || ''})`
+  return `${hostLabel} · ${account.username || '账户'}`
 }
 
-function onTerminalDisconnected() {
-  sessionToken.value = ''
+function activateTerminalForAccount(account) {
+  if (!account?.id) return
+  let tab = terminalTabs.value.find(item => item.accountId === account.id)
+  if (!tab) {
+    tab = { accountId: account.id, account, hostId: account.hostId, defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account), token: '' }
+    terminalTabs.value.push(tab)
+  } else {
+    tab.hostId = account.hostId
+    tab.account = account
+    tab.defaultCwd = account.defaultCwd || ''
+    tab.label = terminalTabLabel(account)
+  }
+  activeTerminalId.value = account.id
+  sessionToken.value = tab.token
+}
+
+async function activateTerminalTab(accountId) {
+  activeTerminalId.value = accountId
+  const tab = terminalTabs.value.find(item => item.accountId === accountId)
+  sessionToken.value = tab?.token || ''
+  if (tab?.account) {
+    detail.value = { type: 'ACCOUNT', raw: tab.account }
+    await loadAccountHostMeta(tab.hostId)
+    const node = { nodeType: 'ACCOUNT', id: tab.accountId, key: `a:${tab.accountId}`, label: tab.account.username, leaf: true, extra: { hostId: tab.hostId } }
+    selectedNode.value = node
+    treeCurrentNodeKey.value = node.key
+  }
+}
+
+function closeTerminalTab(accountId) {
+  const index = terminalTabs.value.findIndex(item => item.accountId === accountId)
+  if (index < 0) return
+  const wasActive = activeTerminalId.value === accountId
+  terminalTabs.value.splice(index, 1)
+  if (wasActive) {
+    const next = terminalTabs.value[Math.min(index, terminalTabs.value.length - 1)]
+    activeTerminalId.value = next?.accountId ?? null
+    sessionToken.value = next?.token || ''
+    if (next) {
+      detail.value = { type: 'ACCOUNT', raw: next.account }
+      void loadAccountHostMeta(next.hostId)
+    }
+  }
+}
+
+function onTerminalReady(accountId, payload) {
+  const tab = terminalTabs.value.find(item => item.accountId === accountId)
+  if (!tab) return
+  tab.token = payload?.sessionToken || ''
+  if (activeTerminalId.value === accountId) sessionToken.value = tab.token
+}
+
+function onTerminalDisconnected(accountId) {
+  const tab = terminalTabs.value.find(item => item.accountId === accountId)
+  if (tab) tab.token = ''
+  if (activeTerminalId.value === accountId) sessionToken.value = ''
 }
 
 function onFileSessionInvalid() {
   sessionToken.value = ''
+  const tab = terminalTabs.value.find(item => item.accountId === activeTerminalId.value)
+  if (tab) tab.token = ''
 }
 
 watch([accountTab,()=>detail.value.raw?.id], ([tab]) => {
@@ -1030,19 +1093,6 @@ async function saveAccount() {
   }
 }
 
-async function runTest() {
-  const id = detail.value.raw?.id
-  if (!id) return
-  testing.value = true
-  try {
-    const r = await testAccount(id)
-    if (r?.success) ElMessage.success(`连接成功（${r.elapsedMs} ms）`)
-    else ElMessage.error(r?.message || '连接失败')
-  } finally {
-    testing.value = false
-  }
-}
-
 async function confirmDeleteDetail() {
   const n = selectedNode.value
   if (!n) return
@@ -1248,6 +1298,15 @@ async function isHostInsideGroup(hostId, groupId) {
   height: 100%;
   overflow: hidden;
 }
+.terminal-tabs { display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; overflow:hidden; }
+.terminal-tab-bar { display:flex; flex-shrink:0; gap:2px; min-width:0; height:34px; overflow-x:auto; overflow-y:hidden; border-bottom:1px solid var(--el-border-color); background:var(--el-fill-color-light); }
+.terminal-tab { display:inline-flex; align-items:center; gap:10px; max-width:260px; min-width:120px; padding:0 10px; border:0; border-bottom:2px solid transparent; color:var(--el-text-color-regular); background:transparent; font:inherit; font-size:12px; white-space:nowrap; cursor:pointer; }
+.terminal-tab span { overflow:hidden; text-overflow:ellipsis; }
+.terminal-tab:hover { background:var(--el-fill-color); }
+.terminal-tab.is-active { border-bottom-color:var(--el-color-primary); color:var(--el-color-primary); background:var(--el-bg-color); }
+.terminal-tab-close { flex-shrink:0; color:var(--el-text-color-secondary); }
+.terminal-tab-close:hover { color:var(--el-color-danger); }
+.terminal-tab-content { display:flex; flex:1; min-width:0; min-height:0; overflow:hidden; }
 .account-tabs :deep(.el-tab-pane) {
   height: 100%;
   overflow: hidden;

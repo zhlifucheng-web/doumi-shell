@@ -1,6 +1,7 @@
 package com.doumiot.sshconsole.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.doumiot.sshconsole.crypto.CredentialCipher;
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
 import com.doumiot.sshconsole.entity.*;
@@ -24,6 +25,7 @@ public class SshConfigurationService {
     @Resource private SshAccountService accountService;
     @Resource private SshScriptService scriptService;
     @Resource private SshScriptScheduleService schedules;
+    @Resource private SshMonitorConfigService monitorConfigs;
     @Resource private CredentialCipher cipher;
     @Resource private ObjectMapper json;
 
@@ -37,6 +39,7 @@ public class SshConfigurationService {
         private List<SshHost> hosts = new ArrayList<>();
         private List<BackupAccount> accounts = new ArrayList<>();
         private List<SshScriptService.SshScriptVO> scripts = new ArrayList<>();
+        private Map<Long, JsonNode> monitorSettings = new LinkedHashMap<>();
     }
 
     @Transactional(readOnly = true)
@@ -50,6 +53,7 @@ public class SshConfigurationService {
             snapshot.getAccounts().add(saved);
         }
         snapshot.setScripts(scriptService.listForHost(null));
+        snapshot.setMonitorSettings(monitorConfigs.exportAll());
         byte[] bytes = json.writeValueAsBytes(snapshot);
         return encrypted ? ConfigurationArchive.encrypt(bytes, password) : ConfigurationArchive.plain(bytes);
     }
@@ -58,7 +62,7 @@ public class SshConfigurationService {
     public Map<String, Integer> importAll(ConfigurationArchive.Archive archive, String password) throws Exception {
         Snapshot snapshot = json.readValue(ConfigurationArchive.decrypt(archive, password), Snapshot.class);
         if (snapshot.getGroups() == null || snapshot.getHosts() == null || snapshot.getAccounts() == null
-                || snapshot.getScripts() == null) throw new IllegalArgumentException("配置列表不能为空");
+                || snapshot.getScripts() == null || snapshot.getMonitorSettings() == null) throw new IllegalArgumentException("配置列表不能为空");
         Map<Long, Long> groupIds = new HashMap<>(), hostIds = new HashMap<>(), accountIds = new HashMap<>();
         Set<Long> scriptIds = new HashSet<>();
         List<Long> insertedGroups = new ArrayList<>(), insertedHosts = new ArrayList<>(), insertedAccounts = new ArrayList<>(), insertedScripts = new ArrayList<>();
@@ -101,6 +105,11 @@ public class SshConfigurationService {
             accountIds.put(sourceId, created.getId());
             insertedAccounts.add(created.getId());
         }
+        for (Map.Entry<Long, JsonNode> entry : snapshot.getMonitorSettings().entrySet()) {
+            Long targetAccountId = accountIds.get(entry.getKey());
+            if (targetAccountId == null) throw new IllegalArgumentException("监控配置所属账户不存在: " + entry.getKey());
+            monitorConfigs.saveImported(targetAccountId, entry.getValue());
+        }
         for (SshScriptService.SshScriptVO old : snapshot.getScripts()) {
             if (old == null || old.getId() == null || !scriptIds.add(old.getId()))
                 throw new IllegalArgumentException("脚本 ID 缺失或重复");
@@ -120,6 +129,7 @@ public class SshConfigurationService {
         Map<String, Integer> counts = new LinkedHashMap<>();
         counts.put("groups", insertedGroups.size()); counts.put("hosts", insertedHosts.size());
         counts.put("accounts", insertedAccounts.size()); counts.put("scripts", insertedScripts.size());
+        counts.put("monitorConfigs", snapshot.getMonitorSettings().size());
         return counts;
     }
 

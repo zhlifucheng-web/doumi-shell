@@ -8,6 +8,7 @@ import org.springframework.validation.annotation.Validated;
 import lombok.Data;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -29,6 +30,13 @@ public class SshHostOpsController {
     @Resource
     private SshProcessService sshProcessService;
     @Resource private SshDiskUsageService diskUsage;
+    @Resource private com.doumiot.sshconsole.service.SshMonitorConfigService monitorConfig;
+
+    @GetMapping("/monitor-config")
+    public com.fasterxml.jackson.databind.JsonNode monitorConfig(@RequestParam long accountId) { return monitorConfig.get(accountId); }
+
+    @PutMapping("/monitor-config")
+    public com.fasterxml.jackson.databind.JsonNode saveMonitorConfig(@RequestParam long accountId, @RequestBody com.fasterxml.jackson.databind.JsonNode config) { return monitorConfig.save(accountId, config); }
 
     @GetMapping("/disk-usage")
     public SshDiskUsageService.ScanResult diskUsage(@RequestParam @NotBlank String sessionToken,
@@ -48,6 +56,11 @@ public class SshHostOpsController {
         return sshProcessService.listProcesses(sessionToken);
     }
 
+    @PostMapping("/monitor-script")
+    public SshHostMonitorService.CustomScriptResult monitorScript(@RequestBody @Validated MonitorScriptRequest body) throws IOException {
+        return sshHostMonitorService.runCustomScript(body.getSessionToken(), body.getScript(), body.getSampleIntervalMs());
+    }
+
     @PostMapping("/processes/kill")
     public SshProcessService.KillResult killProcess(@RequestBody @Validated KillRequest body) throws IOException {
         return sshProcessService.killProcess(body.getSessionToken(), body.getPid(), body.getSignal());
@@ -60,5 +73,12 @@ public class SshHostOpsController {
         private long pid;
         /** TERM 或 KILL，默认 TERM */
         private String signal;
+    }
+
+    @Data
+    public static class MonitorScriptRequest {
+        @NotBlank private String sessionToken;
+        @NotBlank private String script;
+        private Integer sampleIntervalMs;
     }
 }

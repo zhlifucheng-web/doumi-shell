@@ -54,15 +54,20 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
+import { storeToRefs } from 'pinia'
 import { ArrowDown, InfoFilled, MagicStick, Monitor, Moon, Sunny } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
-import { managedServer } from '@/composables/useWorkspaceContext'
+import { useWorkspaceStore } from '@/stores/workspace'
 import { useBackground } from '@/composables/useBackground'
 import ThemeBackground from '@/components/ThemeBackground.vue'
 import AiAssistant from '@/components/AiAssistant.vue'
-import { checkLatestRelease, getLatestRelease, onLatestReleaseChange } from '@/utils/versionRefresh'
+import { useReleaseStore } from '@/stores/release'
 
 const { background, style: backgroundStyle } = useBackground()
+const workspaceStore = useWorkspaceStore()
+const { managedServer } = storeToRefs(workspaceStore)
+const releaseStore = useReleaseStore()
+const { latest: latestRelease } = storeToRefs(releaseStore)
 // Teleported dialogs and menus share the same background settings as the workspace.
 watchEffect(() => {
   const root=document.documentElement
@@ -72,9 +77,8 @@ watchEffect(() => {
 const backgroundDialog = ref(false)
 const aiDialog = ref(false)
 const AI_AUTO_OPEN_KEY = 'doumi-ai-auto-open'
-const hasUpdate = ref(Boolean(getLatestRelease()?.newer))
-onLatestReleaseChange(() => { hasUpdate.value = Boolean(getLatestRelease()?.newer) })
-checkLatestRelease().catch(() => { /* The About page reports failures and always offers manual downloads. */ })
+const hasUpdate = computed(() => Boolean(latestRelease.value?.newer))
+releaseStore.check().catch(() => { /* The About page reports failures and always offers manual downloads. */ })
 function onGlobalKeydown(event) {
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'k' && !event.altKey && !event.metaKey) {
     event.preventDefault()

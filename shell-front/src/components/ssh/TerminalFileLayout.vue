@@ -28,8 +28,10 @@
 <script setup>
 import { ref, watch } from 'vue'
 
-import { fileLocation } from '@/composables/useWorkspaceContext'
+import { storeToRefs } from 'pinia'
+import { useWorkspaceStore } from '@/stores/workspace'
 const workspace = ref(null)
+const { fileLocation } = storeToRefs(useWorkspaceStore())
 const ratio = ref(60), collapsed = ref(false)
 try {
   const saved = Number(localStorage.getItem('doumi-terminal-height-percent'))

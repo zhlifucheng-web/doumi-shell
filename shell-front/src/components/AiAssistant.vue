@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="ai-panel">
-      <aside v-if="modelValue" ref="panelElement" class="ai-panel" :class="{ 'ai-panel--fullscreen': fullscreen }" :style="fullscreen ? undefined : panelStyle" aria-label="AI 助手侧边栏">
+      <aside v-if="modelValue" ref="panelElement" class="ai-panel" :class="{ 'ai-panel--fullscreen': fullscreen }" :style="[backgroundStyle, fullscreen ? {} : panelStyle]" aria-label="AI 助手侧边栏">
         <header class="ai-panel-header" @pointerdown="startDrag">
           <div class="ai-panel-title"><strong>AI 助手</strong><small>Ctrl + Shift + K</small></div>
           <el-tooltip :content="fullscreen ? '退出全屏' : '全屏'"><el-button text circle :aria-label="fullscreen ? '退出全屏' : '全屏'" @click="fullscreen = !fullscreen"><el-icon><FullScreen /></el-icon></el-button></el-tooltip>
@@ -61,7 +61,7 @@
       <div><el-button :disabled="busy || !!pending.length || uploading" @click="fileInput.click()">添加文件</el-button><el-button :disabled="busy || !!pending.length || uploading" @click="folderInput.click()">添加文件夹</el-button><small v-if="uploading">上传 {{ uploadProgress }}%</small><small v-else>单文件 20 MB / 每次对话 50 MB</small></div>
       <el-button v-if="busy" type="warning" :disabled="submitting || state === 'stopping'" @click="stop">停止</el-button><el-button v-else type="primary" :loading="submitting" :disabled="!providerId || !text.trim() || !!pending.length || uploading" @click="send">发送</el-button>
     </div>
-    <p class="ai-footnote">消息、所选附件及工具结果会发送给你配置的厂商。API Key 在服务端加密保存。历史会话可在历史会话列表中恢复或在数据管理中清理。停止不会撤回已启动的操作。</p>
+    <p class="ai-footnote">消息、所选附件及工具结果会发送给你配置的厂商。附件仅为临时数据，过期或服务重启后需重新选择；API Key 在服务端加密保存。历史会话可在历史会话列表中恢复或在数据管理中清理。停止不会撤回已启动的操作。</p>
     <input ref="fileInput" type="file" multiple hidden @change="attach"><input ref="folderInput" type="file" multiple webkitdirectory hidden @change="attach">
     <div v-if="!fullscreen" class="ai-resize-handle" role="separator" aria-label="调整 AI 助手大小" aria-orientation="diagonal" :aria-valuenow="Math.round(panelLayout.width)" tabindex="0" @pointerdown.stop.prevent="startResize" @keydown="resizeByKeyboard"><el-icon><Rank /></el-icon></div>
       </aside>
@@ -91,23 +91,27 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { ElMessageBox } from 'element-plus'
 import { Close, FullScreen, Rank } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 import { aiApi } from '@/api/ai'
 import { API_BASE } from '@/utils/apiHandler'
-import { managedServer, fileLocation } from '@/composables/useWorkspaceContext'
+import { useWorkspaceStore } from '@/stores/workspace'
 import AiMarkdown from '@/components/AiMarkdown.vue'
 import { fetchTreeChildren } from '@/api/sshConsole'
-import { aiSessionOwner, createAiSessionRegistry } from '@/utils/aiSessionRegistry'
+import { notifyMonitorConfigChanged } from '@/utils/monitorConfigStore'
+import { useBackground } from '@/composables/useBackground'
 
 const props = defineProps({ modelValue: Boolean })
 defineEmits(['update:modelValue'])
 const route = useRoute()
+const { managedServer, fileLocation } = storeToRefs(useWorkspaceStore())
+const { style: backgroundStyle } = useBackground()
 const providers = ref([]), providerId = ref(''), previousProviderId = ref(''), conversationId = ref(''), events = ref([]), pending = ref([])
 const state = ref('idle'), busy = ref(false), text = ref(''), error = ref(''), submitting = ref(false)
 const attachments = ref([]), uploading = ref(false), uploadProgress = ref(0)
-const authorizationMode = ref('ask'), previousAuthorizationMode = ref('ask')
+const authorizationMode = ref('auto'), previousAuthorizationMode = ref('auto')
 const fullscreen = ref(false), hostAccounts = ref([]), hostLoading = ref(false), selectedAccountId = ref(''), selectedServer = ref(managedServer.value), followsCurrentHost = ref(true)
 const history = ref(), fileInput = ref(), folderInput = ref(), panelElement = ref()
 const settingsVisible = ref(false), editingId = ref(''), saving = ref(false), testing = ref(false), settingsMessage = ref('')
@@ -119,12 +123,13 @@ const filteredHistory = computed(() => {
 })
 const emptyForm = () => ({ name: '', baseUrl: '', model: '', apiKey: '', clearApiKey: false, hasApiKey: false })
 const form = ref(emptyForm())
-let cursor = 0, revision = 0, snapshotVersion = 0, timer, polling = false, disposed = false, eventSource = null
+let cursor = 0, revision = 0, snapshotVersion = 0, timer, polling = false, disposed = false, eventSource = null, suppressSnapshotEffects = false
 const panelLayout = ref(readPanelLayout())
-const sessionRegistry = createAiSessionRegistry()
+function aiSessionOwner(server) { return server?.accountId != null ? `account:${server.accountId}` : server?.hostId != null ? `host:${server.hostId}` : 'unassigned' }
 let activeSessionOwner = aiSessionOwner(selectedServer.value)
 let queuedServerSwitch = null
 let pointerAction = null
+function setActiveConversation(server,id) { return aiApi.setActive(server?.accountId,server?.accountId==null?server?.hostId:null,id||null) }
 const AI_AUTO_OPEN_KEY = 'doumi-ai-auto-open'
 function readAutoOpen() {
   try { return localStorage.getItem(AI_AUTO_OPEN_KEY) === 'true' } catch { return false }
@@ -185,26 +190,37 @@ function resizeByKeyboard(event) {
   savePanelLayout()
 }
 function clampPanelOnViewportChange() { panelLayout.value = clampPanelLayout(panelLayout.value); savePanelLayout() }
-onMounted(() => window.addEventListener('resize', clampPanelOnViewportChange))
+onMounted(() => {
+  window.addEventListener('resize', clampPanelOnViewportChange)
+  if (props.modelValue) void restoreLatestServerConversation(selectedServer.value)
+})
 const pageName = computed(() => ({ '/terminal': '终端与监控', '/scripts': '脚本与定时任务', '/processes': '进程', '/disk-usage': '存储管理', '/data-management': '数据管理', '/about': '关于' })[route.path] || route.path)
-const stateLabel = computed(() => ({ idle: '就绪', running: '处理中', awaiting_confirmation: '等待确认', stopping: '停止中', error: '处理失败' })[state.value] || state.value)
+const stateLabel = computed(() => ({ idle: '就绪', running: '处理中', awaiting_confirmation: '等待确认', stopping: '停止中', error: '处理失败' })[state.value] || '就绪')
 const pretty = value => JSON.stringify(value || {}, null, 2)
 const roleName = entry => entry.role === 'tool' ? entry.name : ({ user: '你', assistant: 'AI 助手', error: '错误', notice: '提示' })[entry.role] || entry.role
 const toolState = value => ({ running: '调用中', pending: '待确认', auto_authorized: '自动授权', done: '已完成', cancelled: '已取消', error: '失败' })[value] || value
 function downloadUrl(url) { return /^\/api\/ssh-console\/ai\/downloads\/[a-f0-9-]{36}$/.test(url || '') ? API_BASE + url : '' }
-function report(e) { error.value = e.message || '请求失败，请检查网络连接' }
+function normalizedError(value) {
+  const message = typeof value === 'string' ? value : value?.message
+  return message && message !== 'undefined' && message !== 'null' ? message : ''
+}
+function report(e) { error.value = normalizedError(e) || '请求失败，请检查网络连接' }
 async function loadProviders() {
   try { providers.value = await aiApi.providers(); if (!providerId.value || !providers.value.some(p => p.id === providerId.value)) providerId.value = providers.value[0]?.id || ''; previousProviderId.value = providerId.value }
   catch (e) { report(e) }
 }
-watch(managedServer, server => { if (followsCurrentHost.value) void switchServerConversation(server) }, { deep: true })
+// AI 会话跟随账户连接切换；分组浏览、主机详情和备注更新不应改变当前会话。
+watch(() => managedServer.value?.accountId ?? null, accountId => {
+  if (!followsCurrentHost.value || accountId == null) return
+  void switchServerConversation(managedServer.value)
+})
 watch([busy, submitting, uploading, () => pending.value.length], () => {
   if (!queuedServerSwitch || busy.value || submitting.value || uploading.value || pending.value.length) return
   const server = queuedServerSwitch
   queuedServerSwitch = null
   void switchServerConversation(server)
 })
-watch(() => props.modelValue, async open => { if (open) { await loadProviders(); if (!hostAccounts.value.length) await loadHostAccounts(); if (conversationId.value) { await poll(); connectEvents() } await scrollBottom() } })
+watch(() => props.modelValue, async open => { if (open) { await loadProviders(); if (!hostAccounts.value.length) await loadHostAccounts(); if (conversationId.value) { await poll(); connectEvents() } else await restoreLatestServerConversation(selectedServer.value); await scrollBottom() } })
 async function loadHostAccounts() {
   hostLoading.value = true
   try {
@@ -237,36 +253,6 @@ function onHostChange(value) {
   const host = hostAccounts.value.find(item => String(item.accountId) === value)
   if (host) { followsCurrentHost.value = false; void switchServerConversation(host) }
 }
-function activeSessionSnapshot() {
-  return {
-    conversationId: conversationId.value, events: events.value, pending: pending.value,
-    state: state.value, busy: busy.value, text: text.value, error: error.value,
-    attachments: attachments.value, authorizationMode: authorizationMode.value,
-    providerId: providerId.value, cursor, revision, snapshotVersion
-  }
-}
-function saveActiveSession() {
-  sessionRegistry.set(selectedServer.value, activeSessionSnapshot())
-}
-function restoreActiveSession(server) {
-  const saved = sessionRegistry.get(server)
-  const session = saved || { conversationId: '', events: [], pending: [], state: 'idle', busy: false, text: '', error: '', attachments: [], authorizationMode: 'ask', providerId: providerId.value, cursor: 0, revision: 0, snapshotVersion: 0 }
-  conversationId.value = session.conversationId
-  events.value = [...session.events]
-  pending.value = [...session.pending]
-  state.value = session.state
-  busy.value = session.busy
-  text.value = session.text
-  error.value = session.error
-  attachments.value = [...session.attachments]
-  authorizationMode.value = session.authorizationMode
-  previousAuthorizationMode.value = session.authorizationMode
-  providerId.value = session.providerId || providerId.value
-  previousProviderId.value = providerId.value
-  cursor = session.cursor || 0
-  revision = session.revision || 0
-  snapshotVersion = session.snapshotVersion || 0
-}
 async function switchServerConversation(server) {
   const nextOwner = aiSessionOwner(server)
   if (nextOwner === activeSessionOwner) { selectedServer.value = server; return }
@@ -274,28 +260,26 @@ async function switchServerConversation(server) {
     queuedServerSwitch = server
     return
   }
-  saveActiveSession()
   closeEvents()
   clearTimeout(timer)
   selectedServer.value = server
   activeSessionOwner = nextOwner
   queuedServerSwitch = null
-  restoreActiveSession(server)
-  if (conversationId.value) {
-    await poll()
-    connectEvents()
-    await scrollBottom()
-  } else {
-    await restoreLatestServerConversation(server)
-  }
+  conversationId.value='';events.value=[];pending.value=[];attachments.value=[];cursor=0;revision=0;snapshotVersion=0
+  await restoreLatestServerConversation(server)
 }
 async function restoreLatestServerConversation(server) {
   try {
-    const latest = await aiApi.latest(server?.accountId, server?.accountId == null ? server?.hostId : null)
+    let latest = await aiApi.active(server?.accountId, server?.accountId == null ? server?.hostId : null)
+    if (!latest?.id) latest = await aiApi.latest(server?.accountId, server?.accountId == null ? server?.hostId : null)
     if (!latest?.id || activeSessionOwner !== aiSessionOwner(server)) return
     await openConversation(latest.id)
-    saveActiveSession()
-  } catch (e) { report(e) }
+    await setActiveConversation(server,latest.id)
+  } catch (e) {
+    const message = e?.message || ''
+    if (/无效的响应格式|没有历史|暂无历史|未找到会话/.test(message)) error.value = ''
+    else report(e)
+  }
 }
 async function showHistory() {
   historyVisible.value = true
@@ -328,13 +312,14 @@ async function openHistory(row) {
   else { selectedAccountId.value = ''; followsCurrentHost.value = true }
   await switchServerConversation(server)
   if (conversationId.value !== row.id) await openConversation(row.id)
-  saveActiveSession()
+  await setActiveConversation(server,row.id)
   historyVisible.value = false
   await scrollBottom()
 }
 async function openConversation(id) {
   closeEvents(); clearTimeout(timer)
   conversationId.value = id; events.value = []; pending.value = []; cursor = 0; revision = 0; snapshotVersion = 0
+  suppressSnapshotEffects = true
   apply(await aiApi.status(id, 0)); connectEvents()
 }
 function schedule() { clearTimeout(timer); if (!disposed && conversationId.value && !eventSource) timer = setTimeout(poll, busy.value ? 250 : 10000) }
@@ -360,11 +345,17 @@ function apply(snapshot) {
   if (snapshot.snapshotVersion && snapshot.snapshotVersion < snapshotVersion) return
   snapshotVersion = snapshot.snapshotVersion || snapshotVersion
   const nearBottom = !history.value || history.value.scrollHeight - history.value.scrollTop - history.value.clientHeight < 100
+  const suppressEffects = suppressSnapshotEffects
+  let changedMonitorCardAccountId = null
   for (const entry of snapshot.events || []) {
     if (entry.sequence <= cursor) continue
     const index = events.value.findIndex(e => entry.callId ? e.callId === entry.callId : entry.messageId ? e.messageId === entry.messageId : false)
     if (index >= 0) events.value[index] = { ...events.value[index], ...entry }
     else events.value.push(entry)
+    if (!suppressEffects && ['monitor_dashboard_update','monitor_card_create','monitor_card_update','monitor_card_delete'].includes(entry.name)
+        && (entry.state === 'done' || (entry.state === 'auto_authorized' && entry.text))) {
+      changedMonitorCardAccountId = entry.arguments?.accountId ?? entry.arguments?.accountID ?? null
+    }
   }
   cursor = Math.max(cursor, snapshot.cursor || 0)
   if ((snapshot.cursor || 0) < cursor) return
@@ -372,9 +363,15 @@ function apply(snapshot) {
   if (snapshot.revision > revision) {
     revision = snapshot.revision
     const changed = (snapshot.events || []).filter(e => e.changed).map(e => e.name)
-    if (changed.some(name => /^(group_|host_(create|update|move|delete)|account_(create|update|delete)|configuration_import|cleanup_execute)/.test(name))) window.dispatchEvent(new Event('doumi-configuration-imported'))
-    window.dispatchEvent(new CustomEvent('doumi-ai-changed', { detail: { operations: changed } }))
+    if (!suppressEffects) {
+      if (changed.some(name => /^(group_|host_(create|update|move|delete)|account_(create|update|delete)|configuration_import|cleanup_execute)/.test(name))) window.dispatchEvent(new Event('doumi-configuration-imported'))
+      window.dispatchEvent(new CustomEvent('doumi-ai-changed', { detail: { operations: changed } }))
+    }
   }
+  // Refresh from persisted configuration when a newly received tool event completes.
+  // Restoring an initial history snapshot never triggers this notification.
+  if (changedMonitorCardAccountId != null) notifyMonitorConfigChanged(changedMonitorCardAccountId)
+  suppressSnapshotEffects = false
   if (nearBottom) scrollBottom()
   schedule()
 }
@@ -387,7 +384,7 @@ async function poll() {
 }
 async function ensureChat() {
   if (!providerId.value) throw new Error('请先配置并选择 AI 厂商')
-  if (!conversationId.value) { const chat = await aiApi.create(providerId.value, authorizationMode.value, selectedServer.value); conversationId.value = chat.id; previousProviderId.value = providerId.value; previousAuthorizationMode.value = authorizationMode.value; cursor = 0; revision = 0; snapshotVersion = 0; connectEvents() }
+  if (!conversationId.value) { const chat = await aiApi.create(providerId.value, authorizationMode.value, selectedServer.value); conversationId.value = chat.id; previousProviderId.value = providerId.value; previousAuthorizationMode.value = authorizationMode.value; cursor = 0; revision = 0; snapshotVersion = 0; suppressSnapshotEffects = false; await setActiveConversation(selectedServer.value,chat.id); connectEvents() }
 }
 async function send() {
   if (!text.value.trim() || busy.value || submitting.value || pending.value.length || uploading.value) return
@@ -443,8 +440,8 @@ async function approve(ids, approved) {
 async function stop() { try { apply(await aiApi.stop(conversationId.value)) } catch (e) { report(e) } }
 async function newChat() {
   if (busy.value || uploading.value || submitting.value || pending.value.length) return
-  closeEvents(); clearTimeout(timer); conversationId.value = ''; events.value = []; pending.value = []; attachments.value = []; cursor = 0; revision = 0; snapshotVersion = 0; state.value = 'idle'; authorizationMode.value = 'ask'; previousAuthorizationMode.value = 'ask'; error.value = ''
-  saveActiveSession()
+  closeEvents(); clearTimeout(timer); conversationId.value = ''; events.value = []; pending.value = []; attachments.value = []; cursor = 0; revision = 0; snapshotVersion = 0; state.value = 'idle'; authorizationMode.value = 'auto'; previousAuthorizationMode.value = 'auto'; error.value = ''
+  await setActiveConversation(selectedServer.value,null)
 }
 async function attach(event) {
   const selected = Array.from(event.target.files || []); event.target.value = ''
@@ -481,6 +478,7 @@ onBeforeUnmount(() => { disposed = true; closeEvents(); clearTimeout(timer); end
 <style scoped>
 .ai-panel{right:auto;bottom:auto}.ai-panel--fullscreen{inset:12px;right:12px;bottom:12px}
 .ai-panel-header{cursor:grab;touch-action:none}.ai-panel-header:active{cursor:grabbing}
+.ai-panel,.ai-history{background:var(--doumi-surface,var(--el-bg-color))}
 .ai-resize-handle{position:absolute;z-index:2;right:5px;bottom:5px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;color:var(--el-text-color-secondary);cursor:nwse-resize;touch-action:none}.ai-resize-handle:hover,.ai-resize-handle:focus-visible{color:var(--el-color-primary);outline:none}
 .ai-permission-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--el-border-color-lighter);font-size:12px}.ai-permission-row .el-select{width:140px}.ai-permission-row small{flex:1;min-width:130px}
 .ai-panel-enter-active,.ai-panel-leave-active{transition:transform .16s ease,opacity .16s ease}.ai-panel-enter-from,.ai-panel-leave-to{transform:translateX(-16px);opacity:0}.ai-panel--fullscreen{transition:none}

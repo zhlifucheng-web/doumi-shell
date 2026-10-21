@@ -2,6 +2,9 @@ import { del, get, patch, post, put, apiClient, API_BASE, handleApiResponse } fr
 
 const BASE = '/api/ssh-console'
 
+export function getMonitorConfig(accountId) { return get(`${BASE}/host/monitor-config`, { accountId }, { showSuccess: false }) }
+export function saveMonitorConfig(accountId, config) { return put(`${BASE}/host/monitor-config?accountId=${encodeURIComponent(accountId)}`, config, { showSuccess: false, showFailure: false }) }
+
 /** 与 HTTP 共用同源地址；支持显式 VITE_API_BASE。 */
 export function buildTerminalWsUrl(accountId, { cols, rows } = {}) {
   const params = new URLSearchParams({ accountId: String(accountId) })
@@ -219,6 +222,10 @@ export function fetchHostMetrics(sessionToken, { signal } = {}) {
   return handleApiResponse(apiClient.get(`${BASE}/host/metrics`, {
     params: { sessionToken }, signal, timeout: 30000
   }), { showSuccess: false, showFailure: false })
+}
+
+export function runMonitorScript(sessionToken, script, sampleIntervalMs = 5000) {
+  return post(`${BASE}/host/monitor-script`, { sessionToken, script, sampleIntervalMs }, { showSuccess: false, showFailure: false })
 }
 
 export function fetchHostProcesses(sessionToken) {

@@ -1,9 +1,5 @@
 <template>
   <div class="ssh-terminal-wrap">
-    <div v-if="hostRemark || accountRemark" class="remark-bar">
-      <p v-if="hostRemark" :title="hostRemark"><span class="remark-label">主机备注</span><span class="remark-text">{{ hostRemark }}</span></p>
-      <p v-if="accountRemark" :title="accountRemark"><span class="remark-label">账户备注</span><span class="remark-text">{{ accountRemark }}</span></p>
-    </div>
     <div v-if="statusMessage" class="status-overlay">{{ statusMessage }}</div>
     <div ref="termContainer" class="term-container" @click="focusTerminal" />
     <EditorScrollbar :target="scrollTarget" />
@@ -28,9 +24,7 @@ const {background}=useBackground()
 const {effectiveDark}=useTheme()
 
 const props = defineProps({
-  accountId: { type: Number, required: true },
-  hostRemark: { type: String, default: '' },
-  accountRemark: { type: String, default: '' }
+  accountId: { type: Number, required: true }
 })
 
 const emit = defineEmits(['ready', 'disconnected', 'connection-error'])
@@ -251,33 +245,6 @@ watch(
   min-height: 0;
   position: relative;
   overflow: hidden;
-}
-.remark-bar {
-  flex-shrink: 0;
-  padding: 8px 12px;
-  background: var(--el-fill-color-light);
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  font-size: 12px;
-  color: var(--el-text-color-regular);
-}
-.remark-bar p {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  height: 22px;
-  margin: 2px 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  white-space: nowrap;
-  scrollbar-width: thin;
-}
-.remark-text {
-  min-width: max-content;
-}
-.remark-label {
-  flex-shrink: 0;
-  color: var(--el-text-color-secondary);
 }
 .term-container {
   flex: 1;

@@ -1,7 +1,7 @@
 <template>
   <el-scrollbar class="page-scroll"><div class="configuration">
     <h2>配置导入导出</h2>
-    <p>迁移分组、主机、账户凭据、脚本和定时任务。可选择加密或明文备份，导入时追加到现有配置。</p>
+    <p>迁移分组、主机、账户凭据、脚本、定时任务和账户级监控配置。可选择加密或明文备份，导入时追加到现有配置。</p>
     <el-alert title="导入的定时任务默认暂停，请检查执行账户和 cron 后再启用。" type="info" :closable="false" />
     <el-form label-position="top" @submit.prevent>
       <el-form-item label="导出方式">
@@ -82,6 +82,7 @@ async function restore() {
   try {
     const counts = await importConfiguration(archive.value.algorithm === 'NONE' ? undefined : importPassword.value, archive.value)
     result.value = `已导入 ${counts.groups} 个分组、${counts.hosts} 台主机、${counts.accounts} 个账户、${counts.scripts} 个脚本。`
+    if (counts.monitorConfigs) result.value += ` 已恢复 ${counts.monitorConfigs} 个账户的监控配置。`
     importPassword.value = ''
     archive.value = null
     filename.value = ''

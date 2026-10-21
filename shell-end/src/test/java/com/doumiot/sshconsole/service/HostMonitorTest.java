@@ -16,6 +16,15 @@ import static org.mockito.ArgumentMatchers.*;
 import static com.doumiot.sshconsole.service.SshHostMonitorService.*;
 
 class HostMonitorTest {
+    @Test void parsesNvidiaMetricsWhenAvailable() {
+        List<SshHostMonitorService.GpuBlock> gpus = SshHostMonitorService.parseGpus(
+                "0, NVIDIA RTX A6000, 42, 8192, 49152, 61\n1, NVIDIA RTX A6000, 17, 4096, 49152, 54");
+        assertEquals(2, gpus.size());
+        assertEquals("NVIDIA RTX A6000", gpus.get(0).getName());
+        assertEquals(Double.valueOf(42), gpus.get(0).getUtilizationPercent());
+        assertEquals(Double.valueOf(61), gpus.get(0).getTemperatureC());
+        assertTrue(SshHostMonitorService.parseGpus("").isEmpty());
+    }
     static String net(long rx,long tx) {
         return "eth0: "+rx+" 99 2 3 0 0 0 0 "+tx+" 888 4 5 0 0 0 0\n"
                 +"docker0: 99999 1 0 0 0 0 0 0 99999 1 0 0 0 0 0 0\n";

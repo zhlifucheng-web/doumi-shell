@@ -35,13 +35,15 @@
 </template>
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { scanDiskUsage, sftpDelete, sftpRename, listRemoteDirectories } from '@/api/sshConsole'
-import { fileLocation } from '@/composables/useWorkspaceContext'
+import { useWorkspaceStore } from '@/stores/workspace'
 import { useAiChanges } from '@/composables/useAiChanges'
 useAiChanges(/^(file_|ssh_command)/, () => { if (props.sessionToken && result.value) return scan() })
 const props=defineProps({sessionToken:{type:String,default:''},accountId:{type:Number,default:null}})
+const { fileLocation } = storeToRefs(useWorkspaceStore())
 const emit=defineEmits(['request-session'])
 const router=useRouter(),path=ref(''),minimumMb=ref(100),loading=ref(false),result=ref(null),error=ref('')
 const entries=computed(()=>result.value ? [...result.value.directories,...result.value.files] : [])
