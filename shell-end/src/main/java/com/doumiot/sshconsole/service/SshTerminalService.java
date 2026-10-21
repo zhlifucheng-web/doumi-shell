@@ -42,7 +42,7 @@ public class SshTerminalService {
     @Resource
     private SshConsoleProperties properties;
 
-    public TerminalSession openTerminal(long accountId, int cols, int rows) throws IOException {
+    public TerminalSession openTerminal(long accountId, int cols, int rows, String terminalId) throws IOException {
         SshAccount account = sshAccountService.requireAccount(accountId);
         if (account.getEnabled() != null && account.getEnabled() == 0) {
             throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "账户已禁用");
@@ -61,7 +61,7 @@ public class SshTerminalService {
         int r = rows > 0 ? rows : DEFAULT_ROWS;
         boolean tmux = properties.isTmuxEnabled() && hasTmux(client, entry.getExecLock());
         try {
-            attachShell(entry, c, r, account.getDefaultCwd(), accountId, tmux);
+            attachShell(entry, c, r, account.getDefaultCwd(), accountId, terminalId, tmux);
         } catch (IOException e) {
             sessionRegistry.close(entry.getSessionToken());
             throw e;
@@ -104,7 +104,7 @@ public class SshTerminalService {
     }
 
     private void attachShell(SshSessionRegistry.SessionEntry entry, int cols, int rows, String defaultCwd,
-                             long accountId, boolean tmux)
+                             long accountId, String terminalId, boolean tmux)
             throws IOException {
         SSHClient client = entry.getClient();
         Session sshSession = client.startSession();
@@ -123,7 +123,7 @@ public class SshTerminalService {
         // The command is conditional so hosts without tmux retain the existing shell behavior.
         if (tmux) {
             String tmuxCommand = "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s "
-                    + tmuxSessionName(accountId) + "; fi\n";
+                    + tmuxSessionName(accountId, terminalId) + "; fi\n";
             shell.getOutputStream().write(tmuxCommand.getBytes(StandardCharsets.UTF_8));
             shell.getOutputStream().flush();
         }
@@ -149,8 +149,11 @@ public class SshTerminalService {
         return "cd " + "'" + cwd.replace("'", "'\"'\"'") + "'";
     }
 
-    private static String tmuxSessionName(long accountId) {
-        return "'doumi-shell-" + accountId + "'";
+    private static String tmuxSessionName(long accountId, String terminalId) {
+        String suffix = terminalId == null ? "default" : terminalId.replaceAll("[^A-Za-z0-9_-]", "");
+        if (suffix.isEmpty()) suffix = "default";
+        if (suffix.length() > 48) suffix = suffix.substring(0, 48);
+        return "'doumi-shell-" + accountId + "-" + suffix + "'";
     }
 
     private static void assertHostEnabled(SshHost host) {

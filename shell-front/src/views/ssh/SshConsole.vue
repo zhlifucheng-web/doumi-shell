@@ -97,17 +97,18 @@
                 <template #terminal>
                   <div v-if="terminalTabs.length" class="terminal-tabs">
                     <div class="terminal-tab-bar" role="tablist" aria-label="已打开的终端">
-                      <button v-for="tab in terminalTabs" :key="tab.accountId" type="button" role="tab"
-                        class="terminal-tab" :class="{ 'is-active': activeTerminalId === tab.accountId }"
-                        :aria-selected="activeTerminalId === tab.accountId" @click="activateTerminalTab(tab.accountId)">
+                      <button v-for="tab in terminalTabs" :key="tab.tabId" type="button" role="tab"
+                        class="terminal-tab" :class="{ 'is-active': activeTerminalId === tab.tabId }"
+                        :aria-selected="activeTerminalId === tab.tabId" @click="activateTerminalTab(tab.tabId)">
                         <span>{{ tab.label }}</span>
-                        <el-icon class="terminal-tab-close" title="关闭终端" @click.stop="closeTerminalTab(tab.accountId)"><Close /></el-icon>
+                        <el-icon class="terminal-tab-close" title="关闭终端" @click.stop="closeTerminalTab(tab.tabId)"><Close /></el-icon>
                       </button>
+                      <button class="terminal-tab-add" type="button" title="打开同一账户的新终端" @click="openAdditionalTerminalTab">+</button>
                     </div>
-                    <div v-for="tab in terminalTabs" :key="`terminal-${tab.accountId}`" v-show="activeTerminalId === tab.accountId" class="terminal-tab-content">
-                      <SshTerminal :account-id="tab.accountId"
-                        @ready="payload => onTerminalReady(tab.accountId, payload)"
-                        @disconnected="() => onTerminalDisconnected(tab.accountId)" />
+                    <div v-for="tab in terminalTabs" :key="`terminal-${tab.tabId}`" v-show="activeTerminalId === tab.tabId" class="terminal-tab-content">
+                      <SshTerminal :account-id="tab.accountId" :terminal-id="tab.tabId"
+                        @ready="payload => onTerminalReady(tab.tabId, payload)"
+                        @disconnected="() => onTerminalDisconnected(tab.tabId)" />
                     </div>
                   </div>
                   <el-empty v-else description="从左侧选择账户以打开终端" />
@@ -355,7 +356,7 @@ const accountHostMeta = ref({ name: '', remark: '' })
 const sessionToken = ref('')
 const terminalTabs = ref([])
 const activeTerminalId = ref(null)
-const activeTerminalTab = computed(() => terminalTabs.value.find(item => item.accountId === activeTerminalId.value) || null)
+const activeTerminalTab = computed(() => terminalTabs.value.find(item => item.tabId === activeTerminalId.value) || null)
 const openingFileSession = ref(false)
 
 const groupRules = { name: [{ required: true, message: '请输入名称', trigger: 'blur' }] }
@@ -676,7 +677,7 @@ function activateTerminalForAccount(account) {
   if (!account?.id) return
   let tab = terminalTabs.value.find(item => item.accountId === account.id)
   if (!tab) {
-    tab = { accountId: account.id, account, hostId: account.hostId, defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account), token: '' }
+    tab = { tabId: newTerminalId(), accountId: account.id, account, hostId: account.hostId, defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account), token: '' }
     terminalTabs.value.push(tab)
   } else {
     tab.hostId = account.hostId
@@ -684,13 +685,26 @@ function activateTerminalForAccount(account) {
     tab.defaultCwd = account.defaultCwd || ''
     tab.label = terminalTabLabel(account)
   }
-  activeTerminalId.value = account.id
+  activeTerminalId.value = tab.tabId
   sessionToken.value = tab.token
 }
 
-async function activateTerminalTab(accountId) {
-  activeTerminalId.value = accountId
-  const tab = terminalTabs.value.find(item => item.accountId === accountId)
+function newTerminalId() {
+  return `terminal-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+function openAdditionalTerminalTab() {
+  const current = activeTerminalTab.value
+  if (!current) return
+  const tab = { ...current, tabId: newTerminalId(), token: '' }
+  terminalTabs.value.push(tab)
+  activeTerminalId.value = tab.tabId
+  sessionToken.value = ''
+}
+
+async function activateTerminalTab(tabId) {
+  activeTerminalId.value = tabId
+  const tab = terminalTabs.value.find(item => item.tabId === tabId)
   sessionToken.value = tab?.token || ''
   if (tab?.account) {
     detail.value = { type: 'ACCOUNT', raw: tab.account }
@@ -701,14 +715,14 @@ async function activateTerminalTab(accountId) {
   }
 }
 
-function closeTerminalTab(accountId) {
-  const index = terminalTabs.value.findIndex(item => item.accountId === accountId)
+function closeTerminalTab(tabId) {
+  const index = terminalTabs.value.findIndex(item => item.tabId === tabId)
   if (index < 0) return
-  const wasActive = activeTerminalId.value === accountId
+  const wasActive = activeTerminalId.value === tabId
   terminalTabs.value.splice(index, 1)
   if (wasActive) {
     const next = terminalTabs.value[Math.min(index, terminalTabs.value.length - 1)]
-    activeTerminalId.value = next?.accountId ?? null
+    activeTerminalId.value = next?.tabId ?? null
     sessionToken.value = next?.token || ''
     if (next) {
       detail.value = { type: 'ACCOUNT', raw: next.account }
@@ -717,22 +731,22 @@ function closeTerminalTab(accountId) {
   }
 }
 
-function onTerminalReady(accountId, payload) {
-  const tab = terminalTabs.value.find(item => item.accountId === accountId)
+function onTerminalReady(tabId, payload) {
+  const tab = terminalTabs.value.find(item => item.tabId === tabId)
   if (!tab) return
   tab.token = payload?.sessionToken || ''
-  if (activeTerminalId.value === accountId) sessionToken.value = tab.token
+  if (activeTerminalId.value === tabId) sessionToken.value = tab.token
 }
 
-function onTerminalDisconnected(accountId) {
-  const tab = terminalTabs.value.find(item => item.accountId === accountId)
+function onTerminalDisconnected(tabId) {
+  const tab = terminalTabs.value.find(item => item.tabId === tabId)
   if (tab) tab.token = ''
-  if (activeTerminalId.value === accountId) sessionToken.value = ''
+  if (activeTerminalId.value === tabId) sessionToken.value = ''
 }
 
 function onFileSessionInvalid() {
   sessionToken.value = ''
-  const tab = terminalTabs.value.find(item => item.accountId === activeTerminalId.value)
+  const tab = terminalTabs.value.find(item => item.tabId === activeTerminalId.value)
   if (tab) tab.token = ''
 }
 
@@ -1306,6 +1320,7 @@ async function isHostInsideGroup(hostId, groupId) {
 .terminal-tab.is-active { border-bottom-color:var(--el-color-primary); color:var(--el-color-primary); background:var(--el-bg-color); }
 .terminal-tab-close { flex-shrink:0; color:var(--el-text-color-secondary); }
 .terminal-tab-close:hover { color:var(--el-color-danger); }
+.terminal-tab-add { flex:0 0 30px; border:0; background:transparent; color:var(--el-color-primary); font-size:18px; cursor:pointer; }
 .terminal-tab-content { display:flex; flex:1; min-width:0; min-height:0; overflow:hidden; }
 .account-tabs :deep(.el-tab-pane) {
   height: 100%;
