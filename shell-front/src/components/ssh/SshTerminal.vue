@@ -76,6 +76,40 @@ function sendJson(obj) {
   }
 }
 
+async function copyTerminalSelection() {
+  const text = terminal?.getSelection?.() || ''
+  if (!text) return false
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const field = document.createElement('textarea')
+      field.value = text
+      field.style.position = 'fixed'
+      field.style.opacity = '0'
+      document.body.appendChild(field)
+      field.focus()
+      field.select()
+      document.execCommand('copy')
+      field.remove()
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function pasteTerminalClipboard() {
+  try {
+    if (!navigator.clipboard?.readText) return false
+    const text = await navigator.clipboard.readText()
+    if (text) terminal?.paste(text)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function sendResize() {
   if (!terminal || !fitAddon || !ws || ws.readyState !== WebSocket.OPEN || !dataBound) {
     return
@@ -184,6 +218,20 @@ function connect() {
     fontFamily: 'Consolas, "Courier New", monospace',
     allowTransparency: true,
     theme: terminalTheme()
+  })
+  terminal.attachCustomKeyEventHandler((event) => {
+    if (event.type !== 'keydown') return true
+    const modifier = event.ctrlKey || event.metaKey
+    if (!modifier) return true
+    if (event.key.toLowerCase() === 'c' && (event.shiftKey || terminal.hasSelection())) {
+      void copyTerminalSelection()
+      return false
+    }
+    if (event.key.toLowerCase() === 'v' && event.shiftKey) {
+      void pasteTerminalClipboard()
+      return false
+    }
+    return true
   })
   fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)
