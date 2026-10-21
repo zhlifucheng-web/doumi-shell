@@ -15,15 +15,17 @@ public class SshTerminalFrame {
     private String sessionToken;
     private String label;
     private String remark;
+    private String connectionMode;
     private String code;
     private String message;
 
-    public static SshTerminalFrame ready(String sessionToken, String label, String remark) {
+    public static SshTerminalFrame ready(String sessionToken, String label, String remark, String connectionMode) {
         SshTerminalFrame f = new SshTerminalFrame();
         f.setType("ready");
         f.setSessionToken(sessionToken);
         f.setLabel(label);
         f.setRemark(remark);
+        f.setConnectionMode(connectionMode);
         return f;
     }
 

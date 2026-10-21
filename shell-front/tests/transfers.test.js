@@ -1,6 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { enqueueTransfer, delegateBrowserDownload, transfers, clearFinishedTransfers, transferSessionId, assignTransferHost } from '../src/composables/useTransfers.js'
+import { createPinia, setActivePinia } from 'pinia'
+import { useTransferStore } from '../src/stores/transfers.js'
+
+setActivePinia(createPinia())
+const { enqueueTransfer, delegateBrowserDownload, transfers, clearFinishedTransfers, transferSessionId, assignTransferHost } = useTransferStore()
 import { transfersForSession, transfersForServer } from '../src/composables/transferHistory.js'
 
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }

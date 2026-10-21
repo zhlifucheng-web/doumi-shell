@@ -12,6 +12,8 @@ try {
     if (-not $buildRoot) { $buildRoot = Join-Path $Root '.build' }
     $frontendBuild = Join-Path $buildRoot 'frontend'
     New-Item -ItemType Directory -Force -Path $frontendBuild | Out-Null
+    # Help imports the repository guide; keep the same relative layout in the isolated build.
+    Copy-Item -LiteralPath (Join-Path $Root 'docs') -Destination $buildRoot -Recurse -Force
     foreach ($entry in @('src', 'public', 'package.json', 'package-lock.json', 'vite.config.js', 'index.html')) {
         Copy-Item -Path (Join-Path $Root "shell-front/$entry") -Destination $frontendBuild -Recurse -Force
     }

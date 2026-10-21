@@ -62,10 +62,10 @@
             <div class="quick-pins-list">
               <div
                 v-for="tab in terminalTabs"
-                :key="`pin-${tab.accountId}`"
+                :key="`pin-${tab.tabId}`"
                 class="quick-pin-item"
-                :class="{ 'is-active': activeTerminalId === tab.accountId }"
-                @click="activateTerminalTab(tab.accountId)"
+                :class="{ 'is-active': activeTerminalId === tab.tabId }"
+                @click="activateTerminalTab(tab.tabId)"
               >
                 <div class="pin-left">
                   <span class="online-pulse-dot"></span>
@@ -73,7 +73,7 @@
                 </div>
                 <div class="pin-right font-mono-code">
                   <span class="pin-latency">12ms</span>
-                  <span class="pin-badge">SSH</span>
+                  <span class="pin-badge">{{ tab.connectionMode || 'SSH' }}</span>
                 </div>
               </div>
             </div>
@@ -124,6 +124,7 @@
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item command="edit">编辑</el-dropdown-item>
+                      <el-dropdown-item v-if="data.nodeType === 'ACCOUNT'" command="terminal">新建终端</el-dropdown-item>
                       <el-dropdown-item v-if="data.nodeType === 'GROUP'" command="host">新建主机</el-dropdown-item>
                       <el-dropdown-item v-if="data.nodeType === 'HOST'" command="account">新建账户</el-dropdown-item>
                       <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
@@ -161,14 +162,16 @@
                   <div v-if="terminalTabs.length" class="terminal-tabs">
                     <div class="terminal-tab-bar" role="tablist" aria-label="已打开的终端">
                       <div class="terminal-tab-scroll">
-                        <button v-for="(tab, idx) in terminalTabs" :key="tab.accountId" type="button" role="tab"
-                          class="terminal-tab" :class="{ 'is-active': activeTerminalId === tab.accountId }"
-                          :aria-selected="activeTerminalId === tab.accountId" @click="activateTerminalTab(tab.accountId)">
+                        <button v-for="(tab, idx) in terminalTabs" :key="tab.tabId" type="button" role="tab"
+                          class="terminal-tab" :class="{ 'is-active': activeTerminalId === tab.tabId }"
+                          :aria-selected="activeTerminalId === tab.tabId" @click="activateTerminalTab(tab.tabId)">
                           <span class="tab-status-dot" :class="{ 'is-connected': !!tab.token }"></span>
                           <span class="tab-label">{{ tab.label }}</span>
                           <span class="tab-index">#{{ idx + 1 }}</span>
-                          <el-icon class="terminal-tab-close" title="关闭终端" @click.stop="closeTerminalTab(tab.accountId)"><Close /></el-icon>
+                          <el-icon class="terminal-tab-close" title="关闭终端" @click.stop="closeTerminalTab(tab.tabId)"><Close /></el-icon>
                         </button>
+                        <button class="terminal-tab-add" type="button" title="打开同一账户的新终端" @click="openAdditionalTerminalTab">+</button>
+                        <span v-if="activeTerminalTab?.connectionMode" class="terminal-connection-mode" :title="activeTerminalTab.connectionMode">{{ activeTerminalTab.connectionMode }}</span>
                       </div>
                       <TerminalToolbar
                         :snippet-visible="snippetBarVisible"
@@ -192,13 +195,14 @@
                     <!-- 终端显示区域 (支持左右分屏对比) -->
                     <div class="terminal-view-split" :class="{ 'is-split-active': isSplit && splitTerminalTab }">
                       <div class="terminal-pane main-pane">
-                        <div v-for="tab in terminalTabs" :key="`terminal-${tab.accountId}`" v-show="activeTerminalId === tab.accountId" class="terminal-tab-content">
+                        <div v-for="tab in terminalTabs" :key="`terminal-${tab.tabId}`" v-show="activeTerminalId === tab.tabId" class="terminal-tab-content">
                           <SshTerminal :account-id="tab.accountId"
-                            :ref="el => setTerminalRef(tab.accountId, el)"
+                            :terminal-id="tab.tabId"
+                            :ref="el => setTerminalRef(tab.tabId, el)"
                             :font-size="terminalFontSize"
                             :light-tone="terminalLightTone"
-                            @ready="payload => onTerminalReady(tab.accountId, payload)"
-                            @disconnected="() => onTerminalDisconnected(tab.accountId)"
+                            @ready="payload => onTerminalReady(tab.tabId, payload)"
+                            @disconnected="() => onTerminalDisconnected(tab.tabId)"
                             @size-change="onTerminalSizeChange"
                             @ask-ai="handleTerminalAskAi" />
                         </div>
@@ -212,11 +216,12 @@
                         </div>
                         <div class="split-pane-content">
                           <SshTerminal :account-id="splitTerminalTab.accountId"
-                            :ref="el => setTerminalRef(`split-${splitTerminalTab.accountId}`, el)"
+                            :terminal-id="splitTerminalTab.tabId"
+                            :ref="el => setTerminalRef(`split-${splitTerminalTab.tabId}`, el)"
                             :font-size="terminalFontSize"
                             :light-tone="terminalLightTone"
-                            @ready="payload => onTerminalReady(splitTerminalTab.accountId, payload)"
-                            @disconnected="() => onTerminalDisconnected(splitTerminalTab.accountId)" />
+                            @ready="payload => onTerminalReady(splitTerminalTab.tabId, payload)"
+                            @disconnected="() => onTerminalDisconnected(splitTerminalTab.tabId)" />
                         </div>
                       </div>
                     </div>
@@ -504,7 +509,7 @@ const accountHostMeta = ref({ name: '', remark: '' })
 const sessionToken = ref('')
 const terminalTabs = ref([])
 const activeTerminalId = ref(null)
-const activeTerminalTab = computed(() => terminalTabs.value.find(item => item.accountId === activeTerminalId.value) || null)
+const activeTerminalTab = computed(() => terminalTabs.value.find(item => item.tabId === activeTerminalId.value) || null)
 const openingFileSession = ref(false)
 
 const snippetBarVisible = ref(false)
@@ -523,7 +528,7 @@ function toggleTerminalTone() {
 
 const splitTerminalTab = computed(() => {
   if (!isSplit.value || terminalTabs.value.length < 2) return null
-  return terminalTabs.value.find(tab => tab.accountId !== activeTerminalId.value) || null
+  return terminalTabs.value.find(tab => tab.tabId !== activeTerminalId.value) || null
 })
 
 const terminalRefs = new Map()
@@ -906,7 +911,7 @@ function activateTerminalForAccount(account) {
   if (!account?.id) return
   let tab = terminalTabs.value.find(item => item.accountId === account.id)
   if (!tab) {
-    tab = { accountId: account.id, account, hostId: account.hostId, defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account), token: '' }
+    tab = { tabId: newTerminalId(), accountId: account.id, account, hostId: account.hostId, defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account), token: '' }
     terminalTabs.value.push(tab)
   } else {
     tab.hostId = account.hostId
@@ -914,13 +919,26 @@ function activateTerminalForAccount(account) {
     tab.defaultCwd = account.defaultCwd || ''
     tab.label = terminalTabLabel(account)
   }
-  activeTerminalId.value = account.id
+  activeTerminalId.value = tab.tabId
   sessionToken.value = tab.token
 }
 
-async function activateTerminalTab(accountId) {
-  activeTerminalId.value = accountId
-  const tab = terminalTabs.value.find(item => item.accountId === accountId)
+function newTerminalId() {
+  return `terminal-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+function openAdditionalTerminalTab() {
+  const current = activeTerminalTab.value
+  if (!current) return
+  const tab = { ...current, tabId: newTerminalId(), token: '' }
+  terminalTabs.value.push(tab)
+  activeTerminalId.value = tab.tabId
+  sessionToken.value = ''
+}
+
+async function activateTerminalTab(tabId) {
+  activeTerminalId.value = tabId
+  const tab = terminalTabs.value.find(item => item.tabId === tabId)
   sessionToken.value = tab?.token || ''
   if (tab?.account) {
     detail.value = { type: 'ACCOUNT', raw: tab.account }
@@ -931,14 +949,14 @@ async function activateTerminalTab(accountId) {
   }
 }
 
-function closeTerminalTab(accountId) {
-  const index = terminalTabs.value.findIndex(item => item.accountId === accountId)
+function closeTerminalTab(tabId) {
+  const index = terminalTabs.value.findIndex(item => item.tabId === tabId)
   if (index < 0) return
-  const wasActive = activeTerminalId.value === accountId
+  const wasActive = activeTerminalId.value === tabId
   terminalTabs.value.splice(index, 1)
   if (wasActive) {
     const next = terminalTabs.value[Math.min(index, terminalTabs.value.length - 1)]
-    activeTerminalId.value = next?.accountId ?? null
+    activeTerminalId.value = next?.tabId ?? null
     sessionToken.value = next?.token || ''
     if (next) {
       detail.value = { type: 'ACCOUNT', raw: next.account }
@@ -947,22 +965,23 @@ function closeTerminalTab(accountId) {
   }
 }
 
-function onTerminalReady(accountId, payload) {
-  const tab = terminalTabs.value.find(item => item.accountId === accountId)
+function onTerminalReady(tabId, payload) {
+  const tab = terminalTabs.value.find(item => item.tabId === tabId)
   if (!tab) return
   tab.token = payload?.sessionToken || ''
-  if (activeTerminalId.value === accountId) sessionToken.value = tab.token
+  tab.connectionMode = payload?.connectionMode || ''
+  if (activeTerminalId.value === tabId) sessionToken.value = tab.token
 }
 
-function onTerminalDisconnected(accountId) {
-  const tab = terminalTabs.value.find(item => item.accountId === accountId)
+function onTerminalDisconnected(tabId) {
+  const tab = terminalTabs.value.find(item => item.tabId === tabId)
   if (tab) tab.token = ''
-  if (activeTerminalId.value === accountId) sessionToken.value = ''
+  if (activeTerminalId.value === tabId) sessionToken.value = ''
 }
 
 function onFileSessionInvalid() {
   sessionToken.value = ''
-  const tab = terminalTabs.value.find(item => item.accountId === activeTerminalId.value)
+  const tab = terminalTabs.value.find(item => item.tabId === activeTerminalId.value)
   if (tab) tab.token = ''
 }
 
@@ -1037,8 +1056,7 @@ const detailRows = computed(() => {
 async function onNodeDblClick(data) {
   selectedNode.value = data
   if (data.nodeType === 'ACCOUNT') {
-    await loadDetail(data)
-    if (route.meta.panel !== 'terminal') router.push('/terminal')
+    void openNewAccountTerminal(data)
     return
   }
   if (data.nodeType === 'HOST') {
@@ -1046,11 +1064,7 @@ async function onNodeDblClick(data) {
       const children = await fetchTreeChildren('HOST', data.id)
       if (children && children.length > 0) {
         const firstAccount = children.find(c => c.nodeType === 'ACCOUNT') || children[0]
-        await loadDetail({
-          ...firstAccount,
-          extra: { hostId: data.id, ...(firstAccount.extra || {}) }
-        })
-        if (route.meta.panel !== 'terminal') router.push('/terminal')
+        void openNewAccountTerminal(firstAccount)
         return
       }
     } catch {
@@ -1065,6 +1079,7 @@ async function onNodeDblClick(data) {
 
 function onNodeAction(command, data) {
   selectedNode.value = data
+  if (command === 'terminal') return openNewAccountTerminal(data)
   if (command === 'edit') {
     if (data.nodeType === 'GROUP') editGroupNode(data)
     else if (data.nodeType === 'HOST') editHostNode(data)
@@ -1076,6 +1091,24 @@ function onNodeAction(command, data) {
   if (command === 'delete') {
     loadDetail(data)
     nextTick(() => confirmDeleteDetail())
+  }
+}
+
+async function openNewAccountTerminal(data) {
+  try {
+    const account = await getAccount(data.id)
+    const host = await loadAccountHostMeta(account.hostId)
+    const tab = { tabId: newTerminalId(), accountId: account.id, account, hostId: account.hostId,
+      defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account, host), token: '' }
+    terminalTabs.value.push(tab)
+    detail.value = { type: 'ACCOUNT', raw: account }
+    activeTerminalId.value = tab.tabId
+    sessionToken.value = ''
+    terminalVisited.value = true
+    await router.push('/terminal')
+    await persistAccountSelection(data)
+  } catch (error) {
+    ElMessage.error(error?.message || '新建终端失败')
   }
 }
 
@@ -1924,6 +1957,43 @@ async function isHostInsideGroup(hostId, groupId) {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+.terminal-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--ws-radius-sm, 4px);
+  border: 1px dashed var(--ws-border);
+  background: transparent;
+  color: var(--ws-text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  margin-bottom: 3px;
+  transition: all var(--ws-transition-fast);
+}
+.terminal-tab-add:hover {
+  border-color: var(--ws-accent);
+  color: var(--ws-accent);
+  background: var(--ws-bg-card);
+}
+.terminal-connection-mode {
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: 6px;
+  margin-right: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--ws-border);
+  border-radius: 10px;
+  background: var(--ws-bg-card);
+  color: var(--ws-accent);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
 }
 .account-tabs :deep(.el-tab-pane) {
   height: 100%;

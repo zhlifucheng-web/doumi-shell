@@ -6,8 +6,9 @@ export function getMonitorConfig(accountId) { return get(`${BASE}/host/monitor-c
 export function saveMonitorConfig(accountId, config) { return put(`${BASE}/host/monitor-config?accountId=${encodeURIComponent(accountId)}`, config, { showSuccess: false, showFailure: false }) }
 
 /** 与 HTTP 共用同源地址；支持显式 VITE_API_BASE。 */
-export function buildTerminalWsUrl(accountId, { cols, rows } = {}) {
+export function buildTerminalWsUrl(accountId, { cols, rows, terminalId } = {}) {
   const params = new URLSearchParams({ accountId: String(accountId) })
+  if (terminalId) params.set('terminalId', String(terminalId))
   if (cols > 0) params.set('cols', String(cols))
   if (rows > 0) params.set('rows', String(rows))
   const url = new URL(`${API_BASE}/ws/ssh-console/terminal`, window.location.origin)

@@ -8,6 +8,8 @@ import com.doumiot.sshconsole.entity.SshAccount;
 import com.doumiot.sshconsole.entity.SshHost;
 import com.doumiot.sshconsole.ssh.SshClientFactory;
 import com.doumiot.sshconsole.ssh.SshSessionRegistry;
+import com.doumiot.sshconsole.ssh.SshRemoteExec;
+import com.doumiot.sshconsole.config.SshConsoleProperties;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import net.schmizz.sshj.SSHClient;
@@ -37,8 +39,10 @@ public class SshTerminalService {
     private SshClientFactory sshClientFactory;
     @Resource
     private SshSessionRegistry sessionRegistry;
+    @Resource
+    private SshConsoleProperties properties;
 
-    public TerminalSession openTerminal(long accountId, int cols, int rows) throws IOException {
+    public TerminalSession openTerminal(long accountId, int cols, int rows, String terminalId) throws IOException {
         SshAccount account = sshAccountService.requireAccount(accountId);
         if (account.getEnabled() != null && account.getEnabled() == 0) {
             throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "账户已禁用");
@@ -55,8 +59,9 @@ public class SshTerminalService {
 
         int c = cols > 0 ? cols : DEFAULT_COLS;
         int r = rows > 0 ? rows : DEFAULT_ROWS;
+        boolean tmux = properties.isTmuxEnabled() && hasTmux(client, entry.getExecLock());
         try {
-            attachShell(entry, c, r, account.getDefaultCwd());
+            attachShell(entry, c, r, account.getDefaultCwd(), accountId, terminalId, tmux);
         } catch (IOException e) {
             sessionRegistry.close(entry.getSessionToken());
             throw e;
@@ -66,6 +71,7 @@ public class SshTerminalService {
         ts.setEntry(entry);
         ts.setLabel(label);
         ts.setReadyRemark(pickReadyRemark(account.getRemark(), host.getRemark()));
+        ts.setConnectionMode(tmux ? "SSH · tmux" : "SSH");
         return ts;
     }
 
@@ -97,7 +103,8 @@ public class SshTerminalService {
         stdin.flush();
     }
 
-    private void attachShell(SshSessionRegistry.SessionEntry entry, int cols, int rows, String defaultCwd)
+    private void attachShell(SshSessionRegistry.SessionEntry entry, int cols, int rows, String defaultCwd,
+                             long accountId, String terminalId, boolean tmux)
             throws IOException {
         SSHClient client = entry.getClient();
         Session sshSession = client.startSession();
@@ -112,6 +119,15 @@ public class SshTerminalService {
         entry.setTerminalAttached(true);
         sessionRegistry.touchSession(entry.getSessionToken());
 
+        // tmux keeps the interactive process alive after the browser/WebSocket disconnects.
+        // The command is conditional so hosts without tmux retain the existing shell behavior.
+        if (tmux) {
+            String tmuxCommand = "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s "
+                    + tmuxSessionName(accountId, terminalId) + "; fi\n";
+            shell.getOutputStream().write(tmuxCommand.getBytes(StandardCharsets.UTF_8));
+            shell.getOutputStream().flush();
+        }
+
         if (StringUtils.hasText(defaultCwd)) {
             String cmd = shellCd(defaultCwd.trim()) + "\n";
             shell.getOutputStream().write(cmd.getBytes(StandardCharsets.UTF_8));
@@ -119,8 +135,25 @@ public class SshTerminalService {
         }
     }
 
+    private static boolean hasTmux(SSHClient client, Object lock) {
+        try {
+            SshRemoteExec.ExecResult result = SshRemoteExec.exec(client, lock, "command -v tmux 2>/dev/null", 5);
+            return result.getExitStatus() == 0 && result.getStdout() != null
+                    && !result.getStdout().trim().isEmpty();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private static String shellCd(String cwd) {
         return "cd " + "'" + cwd.replace("'", "'\"'\"'") + "'";
+    }
+
+    private static String tmuxSessionName(long accountId, String terminalId) {
+        String suffix = terminalId == null ? "default" : terminalId.replaceAll("[^A-Za-z0-9_-]", "");
+        if (suffix.isEmpty()) suffix = "default";
+        if (suffix.length() > 48) suffix = suffix.substring(0, 48);
+        return "'doumi-shell-" + accountId + "-" + suffix + "'";
     }
 
     private static void assertHostEnabled(SshHost host) {
@@ -148,5 +181,6 @@ public class SshTerminalService {
         private SshSessionRegistry.SessionEntry entry;
         private String label;
         private String readyRemark;
+        private String connectionMode;
     }
 }

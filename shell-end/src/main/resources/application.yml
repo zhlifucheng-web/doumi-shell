@@ -18,6 +18,7 @@ doumi:
     monitor-min-interval-ms: 5000
     monitor-disk-interval-ms: 60000
     script-run-timeout-sec: 0
+    tmux-enabled: true
 
 spring:
   mvc:

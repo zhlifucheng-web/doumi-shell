@@ -56,10 +56,11 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
         }
         int cols = parseIntQuery(session.getUri(), "cols", 0);
         int rows = parseIntQuery(session.getUri(), "rows", 0);
+        String terminalId = parseStringQuery(session.getUri(), "terminalId");
 
         SshTerminalService.TerminalSession terminalSession;
         try {
-            terminalSession = sshTerminalService.openTerminal(accountId, cols, rows);
+            terminalSession = sshTerminalService.openTerminal(accountId, cols, rows, terminalId);
         } catch (BusinessRuntimeException e) {
             sendErrorAndClose(session, "CONNECT_FAILED", e.getMessage());
             return;
@@ -76,7 +77,7 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
         sendLocks.put(token, new Object());
 
         SshTerminalFrame ready = SshTerminalFrame.ready(
-                token, terminalSession.getLabel(), terminalSession.getReadyRemark());
+                token, terminalSession.getLabel(), terminalSession.getReadyRemark(), terminalSession.getConnectionMode());
         sendFrame(session, token, ready);
 
         Future<?> pump = pumpExecutor.submit(() -> pumpOutput(session, token, entry.getShellStdout()));
@@ -245,6 +246,18 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
             }
         }
         return defaultValue;
+    }
+
+    private static String parseStringQuery(URI uri, String name) {
+        if (uri == null || uri.getQuery() == null) return null;
+        for (String part : uri.getQuery().split("&")) {
+            int eq = part.indexOf('=');
+            if (eq > 0 && name.equals(part.substring(0, eq))) {
+                String value = part.substring(eq + 1);
+                return value.isEmpty() ? null : value;
+            }
+        }
+        return null;
     }
 
     @PreDestroy

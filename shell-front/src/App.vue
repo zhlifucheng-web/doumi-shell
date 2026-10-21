@@ -113,6 +113,11 @@
           </template>
         </el-dropdown>
 
+        <!-- 帮助文档 -->
+        <router-link to="/help" class="about-btn" title="帮助与使用教程">
+          <el-icon><QuestionFilled /></el-icon>
+        </router-link>
+
         <!-- 关于 -->
         <router-link to="/about" class="about-btn" title="关于 Doumi Shell">
           <el-badge is-dot :hidden="!hasUpdate">
@@ -155,7 +160,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
-import { Brush, InfoFilled, Monitor, Moon, Search, Sunny } from '@element-plus/icons-vue'
+import { ArrowDown, Brush, InfoFilled, MagicStick, Monitor, Moon, QuestionFilled, Search, Sunny } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useBackground } from '@/composables/useBackground'
@@ -203,13 +208,18 @@ function onGlobalKeydown(event) {
     commandPaletteOpen.value = !commandPaletteOpen.value
   }
 }
-
 watch(() => workspaceStore.aiOpen, (open) => {
   aiDialog.value = open
 })
 watch(aiDialog, (val) => {
   workspaceStore.aiOpen = val
 })
+
+function onContextMenu(event) {
+  if (!(event.target instanceof Element) || !event.target.closest('.ssh-terminal-wrap')) {
+    event.preventDefault()
+  }
+}
 
 function onOpenTransfers() {
   void router.push('/terminal')
@@ -242,8 +252,12 @@ onMounted(() => {
     /* 默认不自动打开 */
   }
   window.addEventListener('keydown', onGlobalKeydown)
+  document.addEventListener('contextmenu', onContextMenu)
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onGlobalKeydown)
+  document.removeEventListener('contextmenu', onContextMenu)
+})
 
 const serverTitle = computed(() =>
   managedServer.value

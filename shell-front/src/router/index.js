@@ -10,6 +10,7 @@ const routes = [
   })),
   { path: '/data-management', component: () => import('@/views/DataManagement.vue') },
   { path: '/about', name: 'about', component: About },
+  { path: '/help', name: 'help', component: () => import('@/views/Help.vue') },
   { path: '/:pathMatch(.*)*', redirect: '/terminal' }
 ]
 
