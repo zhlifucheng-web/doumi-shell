@@ -40,9 +40,9 @@
       <el-descriptions :column="1" border size="small" class="about-meta">
         <el-descriptions-item label="版本">{{ appVersion }}</el-descriptions-item>
         <el-descriptions-item label="代码仓库"><el-link :href="repositoryUrl" target="_blank">{{ repositoryUrl }}</el-link></el-descriptions-item>
-        <el-descriptions-item label="开源协议"><el-link href="/LICENSE" target="_blank">非盈利开源许可</el-link></el-descriptions-item>
+        <el-descriptions-item label="使用许可"><el-link href="https://polyformproject.org/licenses/noncommercial/1.0.0/" target="_blank" rel="noopener noreferrer">PolyForm Noncommercial 1.0.0</el-link></el-descriptions-item>
       </el-descriptions>
-      <p class="star-hint">项目对个人和非盈利组织开放修改与使用。欢迎给仓库点 Star，帮助项目被更多人发现。</p>
+      <p class="star-hint">允许非商业用途的使用、修改与分发，商业用途不在许可授权范围内；这是非商业源码许可，不属于 OSI 定义的开源许可。欢迎给仓库点 Star，帮助项目被更多人发现。</p>
     </section>
   </main></el-scrollbar>
 </template>

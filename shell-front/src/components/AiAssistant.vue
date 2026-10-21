@@ -221,7 +221,7 @@ onMounted(() => {
   window.addEventListener('resize', clampPanelOnViewportChange)
   if (props.modelValue) void restoreLatestServerConversation(selectedServer.value)
 })
-const pageName = computed(() => ({ '/terminal': '终端与监控', '/scripts': '脚本与定时任务', '/processes': '进程', '/disk-usage': '存储管理', '/data-management': '数据管理', '/about': '关于' })[route.path] || route.path)
+const pageName = computed(() => ({ '/terminal': '终端与监控', '/scripts': '脚本与定时任务', '/processes': '进程', '/disk-usage': '存储管理', '/data-management': '数据管理', '/about': '关于', '/help': '帮助' })[route.path] || route.path)
 const stateLabel = computed(() => ({ idle: '就绪', running: '处理中', awaiting_confirmation: '等待确认', stopping: '停止中', error: '处理失败' })[state.value] || '就绪')
 const pretty = value => JSON.stringify(value || {}, null, 2)
 const roleName = entry => entry.role === 'tool' ? entry.name : ({ user: '你', assistant: 'AI 助手', error: '错误', notice: '提示' })[entry.role] || entry.role

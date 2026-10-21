@@ -14,6 +14,7 @@
           <span>AI 助手</span>
         </button>
       </el-tooltip>
+      <router-link to="/help" class="about-link help-link" title="帮助与使用教程" aria-label="帮助与使用教程"><el-icon><QuestionFilled /></el-icon><span>帮助</span></router-link>
       <router-link to="/about" class="about-link" title="关于 Doumi Shell">
         <el-badge is-dot :hidden="!hasUpdate"><el-icon><InfoFilled /></el-icon><span>关于</span></el-badge>
       </router-link>
@@ -55,7 +56,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
 import { storeToRefs } from 'pinia'
-import { ArrowDown, InfoFilled, MagicStick, Monitor, Moon, Sunny } from '@element-plus/icons-vue'
+import { ArrowDown, InfoFilled, MagicStick, Monitor, Moon, QuestionFilled, Sunny } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useBackground } from '@/composables/useBackground'
@@ -160,6 +161,7 @@ function onThemeCommand(cmd) {
 .about-link { flex-shrink:0; color:var(--el-text-color-regular); text-decoration:none; padding:6px 8px; border-radius:6px; font-size:13px }
 .about-link:hover,.about-link.router-link-active { background:var(--el-fill-color-light); color:var(--el-color-primary) }
 .about-link .el-badge { display:inline-flex; align-items:center; gap:4px }
+.help-link {display:inline-flex;align-items:center;gap:4px}
 .ai-entry { flex-shrink:0; display:inline-flex; align-items:center; gap:7px; padding:6px 4px; border:0; color:var(--el-text-color-primary); background:transparent; font:inherit; font-size:14px; font-weight:600; cursor:pointer; }
 .ai-entry:hover,.ai-entry:focus-visible { color:var(--el-color-primary); outline:none; }
 .ai-entry__icon { color:var(--el-color-primary); font-size:18px; }
