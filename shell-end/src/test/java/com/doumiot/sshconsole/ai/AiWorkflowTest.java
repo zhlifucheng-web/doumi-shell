@@ -54,7 +54,7 @@ class AiWorkflowTest {
     @Test void mutationRequiresApprovalAndCannotBeReplayedOrStolen() throws Exception {
         SshGroupService groups=mock(SshGroupService.class);ReflectionTestUtils.setField(tools,"groups",groups);
         when(completion.stream(any(),anyList(),any(),any(),any())).thenReturn(toolMessage(call("delete1","group_delete",AiJson.object("id",9))),AiJson.object("content","已处理"));
-        String id=chat();send(id);JsonNode pending=done(id);String action=pending.path("pending").path(0).path("actionId").asText();
+        String id=chat();chats.setAuthorizationMode(id,"ask");send(id);JsonNode pending=done(id);String action=pending.path("pending").path(0).path("actionId").asText();
         assertEquals("awaiting_confirmation",pending.path("state").asText());verify(groups,never()).delete(anyLong());
         assertThrows(IllegalArgumentException.class,()->tools.confirm("other",action,true));
         chats.approve(id,Collections.singletonList(action),true);JsonNode result=done(id);verify(groups,times(1)).delete(9);
@@ -72,7 +72,7 @@ class AiWorkflowTest {
     @Test void automaticAuthorizationRunsConfirmedMutationAndKeepsAuditEvent() throws Exception {
         SshGroupService groups=mock(SshGroupService.class);ReflectionTestUtils.setField(tools,"groups",groups);
         when(completion.stream(any(),anyList(),any(),any(),any())).thenReturn(toolMessage(call("delete-auto","group_delete",AiJson.object("id",9))),AiJson.object("content","已完成"));
-        String id=chat();chats.setAuthorizationMode(id,"auto");send(id);JsonNode status=done(id);
+        String id=chat();assertEquals("auto",chats.status(id,0).path("authorizationMode").asText());send(id);JsonNode status=done(id);
         verify(groups,times(1)).delete(9);assertEquals(0,status.path("pending").size());assertEquals("auto",status.path("authorizationMode").asText());
         assertTrue(status.toString().contains("auto_authorized"));assertTrue(status.toString().contains("已完成"));
     }
@@ -80,7 +80,8 @@ class AiWorkflowTest {
         when(completion.stream(any(),anyList(),any(),any(),any())).thenReturn(AiJson.object("content","第一条完成"));
         String id=chat();send(id);done(id);
         JsonNode switched=chats.setProvider(id,"provider-two");assertEquals("provider-two",switched.path("providerId").asText());
-        assertEquals("ask",switched.path("authorizationMode").asText());
+        assertEquals("auto",switched.path("authorizationMode").asText());
+        assertEquals("ask",chats.setAuthorizationMode(id,"ask").path("authorizationMode").asText());
         JsonNode automatic=chats.setAuthorizationMode(id,"auto");assertEquals("auto",automatic.path("authorizationMode").asText());
         assertThrows(IllegalArgumentException.class,()->chats.setAuthorizationMode(id,"unknown"));
         assertTrue(automatic.toString().contains("第一条完成"));
@@ -88,7 +89,7 @@ class AiWorkflowTest {
     @Test void refusalDoesNotExecuteAndResumesConversation() throws Exception {
         SshGroupService groups=mock(SshGroupService.class);ReflectionTestUtils.setField(tools,"groups",groups);
         when(completion.stream(any(),anyList(),any(),any(),any())).thenReturn(toolMessage(call("delete1","group_delete",AiJson.object("id",9))),AiJson.object("content","取消操作"));
-        String id=chat();send(id);String action=done(id).path("pending").path(0).path("actionId").asText();
+        String id=chat();chats.setAuthorizationMode(id,"ask");send(id);String action=done(id).path("pending").path(0).path("actionId").asText();
         chats.approve(id,Collections.singletonList(action),false);assertTrue(done(id).toString().contains("cancelled"));verifyNoInteractions(groups);
     }
     @Test void pendingArgumentsAreImmutableAndCredentialsMasked() throws Exception {

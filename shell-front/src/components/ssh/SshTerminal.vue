@@ -1,7 +1,6 @@
 <template>
   <div class="ssh-terminal-wrap">
     <div v-if="statusMessage" class="status-overlay">{{ statusMessage }}</div>
-    <span v-if="connectionMode" class="connection-mode" :title="connectionMode">{{ connectionMode }}</span>
     <div v-if="contextMenu.visible" class="terminal-context-menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @mousedown.stop>
       <button type="button" @click="copyTerminalSelection(); closeContextMenu()">复制 <kbd>Ctrl+C</kbd></button>
       <button type="button" @click="pasteTerminalClipboard(); closeContextMenu()">粘贴 <kbd>Ctrl+Shift+V</kbd></button>
@@ -167,7 +166,7 @@ function activateSession(frame) {
   connectionMode.value = frame?.connectionMode || ''
   bindTerminalData()
   if (frame?.type === 'ready') {
-    emit('ready', { sessionToken: frame.sessionToken, label: frame.label })
+    emit('ready', { sessionToken: frame.sessionToken, label: frame.label, connectionMode: frame.connectionMode })
     startPing()
   }
   nextTick(() => {
@@ -337,7 +336,6 @@ watch(
   position: relative;
   overflow: hidden;
 }
-.connection-mode { position:absolute; right:10px; top:8px; z-index:2; padding:2px 7px; border:1px solid var(--el-border-color); border-radius:10px; background:var(--el-bg-color); color:var(--el-text-color-secondary); font-size:11px; pointer-events:none; }
 .terminal-context-menu { position:absolute; z-index:8; min-width:170px; padding:4px; border:1px solid var(--el-border-color); border-radius:6px; background:var(--el-bg-color); box-shadow:var(--el-box-shadow); }
 .terminal-context-menu button { display:flex; justify-content:space-between; width:100%; padding:7px 9px; border:0; background:transparent; color:var(--el-text-color-primary); cursor:pointer; text-align:left; }
 .terminal-context-menu button:hover { background:var(--el-fill-color-light); }

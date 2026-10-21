@@ -59,13 +59,12 @@ def main():
 
     release = call('GET', '/releases/tags/' + tag, allow404=True)
     if release is None:
-        notes = (f'## Doumi Shell {version}\n\n'
-                 '- 使用 Pinia 统一管理前端共享状态，改善页面切换和终端会话中的状态一致性。\n'
-                 '- 监控面板和卡片配置保存到服务端；刷新后恢复所选面板，历史趋势按配置的时间范围显示。\n'
-                 '- 修复监控配置首次初始化、重复保存和图表空状态提示问题，并支持 Ctrl+Space 切换面板。\n'
-                 '- 扩展 AI 对分组、主机、账户及监控卡片的管理能力。\n'
-                 '- 改善终端、文件传输、主题和主机管理界面的状态同步。\n'
-                 '- 提供 Windows MSI 与 Linux x64 安装包。\n')
+        changelog = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
+        section = re.search(r'^## ' + re.escape(version) + r'[^\n]*\n(.*?)(?=^## |\Z)',
+                            changelog, re.MULTILINE | re.DOTALL)
+        if not section:
+            raise RuntimeError(f'Missing changelog for {version}')
+        notes = f'## Doumi Shell {version}\n\n' + section.group(1).strip() + '\n'
         release = call('POST', '/releases', data={
             'tag_name': tag, 'target_commitish': commit,
             'name': f'Doumi Shell {version}', 'prerelease': 'false', 'body': notes,

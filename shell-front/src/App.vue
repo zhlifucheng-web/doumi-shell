@@ -85,11 +85,20 @@ function onGlobalKeydown(event) {
     aiDialog.value = !aiDialog.value
   }
 }
+function onContextMenu(event) {
+  if (!(event.target instanceof Element) || !event.target.closest('.ssh-terminal-wrap')) {
+    event.preventDefault()
+  }
+}
 onMounted(() => {
   try { aiDialog.value = localStorage.getItem(AI_AUTO_OPEN_KEY) === 'true' } catch { /* 默认不自动打开 */ }
   window.addEventListener('keydown', onGlobalKeydown)
+  document.addEventListener('contextmenu', onContextMenu)
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onGlobalKeydown)
+  document.removeEventListener('contextmenu', onContextMenu)
+})
 const serverTitle = computed(()=>managedServer.value ? `${managedServer.value.username ? managedServer.value.username+'@' : ''}${managedServer.value.name} · ${managedServer.value.address}:${managedServer.value.port}` : '')
 
 const { preference, themeLabel, setPreference } = useTheme()

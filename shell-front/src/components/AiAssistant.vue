@@ -3,18 +3,19 @@
     <Transition name="ai-panel">
       <aside v-if="modelValue" ref="panelElement" class="ai-panel" :class="{ 'ai-panel--fullscreen': fullscreen }" :style="[backgroundStyle, fullscreen ? {} : panelStyle]" aria-label="AI 助手侧边栏">
         <header class="ai-panel-header" @pointerdown="startDrag">
-          <div class="ai-panel-title"><strong>AI 助手</strong><small>Ctrl + Shift + K</small></div>
+          <div class="ai-panel-title"><strong><el-icon><MagicStick /></el-icon> AI 助手</strong><small>Ctrl + Shift + K · 拖动标题移动窗口</small></div>
+          <el-tag size="small" :type="busy ? 'warning' : 'info'">{{ stateLabel }}</el-tag>
           <el-tooltip :content="fullscreen ? '退出全屏' : '全屏'"><el-button text circle :aria-label="fullscreen ? '退出全屏' : '全屏'" @click="fullscreen = !fullscreen"><el-icon><FullScreen /></el-icon></el-button></el-tooltip>
           <el-button text circle aria-label="关闭 AI 助手" @click="$emit('update:modelValue', false)"><el-icon><Close /></el-icon></el-button>
         </header>
     <div class="ai-toolbar">
       <el-select v-model="providerId" placeholder="选择已配置模型" :disabled="busy || submitting || !!pending.length" aria-label="AI 模型" @change="changeProvider"><el-option v-for="p in providers" :key="p.id" :label="`${p.name} · ${p.model}`" :value="p.id" /></el-select>
-      <el-button @click="settingsVisible = true">厂商配置</el-button>
-      <el-button @click="showHistory">历史会话</el-button>
-      <el-button :disabled="busy || uploading || submitting || !!pending.length" @click="newChat">新对话</el-button>
-      <el-switch v-model="autoOpen" size="small" active-text="启动时打开" aria-label="启动时自动打开 AI 助手" @change="saveAutoOpen" />
-      <el-tag :type="busy ? 'warning' : 'info'">{{ stateLabel }}</el-tag>
+      <el-button size="small" @click="showHistory">历史</el-button>
+      <el-button size="small" :disabled="busy || uploading || submitting || !!pending.length" @click="newChat">新对话</el-button>
+      <el-button size="small" :aria-expanded="controlsVisible" @click="controlsVisible = !controlsVisible">设置</el-button>
     </div>
+    <div v-if="controlsVisible" class="ai-controls">
+    <div class="ai-settings-actions"><el-button size="small" @click="settingsVisible = true">厂商配置</el-button><el-switch v-model="autoOpen" size="small" active-text="启动时打开" aria-label="启动时自动打开 AI 助手" @change="saveAutoOpen" /></div>
     <div class="ai-permission-row">
       <span>操作授权</span>
       <el-select v-model="authorizationMode" aria-label="AI 操作授权模式" :disabled="busy || submitting || !!pending.length" @change="changeAuthorizationMode">
@@ -22,6 +23,7 @@
         <el-option label="全部权限（自动执行）" value="auto" />
       </el-select>
       <small>{{ authorizationMode === 'auto' ? '本对话的读写操作均可执行，写操作不再逐项确认' : '读取操作直接执行；命令、创建、修改、删除等写操作逐项确认' }}</small>
+    </div>
     </div>
     <div class="ai-host-row">
       <span>操作主机</span>
@@ -31,16 +33,18 @@
       </el-select>
       <el-button title="刷新主机列表" aria-label="刷新主机列表" :loading="hostLoading" @click="loadHostAccounts">↻</el-button>
     </div>
-    <div class="ai-context">当前页面：{{ pageName }}<span v-if="selectedServer"> · {{ selectedServer.username ? selectedServer.username + '@' : '' }}{{ selectedServer.name }} ({{ selectedServer.address }}:{{ selectedServer.port }})</span><span v-else> · 未选择主机</span></div>
-    <div ref="history" class="ai-history" aria-live="polite">
+    <div class="ai-context"><span :title="selectedServer ? `${selectedServer.username || ''}@${selectedServer.address}:${selectedServer.port}` : '未选择主机'">{{ pageName }} · {{ selectedServer ? `${selectedServer.username ? selectedServer.username + '@' : ''}${selectedServer.name}` : '未选择主机' }}</span><el-tooltip :content="authorizationMode === 'auto' ? '当前对话的读写操作自动执行' : '写操作执行前需要确认'"><el-button link size="small" @click="controlsVisible = !controlsVisible">{{ authorizationMode === 'auto' ? '全部权限' : '写操作询问' }}</el-button></el-tooltip></div>
+    <div class="ai-conversation">
+    <div ref="history" class="ai-history" aria-live="polite" @scroll="onHistoryScroll">
       <div v-if="!events.length" class="ai-empty">
         <strong>描述你的任务，AI 会调用实际业务接口完成操作</strong>
         <p>例如：查看当前服务器资源、排查进程、编写定时脚本，或分析配置文件并按目录导入。</p>
         <p v-if="authorizationMode === 'ask'">读取操作直接执行；执行命令、创建、修改、删除和导入前会请求确认。</p>
         <p v-else>当前对话的读写操作均可执行，写操作会自动执行。</p>
+        <div class="ai-suggestions"><button v-for="suggestion in suggestions" :key="suggestion" type="button" @click="text = suggestion">{{ suggestion }}</button></div>
       </div>
       <article v-for="entry in events" :key="entry.messageId || entry.callId || entry.sequence" class="ai-message" :class="`ai-message--${entry.role}`">
-        <div class="ai-message-title"><span>{{ roleName(entry) }}</span><el-tag v-if="entry.role === 'tool'" size="small" :type="entry.state === 'error' ? 'danger' : entry.state === 'pending' ? 'warning' : 'info'">{{ toolState(entry.state) }}</el-tag><time v-if="entry.timestamp" class="ai-message-time" :datetime="new Date(entry.timestamp).toISOString()">{{ formatMessageTime(entry.timestamp) }}</time></div>
+        <div class="ai-message-title"><span>{{ roleName(entry) }}</span><el-tag v-if="entry.role === 'tool'" size="small" :type="entry.state === 'error' ? 'danger' : entry.state === 'pending' ? 'warning' : 'info'">{{ toolState(entry.state) }}</el-tag><time v-if="entry.timestamp" class="ai-message-time" :datetime="new Date(entry.timestamp).toISOString()">{{ formatMessageTime(entry.timestamp) }}</time><el-button v-if="entry.text" class="ai-copy-message" link size="small" aria-label="复制消息" title="复制消息" @click="copyMessage(entry.text)"><el-icon><CopyDocument /></el-icon></el-button></div>
         <template v-if="entry.role === 'tool'">
           <p v-if="entry.description">{{ entry.description }}</p>
           <details :open="entry.state === 'pending'"><summary>操作参数与结果</summary><pre>{{ pretty(entry.arguments) }}</pre><pre v-if="entry.text">{{ entry.text }}</pre></details>
@@ -53,15 +57,19 @@
       </article>
       <div v-if="busy" class="ai-working">{{ state === 'stopping' ? '正在停止后续调用，等待当前请求结束…' : 'AI 正在处理，请稍候…' }}</div>
     </div>
+    <el-button v-if="awayFromBottom" class="ai-jump-latest" round size="small" @click="scrollBottom">↓ 回到最新消息</el-button>
+    </div>
     <div v-if="error" class="ai-error" role="alert">{{ error }}<el-button v-if="conversationId" link @click="poll">重新连接</el-button><el-button link :disabled="busy" @click="newChat">清除并新建</el-button></div>
     <div v-if="pending.length > 1" class="ai-actions"><span>{{ pending.length }} 项待确认操作</span><el-button size="small" :disabled="busy || submitting" @click="approve(pending.map(p => p.actionId), true)">全部确认</el-button><el-button size="small" :disabled="busy || submitting" @click="approve(pending.map(p => p.actionId), false)">全部拒绝</el-button></div>
-    <div class="ai-attachments"><el-tag v-for="a in attachments" :key="a.id" closable @close="attachments = attachments.filter(item => item.id !== a.id)">{{ a.name }}</el-tag></div>
-    <el-input v-model="text" type="textarea" :rows="3" :maxlength="24000" placeholder="输入任务，Enter 发送；Ctrl + Enter 换行" :disabled="busy || !!pending.length" @keydown.enter="onComposerEnter" />
+    <div class="ai-composer">
+    <div v-if="attachments.length" class="ai-attachments"><el-tag v-for="a in attachments" :key="a.id" closable @close="attachments = attachments.filter(item => item.id !== a.id)">{{ a.name }}</el-tag></div>
+    <el-input v-model="text" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }" :maxlength="24000" placeholder="描述任务… Enter 发送，Ctrl + Enter 换行" :disabled="busy || !!pending.length" @keydown.enter="onComposerEnter" />
     <div class="ai-compose-actions">
-      <div><el-button :disabled="busy || !!pending.length || uploading" @click="fileInput.click()">添加文件</el-button><el-button :disabled="busy || !!pending.length || uploading" @click="folderInput.click()">添加文件夹</el-button><small v-if="uploading">上传 {{ uploadProgress }}%</small><small v-else>单文件 20 MB / 每次对话 50 MB</small></div>
+      <div><el-button size="small" :disabled="busy || !!pending.length || uploading" @click="fileInput.click()">添加文件</el-button><el-button size="small" :disabled="busy || !!pending.length || uploading" @click="folderInput.click()">文件夹</el-button><small v-if="uploading">上传 {{ uploadProgress }}%</small></div>
       <el-button v-if="busy" type="warning" :disabled="submitting || state === 'stopping'" @click="stop">停止</el-button><el-button v-else type="primary" :loading="submitting" :disabled="!providerId || !text.trim() || !!pending.length || uploading" @click="send">发送</el-button>
     </div>
-    <p class="ai-footnote">消息、所选附件及工具结果会发送给你配置的厂商。附件仅为临时数据，过期或服务重启后需重新选择；API Key 在服务端加密保存。历史会话可在历史会话列表中恢复或在数据管理中清理。停止不会撤回已启动的操作。</p>
+    </div>
+    <details class="ai-help"><summary>使用说明 · 单文件 20 MB / 每次对话 50 MB</summary><p class="ai-footnote">消息、所选附件及工具结果会发送给你配置的厂商。附件仅为临时数据，过期或服务重启后需重新选择；API Key 在服务端加密保存。历史会话可在历史会话列表中恢复或在数据管理中清理。停止不会撤回已启动的操作。</p></details>
     <input ref="fileInput" type="file" multiple hidden @change="attach"><input ref="folderInput" type="file" multiple webkitdirectory hidden @change="attach">
     <div v-if="!fullscreen" class="ai-resize-handle" role="separator" aria-label="调整 AI 助手大小" aria-orientation="diagonal" :aria-valuenow="Math.round(panelLayout.width)" tabindex="0" @pointerdown.stop.prevent="startResize" @keydown="resizeByKeyboard"><el-icon><Rank /></el-icon></div>
       </aside>
@@ -92,8 +100,8 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { ElMessageBox } from 'element-plus'
-import { Close, FullScreen, Rank } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Close, CopyDocument, FullScreen, MagicStick, Rank } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 import { aiApi } from '@/api/ai'
 import { API_BASE } from '@/utils/apiHandler'
@@ -117,6 +125,25 @@ const history = ref(), fileInput = ref(), folderInput = ref(), panelElement = re
 const settingsVisible = ref(false), editingId = ref(''), saving = ref(false), testing = ref(false), settingsMessage = ref('')
 const autoOpen = ref(readAutoOpen())
 const historyVisible = ref(false), historyLoading = ref(false), historyRows = ref([]), historySearch = ref('')
+const controlsVisible = ref(false), awayFromBottom = ref(false)
+const suggestions = ['查看当前服务器资源状态', '排查 CPU 和内存占用较高的进程', '查看并整理当前账户的监控面板']
+function onHistoryScroll() {
+  const element = history.value
+  awayFromBottom.value = !!element && element.scrollHeight - element.scrollTop - element.clientHeight > 100
+}
+async function copyMessage(value) {
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value)
+    else {
+      const field = document.createElement('textarea')
+      field.value = value; field.style.position = 'fixed'; field.style.opacity = '0'
+      panelElement.value.appendChild(field)
+      try { field.select(); if (!document.execCommand('copy')) throw new Error('copy failed') }
+      finally { field.remove() }
+    }
+    ElMessage.success('已复制消息')
+  } catch { ElMessage.error('复制失败，请选择文本后复制') }
+}
 const filteredHistory = computed(() => {
   const query = historySearch.value.trim().toLowerCase()
   return historyRows.value.filter(row => !query || `${row.title || ''} ${historyServerLabel(row)}`.toLowerCase().includes(query))
@@ -468,7 +495,7 @@ async function deleteProvider() {
   try { if (conversationId.value && editingId.value === providerId.value) { await newChat(); if (conversationId.value) return } await aiApi.deleteProvider(editingId.value); editingId.value = ''; editProvider(); await loadProviders() }
   catch (e) { settingsMessage.value = e.message }
 }
-async function scrollBottom() { await nextTick(); if (history.value) history.value.scrollTop = history.value.scrollHeight }
+async function scrollBottom() { await nextTick(); if (history.value) history.value.scrollTop = history.value.scrollHeight; awayFromBottom.value = false }
 onBeforeUnmount(() => { disposed = true; closeEvents(); clearTimeout(timer); endPointer(); window.removeEventListener('resize', clampPanelOnViewportChange) })
 </script>
 
@@ -482,5 +509,46 @@ onBeforeUnmount(() => { disposed = true; closeEvents(); clearTimeout(timer); end
 .ai-resize-handle{position:absolute;z-index:2;right:5px;bottom:5px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;color:var(--el-text-color-secondary);cursor:nwse-resize;touch-action:none}.ai-resize-handle:hover,.ai-resize-handle:focus-visible{color:var(--el-color-primary);outline:none}
 .ai-permission-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--el-border-color-lighter);font-size:12px}.ai-permission-row .el-select{width:140px}.ai-permission-row small{flex:1;min-width:130px}
 .ai-panel-enter-active,.ai-panel-leave-active{transition:transform .16s ease,opacity .16s ease}.ai-panel-enter-from,.ai-panel-leave-to{transform:translateX(-16px);opacity:0}.ai-panel--fullscreen{transition:none}
+.ai-panel{border-radius:12px;padding-bottom:12px}
+.ai-panel-header{flex-shrink:0;min-height:54px;margin-bottom:10px}
+.ai-panel-title strong{display:flex;align-items:center;gap:6px;font-size:16px}
+.ai-panel-title strong .el-icon{color:var(--el-color-primary)}
+.ai-panel-title small{font-size:10px}
+.ai-toolbar{flex-shrink:0;flex-wrap:nowrap;gap:5px}
+.ai-toolbar .el-select{min-width:90px}
+.ai-toolbar .el-button+.el-button{margin-left:0}
+.ai-controls{flex-shrink:0;max-height:150px;overflow:auto;margin-top:8px;padding:10px;border:1px solid var(--el-border-color-lighter);border-radius:8px;background:var(--el-fill-color-light)}
+.ai-settings-actions{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.ai-permission-row{border-bottom:0;padding-bottom:0;gap:6px}
+.ai-permission-row .el-select{width:180px}
+.ai-permission-row small{flex-basis:100%;line-height:1.6}
+.ai-host-row{flex-shrink:0;margin-top:10px}
+.ai-context{flex-shrink:0;display:flex;align-items:center;gap:8px;justify-content:space-between;padding:5px 0}
+.ai-context>span{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ai-context>.el-button{flex-shrink:0}
+.ai-conversation{position:relative;display:flex;flex:1;min-height:80px;margin-bottom:10px}
+.ai-history{min-height:0;border:0;padding:12px 4px;overscroll-behavior:contain;scrollbar-width:thin}
+.ai-message{margin-bottom:14px;padding:12px;border:1px solid var(--el-border-color-lighter);border-radius:10px}
+.ai-message--assistant{background:transparent;border-color:transparent;padding-left:2px;padding-right:2px}
+.ai-message--user{margin-left:24px;background:var(--el-color-primary-light-9)}
+.ai-message--tool{padding:8px 10px;border-left:3px solid var(--el-color-primary-light-5);font-size:12px}
+.ai-message--tool>p{margin:6px 0;line-height:1.6;color:var(--el-text-color-secondary)}
+.ai-message-title{flex-wrap:wrap;gap:5px;font-size:12px;row-gap:3px}
+.ai-copy-message{flex-shrink:0}
+.ai-message--tool pre{user-select:text;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--el-bg-color);padding:8px;border-radius:6px}
+.ai-jump-latest{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);box-shadow:var(--el-box-shadow-light)}
+.ai-empty{padding:18px 8px}
+.ai-empty strong{font-size:15px;color:var(--el-text-color-primary)}
+.ai-suggestions{display:flex;flex-direction:column;align-items:stretch;gap:8px;margin-top:18px}
+.ai-suggestions button{padding:10px 12px;text-align:left;cursor:pointer;border:1px solid var(--el-border-color);border-radius:8px;background:var(--el-bg-color);color:var(--el-text-color-regular);font:inherit}
+.ai-suggestions button:hover{border-color:var(--el-color-primary);color:var(--el-color-primary)}
+.ai-composer{flex-shrink:0;border:1px solid var(--el-border-color);border-radius:10px;padding:8px;background:var(--doumi-surface,var(--el-bg-color));max-height:40%;overflow:auto}
+.ai-composer:focus-within{border-color:var(--el-color-primary)}
+.ai-composer :deep(.el-textarea__inner){box-shadow:none;background:transparent;padding:3px 4px;resize:none}
+.ai-compose-actions{margin-top:6px;gap:6px}
+.ai-help{flex-shrink:0;font-size:10px;color:var(--el-text-color-secondary);margin-top:7px;max-height:85px;overflow:auto;padding-right:16px}
+.ai-help summary{cursor:pointer;line-height:1.6}
+.ai-error{flex-shrink:0;max-height:80px;overflow:auto;border-radius:6px;background:var(--el-color-danger-light-9);padding:7px;font-size:12px;margin-bottom:8px}
+.ai-panel--fullscreen .ai-history{padding-left:max(4px,calc((100% - 900px)/2));padding-right:max(4px,calc((100% - 900px)/2))}
 @media(max-width:600px){.ai-panel{top:8px;right:auto;bottom:auto;padding:0 10px 10px}.ai-panel--fullscreen{inset:4px;right:4px;bottom:4px}}
 </style>

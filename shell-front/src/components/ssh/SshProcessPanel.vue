@@ -1,5 +1,5 @@
 <template>
-  <el-scrollbar class="page-scroll"><div class="ssh-process-panel">
+  <div class="ssh-process-panel">
     <div class="toolbar">
       <el-button size="small" :loading="loading" @click="load">刷新</el-button>
       <el-select v-model="sortKey" size="small" style="width: 140px">
@@ -11,6 +11,7 @@
       <el-input v-model="filterText" size="small" clearable placeholder="筛选 PID / 命令 / 用户" style="width: 200px" />
     </div>
     <div v-loading="loading" class="process-body">
+      <el-scrollbar class="process-scroll">
       <el-empty v-if="!sessionToken && !loading" description="需要 SSH 会话" />
       <el-collapse v-else v-model="expandedUsers">
         <el-collapse-item v-for="g in grouped" :key="g.user" :name="g.user">
@@ -33,8 +34,9 @@
           </el-table>
         </el-collapse-item>
       </el-collapse>
+      </el-scrollbar>
     </div>
-  </div></el-scrollbar>
+  </div>
 </template>
 
 <script setup>
@@ -167,11 +169,13 @@ watch(
 
 <style scoped>
 .ssh-process-panel {
+  box-sizing: border-box;
   height: 100%;
   display: flex;
   flex-direction: column;
   min-height: 0;
   padding: 8px;
+  overflow: hidden;
 }
 .toolbar {
   display: flex;
@@ -181,9 +185,10 @@ watch(
 }
 .process-body {
   flex: 1;
-
   min-height: 0;
+  overflow: hidden;
 }
+.process-scroll { height: 100%; }
 .user-title {
   font-weight: 600;
   margin-right: 8px;

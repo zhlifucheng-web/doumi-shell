@@ -70,6 +70,7 @@
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="edit">编辑</el-dropdown-item>
+                    <el-dropdown-item v-if="data.nodeType === 'ACCOUNT'" command="terminal">新建终端</el-dropdown-item>
                     <el-dropdown-item v-if="data.nodeType === 'GROUP'" command="host">新建主机</el-dropdown-item>
                     <el-dropdown-item v-if="data.nodeType === 'HOST'" command="account">新建账户</el-dropdown-item>
                     <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
@@ -104,6 +105,7 @@
                         <el-icon class="terminal-tab-close" title="关闭终端" @click.stop="closeTerminalTab(tab.tabId)"><Close /></el-icon>
                       </button>
                       <button class="terminal-tab-add" type="button" title="打开同一账户的新终端" @click="openAdditionalTerminalTab">+</button>
+                      <span v-if="activeTerminalTab?.connectionMode" class="terminal-connection-mode" :title="activeTerminalTab.connectionMode">{{ activeTerminalTab.connectionMode }}</span>
                     </div>
                     <div v-for="tab in terminalTabs" :key="`terminal-${tab.tabId}`" v-show="activeTerminalId === tab.tabId" class="terminal-tab-content">
                       <SshTerminal :account-id="tab.accountId" :terminal-id="tab.tabId"
@@ -735,6 +737,7 @@ function onTerminalReady(tabId, payload) {
   const tab = terminalTabs.value.find(item => item.tabId === tabId)
   if (!tab) return
   tab.token = payload?.sessionToken || ''
+  tab.connectionMode = payload?.connectionMode || ''
   if (activeTerminalId.value === tabId) sessionToken.value = tab.token
 }
 
@@ -821,8 +824,7 @@ const detailRows = computed(() => {
 function onNodeDblClick(data) {
   selectedNode.value = data
   if (data.nodeType === 'ACCOUNT') {
-    loadDetail(data)
-    router.push('/terminal')
+    void openNewAccountTerminal(data)
     return
   }
   if (data.nodeType === 'GROUP') editGroupNode(data)
@@ -832,6 +834,7 @@ function onNodeDblClick(data) {
 
 function onNodeAction(command, data) {
   selectedNode.value = data
+  if (command === 'terminal') return openNewAccountTerminal(data)
   if (command === 'edit') {
     if (data.nodeType === 'GROUP') editGroupNode(data)
     else if (data.nodeType === 'HOST') editHostNode(data)
@@ -843,6 +846,24 @@ function onNodeAction(command, data) {
   if (command === 'delete') {
     loadDetail(data)
     nextTick(() => confirmDeleteDetail())
+  }
+}
+
+async function openNewAccountTerminal(data) {
+  try {
+    const account = await getAccount(data.id)
+    const host = await loadAccountHostMeta(account.hostId)
+    const tab = { tabId: newTerminalId(), accountId: account.id, account, hostId: account.hostId,
+      defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account, host), token: '' }
+    terminalTabs.value.push(tab)
+    detail.value = { type: 'ACCOUNT', raw: account }
+    activeTerminalId.value = tab.tabId
+    sessionToken.value = ''
+    terminalVisited.value = true
+    await router.push('/terminal')
+    await persistAccountSelection(data)
+  } catch (error) {
+    ElMessage.error(error?.message || '新建终端失败')
   }
 }
 
@@ -1321,6 +1342,7 @@ async function isHostInsideGroup(hostId, groupId) {
 .terminal-tab-close { flex-shrink:0; color:var(--el-text-color-secondary); }
 .terminal-tab-close:hover { color:var(--el-color-danger); }
 .terminal-tab-add { flex:0 0 30px; border:0; background:transparent; color:var(--el-color-primary); font-size:18px; cursor:pointer; }
+.terminal-connection-mode { flex:0 0 auto; align-self:center; margin-left:auto; margin-right:8px; padding:2px 7px; border:1px solid var(--el-border-color); border-radius:10px; background:var(--el-bg-color); color:var(--el-text-color-secondary); font-size:11px; white-space:nowrap; }
 .terminal-tab-content { display:flex; flex:1; min-width:0; min-height:0; overflow:hidden; }
 .account-tabs :deep(.el-tab-pane) {
   height: 100%;

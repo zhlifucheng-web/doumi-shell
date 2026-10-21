@@ -106,6 +106,7 @@
 <script setup>
 import { computed, nextTick, onActivated, onDeactivated, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import * as echarts from 'echarts'
+import { chartForElement } from '@/utils/chartLifecycle'
 import { ElMessageBox } from 'element-plus'
 import { Close, Delete, Edit, EditPen, Expand, Fold, FullScreen, Plus, Setting } from '@element-plus/icons-vue'
 import { fetchHostMetrics, runMonitorScript } from '@/api/sshConsole'
@@ -172,14 +173,15 @@ function switchDashboard(id){
   minutes.value=Number(next.minutes)||5
   iface.value=next.iface||''
   queueConfigSave()
-  nextTick(()=>{charts.forEach(chart=>chart.resize());customCharts.forEach(chart=>chart.resize())})
+  nextTick(scheduleChartRender)
 }
 function onDashboardShortcut(event){
   const isSpace=event.code==='Space'||event.key===' '
   if(!event.defaultPrevented&&event.ctrlKey&&isSpace&&!event.altKey&&!event.shiftKey&&!event.metaKey&&!event.repeat&&props.active&&activated.value&&dashboards.value.length>1){
     const target=event.target
-    if(target instanceof HTMLElement&&(target.isContentEditable||target.closest('input,textarea,select,[contenteditable="true"],[role="textbox"]')))return
+    if(target instanceof HTMLElement&&!target.closest('.ssh-terminal-wrap')&&(target.isContentEditable||target.closest('input,textarea,select,[contenteditable="true"],[role="textbox"]')))return
     event.preventDefault()
+    event.stopPropagation()
     const currentIndex=dashboards.value.findIndex(item=>item.id===activeDashboardId.value)
     switchDashboard(dashboards.value[(currentIndex+1+dashboards.value.length)%dashboards.value.length].id)
   }
@@ -210,7 +212,7 @@ async function deleteDashboard(){
   await flushConfigSave()
 }
 function openFullscreen(){fullscreenVisible.value=true}
-function onFullscreenOpened(){nextTick(()=>{resize();charts.forEach(chart=>chart.resize());customCharts.forEach(chart=>chart.resize())})}
+function onFullscreenOpened(){nextTick(()=>{resize();scheduleChartRender()})}
 async function saveCustomScript(){
   const name=scriptDraft.value.name.trim(),script=scriptDraft.value.script.trim()
   if(!name||!script)return
@@ -238,7 +240,20 @@ function scriptValue(item){
   try { const value=JSON.parse(item.output||'{}');if(item.type==='text')return {text:value.text ?? value.value ?? item.output ?? '暂无输出'};if(item.type==='value')return {value:value.value ?? value.text ?? '—',unit:value.unit||''};if(item.type==='progress')return {value:Math.max(0,Math.min(100,Number(value.value)||0)),label:value.label||value.text||''};return {rows:Object.entries(value||{}).map(([key,current])=>({key,value:typeof current==='object'?JSON.stringify(current):String(current)}))} }
   catch { return item.type==='json'?{rows:[{key:'输出',value:item.output||'暂无输出'}]}:item.type==='text'?{text:item.output||'暂无输出'}:{value:'—',unit:'',label:'输出不是有效 JSON'} }
 }
-function setCustomChartRef(id,el){if(el)customChartEls.set(id,el);else customChartEls.delete(id)}
+function setCustomChartRef(id,el){
+  const previous=customChartEls.get(id)
+  if(previous===el)return
+  if(previous)chartObserver?.unobserve(previous)
+  if(el){
+    customChartEls.set(id,el)
+    chartObserver?.observe(el)
+    scheduleChartRender()
+  }else{
+    customChartEls.delete(id)
+    customCharts.get(id)?.dispose()
+    customCharts.delete(id)
+  }
+}
 function chartData(item){try{return JSON.parse(item.output||'{}')}catch{return null}}
 function customHistoryKey(id){return `doumi-monitor-script-history-v1:${props.accountId||'default'}:${id}`}
 function readCustomHistory(item){
@@ -269,7 +284,8 @@ function customChartEmptyText(item,value,hasData){
 function renderCustomCharts(){
   customScripts.value.filter(item=>item.enabled&&['line','bar','pie'].includes(item.type)).forEach(item=>{
     const el=customChartEls.get(item.id);if(!el)return
-    let chart=customCharts.get(item.id);if(!chart){chart=echarts.init(el);customCharts.set(item.id,chart)}
+    const chart=chartForElement(customCharts,item.id,el,element=>echarts.init(element))
+    if(!chart||!el.clientWidth||!el.clientHeight)return
     const value=chartData(item),palette=['#409eff','#67c23a','#e6a23c','#f56c6c','#9b59b6','#16a085']
     const cutoff=Date.now()-minutes.value*60*1000
     const history=readCustomHistory(item).filter(row=>Number(row.timestamp)>=cutoff)
@@ -294,7 +310,7 @@ function renderCustomCharts(){
     const axis=item.type==='pie'?{}:timeSeries?{type:'time',name:value?.xAxisName||'时间',nameLocation:'middle',nameGap:28,axisLabel:{color:effectiveDark.value?'#c7d0df':'#687488',fontSize:10,hideOverlap:true},axisLine:{show:true,lineStyle:{color:effectiveDark.value?'#687488':'#aeb7c5'}},splitLine:{show:true,lineStyle:{color:effectiveDark.value?'#394456':'#e9edf3'}}}:{type:'category',data:labels.length?labels:normalized[0]?.data.map((_,index)=>String(index+1))||[],name:value?.xAxisName||'项目',nameLocation:'middle',nameGap:28,axisLabel:{color:effectiveDark.value?'#c7d0df':'#687488',fontSize:10},axisLine:{show:true,lineStyle:{color:effectiveDark.value?'#687488':'#aeb7c5'}},splitLine:{show:true,lineStyle:{color:effectiveDark.value?'#394456':'#e9edf3'}}}
     const valueAxis=item.type==='pie'?{}:{type:'value',name:value?.yAxisName||'数值',nameLocation:'middle',nameGap:38,axisLine:{show:true,lineStyle:{color:effectiveDark.value?'#687488':'#aeb7c5'}},axisLabel:{color:effectiveDark.value?'#c7d0df':'#687488',fontSize:10},splitLine:{show:true,lineStyle:{color:effectiveDark.value?'#394456':'#e9edf3'}}}
     const emptyText=customChartEmptyText(item,value,hasData)
-    chart.setOption({animation:false,tooltip:{trigger:item.type==='pie'?'item':'axis'},legend:{show:normalized.length>1||item.type==='pie',textStyle:{color:effectiveDark.value?'#c7d0df':'#687488',fontSize:10}},grid:{left:56,right:14,top:30,bottom:48},xAxis:item.type==='pie'?undefined:axis,yAxis:item.type==='pie'?undefined:valueAxis,graphic:[{id:'custom-chart-empty-state',type:'text',left:'center',top:'middle',silent:true,invisible:!emptyText,style:{text:emptyText,fill:effectiveDark.value?'#aeb9cb':'#687488',fontSize:12,textAlign:'center'}}],series:normalized})
+    chart.setOption({animation:false,tooltip:{trigger:item.type==='pie'?'item':'axis'},legend:{show:normalized.length>1||item.type==='pie',textStyle:{color:effectiveDark.value?'#c7d0df':'#687488',fontSize:10}},grid:{left:56,right:14,top:30,bottom:48},xAxis:item.type==='pie'?undefined:axis,yAxis:item.type==='pie'?undefined:valueAxis,graphic:[{id:'custom-chart-empty-state',type:'text',left:'center',top:'middle',silent:true,invisible:!emptyText,style:{text:emptyText,fill:effectiveDark.value?'#aeb9cb':'#687488',fontSize:12,textAlign:'center'}}],series:normalized},{notMerge:true})
     chart.resize()
   })
 }
@@ -382,6 +398,15 @@ const rate=n=>n==null?'—':n>=1048576?`${(n/1048576).toFixed(1)} MiB/s`:n>=1024
 const time=value=>new Date(value).toLocaleTimeString('zh-CN',{hour12:false})
 const level=n=>n>=90?'#f56c6c':n>=80?'#e6a23c':'#409eff'
 let timer,clock,observer,charts=[],detailChart=null,generation=0,inFlight=false,disposed=false,controller,drag=null,mounted=false,breakBefore=true
+let chartObserver=null,chartRenderFrame=null
+function scheduleChartRender(){
+  if(disposed||chartRenderFrame!==null)return
+  chartRenderFrame=requestAnimationFrame(()=>{
+    chartRenderFrame=null
+    if(!mounted||!props.active||!activated.value||disposed)return
+    ensureCharts();render();renderCustomCharts();resizeDetail()
+  })
+}
 
 async function poll(manual=false){
   if(disposed||inFlight||!props.sessionToken||!props.active||!activated.value||!visible.value||(!manual&&!enabled.value))return
@@ -415,7 +440,7 @@ function sync(){
   if(!enabled.value)breakBefore=true
   generation++;clearTimeout(timer)
   if(mounted&&enabled.value&&!inFlight)poll()
-  nextTick(()=>{ensureCharts();render()})
+  nextTick(scheduleChartRender)
 }
 function restore(){
   breakBefore=true
@@ -434,7 +459,7 @@ function pruneHistory(){
   render()
 }
 function ensureCharts(){
-  const chartHost=cpuEl.value||netEl.value||gpuEl.value
+  const chartHost=[cpuEl.value,netEl.value,gpuEl.value].find(el=>el?.clientWidth>0)
   if(!mounted||!props.active||!chartHost?.clientWidth)return
   if(!charts.length){
     const muted=effectiveDark.value?'#aeb9cb':'#687488',line=effectiveDark.value?'#333e4f':'#e9edf3'
@@ -452,7 +477,7 @@ function ensureCharts(){
     gpu.setOption({...base,yAxis:{...base.yAxis,min:0,max:100},tooltip:{...base.tooltip,valueFormatter:value=>pct(value)},series:[]})
     charts=[cpu,net,gpu]
   }
-  charts.forEach(chart=>chart.resize())
+  charts.forEach(chart=>{if(chart.getDom()?.clientWidth)chart.resize()})
 }
 const series=monitorSeries
 function render(){
@@ -545,20 +570,24 @@ watch(minutes,pruneHistory)
 watch(minutes,()=>nextTick(renderCustomCharts))
 watch(iface,render)
 watch(customScripts,()=>nextTick(renderCustomCharts),{deep:true})
+watch([selectedCards,visibleCustomCardIds],()=>nextTick(scheduleChartRender),{deep:true})
 watch(effectiveDark,()=>{charts.forEach(c=>c.dispose());charts=[];nextTick(()=>{ensureCharts();render()})})
 onMounted(async()=>{
   restore();await nextTick();mounted=true
+  chartObserver=new ResizeObserver(scheduleChartRender)
+  ;[cpuEl.value,netEl.value,gpuEl.value,...customChartEls.values()].forEach(el=>{if(el)chartObserver.observe(el)})
   observer=new ResizeObserver(resize);observer.observe(panel.value);if(panel.value?.parentElement)observer.observe(panel.value.parentElement)
   document.addEventListener('visibilitychange',visibility)
   window.addEventListener(MONITOR_CONFIG_CHANGED,onMonitorConfigChanged)
-  window.addEventListener('keydown',onDashboardShortcut)
+  window.addEventListener('keydown',onDashboardShortcut,true)
   await reloadAccountSettings()
   clock=setInterval(()=>{now.value=Date.now();if(enabled.value)render()},1000)
   resize();sync();nextTick(renderCustomCharts)
 })
 onActivated(()=>{activated.value=true;sync()})
 onDeactivated(()=>{activated.value=false;sync()})
-onBeforeUnmount(()=>{disposed=true;generation++;clearTimeout(timer);clearTimeout(configSaveTimer);clearInterval(clock);controller?.abort();observer?.disconnect();document.removeEventListener('visibilitychange',visibility);window.removeEventListener(MONITOR_CONFIG_CHANGED,onMonitorConfigChanged);window.removeEventListener('keydown',onDashboardShortcut);charts.forEach(c=>c.dispose());charts=[];customCharts.forEach(c=>c.dispose());customCharts.clear();detailChart?.dispose()})
+onBeforeUnmount(()=>{chartObserver?.disconnect();if(chartRenderFrame!==null)cancelAnimationFrame(chartRenderFrame)})
+onBeforeUnmount(()=>{disposed=true;generation++;clearTimeout(timer);clearTimeout(configSaveTimer);clearInterval(clock);controller?.abort();observer?.disconnect();document.removeEventListener('visibilitychange',visibility);window.removeEventListener(MONITOR_CONFIG_CHANGED,onMonitorConfigChanged);window.removeEventListener('keydown',onDashboardShortcut,true);charts.forEach(c=>c.dispose());charts=[];customCharts.forEach(c=>c.dispose());customCharts.clear();detailChart?.dispose()})
 </script>
 
 <style scoped>

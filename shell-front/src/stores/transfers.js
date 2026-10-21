@@ -1,6 +1,6 @@
 import { reactive, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
-import { isTransferActive, readTransferHistory, saveTransferHistory, removeTransferHistory, trimTransferHistory, transferErrorMessage, saveTransferHost } from '@/composables/transferHistory'
+import { isTransferActive, readTransferHistory, saveTransferHistory, removeTransferHistory, trimTransferHistory, transferErrorMessage, saveTransferHost } from '../composables/transferHistory.js'
 
 export const useTransferStore = defineStore('transfers', () => {
   const transfers = reactive([])
