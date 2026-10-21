@@ -1,6 +1,7 @@
 <template>
   <div class="ssh-terminal-wrap">
     <div v-if="statusMessage" class="status-overlay">{{ statusMessage }}</div>
+    <span v-if="connectionMode" class="connection-mode" :title="connectionMode">{{ connectionMode }}</span>
     <div ref="termContainer" class="term-container" @click="focusTerminal" />
     <EditorScrollbar :target="scrollTarget" />
     <div v-if="disconnected" class="reconnect-bar">
@@ -33,6 +34,7 @@ const termContainer = ref(null)
 const scrollTarget = shallowRef(null)
 const statusMessage = ref('连接中…')
 const disconnected = ref(false)
+const connectionMode = ref('')
 
 let terminal = null
 let fitAddon = null
@@ -105,6 +107,7 @@ function bindTerminalData() {
 
 function activateSession(frame) {
   statusMessage.value = ''
+  connectionMode.value = frame?.connectionMode || ''
   bindTerminalData()
   if (frame?.type === 'ready') {
     emit('ready', { sessionToken: frame.sessionToken, label: frame.label })
@@ -171,6 +174,7 @@ function connect() {
   const gen = ++connectGen
   disposeTerminal()
   disconnected.value = false
+  connectionMode.value = ''
   statusMessage.value = '连接中…'
   dataBound = false
 
@@ -246,6 +250,7 @@ watch(
   position: relative;
   overflow: hidden;
 }
+.connection-mode { position:absolute; right:10px; top:8px; z-index:2; padding:2px 7px; border:1px solid var(--el-border-color); border-radius:10px; background:var(--el-bg-color); color:var(--el-text-color-secondary); font-size:11px; pointer-events:none; }
 .term-container {
   flex: 1;
   min-height: 0;

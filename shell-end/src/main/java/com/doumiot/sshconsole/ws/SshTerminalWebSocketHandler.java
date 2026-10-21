@@ -76,7 +76,7 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
         sendLocks.put(token, new Object());
 
         SshTerminalFrame ready = SshTerminalFrame.ready(
-                token, terminalSession.getLabel(), terminalSession.getReadyRemark());
+                token, terminalSession.getLabel(), terminalSession.getReadyRemark(), terminalSession.getConnectionMode());
         sendFrame(session, token, ready);
 
         Future<?> pump = pumpExecutor.submit(() -> pumpOutput(session, token, entry.getShellStdout()));

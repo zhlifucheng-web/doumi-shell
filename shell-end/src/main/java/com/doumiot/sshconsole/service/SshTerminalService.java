@@ -8,6 +8,7 @@ import com.doumiot.sshconsole.entity.SshAccount;
 import com.doumiot.sshconsole.entity.SshHost;
 import com.doumiot.sshconsole.ssh.SshClientFactory;
 import com.doumiot.sshconsole.ssh.SshSessionRegistry;
+import com.doumiot.sshconsole.ssh.SshRemoteExec;
 import com.doumiot.sshconsole.config.SshConsoleProperties;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -58,8 +59,9 @@ public class SshTerminalService {
 
         int c = cols > 0 ? cols : DEFAULT_COLS;
         int r = rows > 0 ? rows : DEFAULT_ROWS;
+        boolean tmux = properties.isTmuxEnabled() && hasTmux(client, entry.getExecLock());
         try {
-            attachShell(entry, c, r, account.getDefaultCwd(), accountId);
+            attachShell(entry, c, r, account.getDefaultCwd(), accountId, tmux);
         } catch (IOException e) {
             sessionRegistry.close(entry.getSessionToken());
             throw e;
@@ -69,6 +71,7 @@ public class SshTerminalService {
         ts.setEntry(entry);
         ts.setLabel(label);
         ts.setReadyRemark(pickReadyRemark(account.getRemark(), host.getRemark()));
+        ts.setConnectionMode(tmux ? "SSH · tmux" : "SSH");
         return ts;
     }
 
@@ -101,7 +104,7 @@ public class SshTerminalService {
     }
 
     private void attachShell(SshSessionRegistry.SessionEntry entry, int cols, int rows, String defaultCwd,
-                             long accountId)
+                             long accountId, boolean tmux)
             throws IOException {
         SSHClient client = entry.getClient();
         Session sshSession = client.startSession();
@@ -118,10 +121,10 @@ public class SshTerminalService {
 
         // tmux keeps the interactive process alive after the browser/WebSocket disconnects.
         // The command is conditional so hosts without tmux retain the existing shell behavior.
-        if (properties.isTmuxEnabled()) {
-            String tmux = "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s "
+        if (tmux) {
+            String tmuxCommand = "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s "
                     + tmuxSessionName(accountId) + "; fi\n";
-            shell.getOutputStream().write(tmux.getBytes(StandardCharsets.UTF_8));
+            shell.getOutputStream().write(tmuxCommand.getBytes(StandardCharsets.UTF_8));
             shell.getOutputStream().flush();
         }
 
@@ -129,6 +132,16 @@ public class SshTerminalService {
             String cmd = shellCd(defaultCwd.trim()) + "\n";
             shell.getOutputStream().write(cmd.getBytes(StandardCharsets.UTF_8));
             shell.getOutputStream().flush();
+        }
+    }
+
+    private static boolean hasTmux(SSHClient client, Object lock) {
+        try {
+            SshRemoteExec.ExecResult result = SshRemoteExec.exec(client, lock, "command -v tmux 2>/dev/null", 5);
+            return result.getExitStatus() == 0 && result.getStdout() != null
+                    && !result.getStdout().trim().isEmpty();
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -165,5 +178,6 @@ public class SshTerminalService {
         private SshSessionRegistry.SessionEntry entry;
         private String label;
         private String readyRemark;
+        private String connectionMode;
     }
 }
