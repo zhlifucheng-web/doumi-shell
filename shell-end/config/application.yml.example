@@ -6,6 +6,8 @@ doumi:
   ssh-console:
     # 留空时自动在 data 目录生成并持久化 master.key；备份数据时请保留该文件。
     credential-master-key: ${SSH_CONSOLE_MASTER_KEY:}
+    # Linux 主机优先使用 tmux 保持网页刷新后的终端现场；未安装 tmux 时自动回退。
+    tmux-enabled: true
 
 server:
   port: 80

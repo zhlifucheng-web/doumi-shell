@@ -29,3 +29,5 @@
 | `DOUMI_CONFIG_DIR` | 启动目录 `config/` | 外置 application.yml 所在目录 |
 
 配置键使用 `doumi.storage`、`doumi.ssh-console`。端口、数据目录等示例见 `shell-end/config/application.yml.example`。
+
+Linux 终端默认通过账户级 tmux 会话承载交互 shell。网页刷新或 WebSocket 短暂断开后重新连接，会重新 attach 到该账户的 tmux 会话并保留远端现场；不同账户使用不同会话。目标主机未安装 tmux 或配置 `doumi.ssh-console.tmux-enabled: false` 时，自动使用普通 SSH shell，此时断开连接会结束交互现场。

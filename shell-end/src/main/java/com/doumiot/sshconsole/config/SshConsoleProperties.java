@@ -32,4 +32,9 @@ public class SshConsoleProperties {
      * 脚本执行 SSH 等待超时（秒）。{@code <= 0} 表示不限制，直到远端进程结束。
      */
     private int scriptRunTimeoutSec = 0;
+
+    /**
+     * Linux 终端优先使用 tmux 承载远端 shell。tmux 未安装时自动回退到普通 SSH shell。
+     */
+    private boolean tmuxEnabled = true;
 }
