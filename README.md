@@ -6,7 +6,11 @@ Doumi Shell 是一款支持 Windows 和 Linux 的 SSH 服务器管理工具。�
 
 可在 Windows 本机安装，也可部署到 Linux 服务器后通过局域网浏览器使用。Windows MSI 自带运行环境，Linux 包需要 Java 17；两种方式均无需安装 Node.js 或独立数据库。
 
-[下载安装](https://gitee.com/hahadoumi/web-shell/releases) · [使用教程](docs/user-guide.md) · [AI API](docs/ai-api.md) · [非商业许可](LICENSE)
+[下载安装](https://gitee.com/hahadoumi/web-shell/releases) · [运行截图](#运行截图) · [使用教程](docs/user-guide.md) · [AI API](docs/ai-api.md) · [非商业许可](LICENSE)
+
+![Doumi Shell 实机工作台：多终端、实时监控与文件管理同屏，连接标识已脱敏](docs/images/workspace-live.png)
+
+*实际运行画面：同一账户双终端、资源曲线与远程文件同屏操作。主机名称、地址和分组等连接标识已脱敏。*
 
 ## 亮点功能
 
@@ -130,25 +134,33 @@ AI 助手从顶栏侧边栏呼出，默认位于左侧，可拖动移动、拖�
 
 外部 AI 客户端也可使用同一套工具目录及操作 API，见 [AI API 文档](docs/ai-api.md)。
 
-## 界面预览
+## 运行截图
 
-以下截图使用演示连接和测试数据。
+以下截图采自实际部署的 **v1.0.48**。主机、地址、分组及模型连接标识已脱敏替换，监控曲线和终端系统输出来自真实采样；AI 展示空会话界面，不展示历史对话。
 
-**终端与监控**：在一个页面中操作服务器、查看资源使用趋势。
+### 监控面板放大查看
 
-![终端与监控](docs/images/terminal-monitor.png)
+将当前面板放到独立全屏弹窗中，集中查看 CPU、内存、网络及磁盘等指标。也可从卡片进入单项详情。
 
-**文件与文件夹传输**：浏览远程文件，选择逐文件或压缩上传文件夹。
+![监控面板运行截图：CPU、内存、网络、GPU 状态及磁盘与 inode](docs/images/monitor-live.png)
 
-![文件夹传输](docs/images/folder-transfer.png)
+### 按面板配置指标与自定义脚本
 
-**交互设置 Cron**：选择执行频率与时间，预览未来 5 次执行时间。
+左侧调整采样、趋势范围和系统卡片，右侧管理自定义脚本卡片，提供 JSON 输出框架和采样超时说明。
 
-![交互设置定时任务](docs/images/cron-editor.png)
+![监控设置运行截图：双列布局、指标开关和自定义脚本编辑区](docs/images/monitor-settings-live.png)
 
-**存储管理**：查看当前目录的直接子项，按占用定位需要清理的内容。
+### AI 助手与业务页面同时使用
 
-![存储管理](docs/images/storage.png)
+浮动助手支持模型切换、目标账户选择、历史会话和操作授权；终端、监控与文件区继续保留在工作台中。
+
+![AI 助手运行截图：浮动对话窗口、模型与账户选择、任务引导](docs/images/ai-assistant-live.png)
+
+### 应用内帮助教程
+
+无需离开应用即可阅读使用教程，目录可直接跳转到终端、文件、监控、AI、脚本及备份等章节。
+
+![帮助页面运行截图：章节目录、连接步骤和终端快捷键教程](docs/images/help-live.png)
 
 ## 上传与下载文件夹
 
