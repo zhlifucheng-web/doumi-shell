@@ -1,4 +1,9 @@
-/* One backdrop per surface avoids multiplying opacity on nested panels. */
+/* ========================================================
+   Doumi Shell 2.0 - Custom Theme Background Engine
+   Ensures entire UI (including terminal console) seamlessly
+   follows custom background colors, opacities, and wallpapers.
+   ======================================================== */
+
 html.doumi-custom-background {
   --doumi-overlay: color-mix(in srgb, var(--el-bg-color) var(--doumi-surface-opacity), transparent);
   --doumi-backdrop: linear-gradient(var(--doumi-overlay), var(--doumi-overlay)), var(--doumi-background-image);
@@ -6,7 +11,11 @@ html.doumi-custom-background {
   --el-fill-color-light: color-mix(in srgb, var(--el-text-color-primary) 5%, transparent);
   --el-fill-color-lighter: color-mix(in srgb, var(--el-text-color-primary) 3%, transparent);
 }
+
+/* 全局根容器与弹窗背景底图绑定 */
 html.doumi-custom-background body,
+html.doumi-custom-background #app,
+html.doumi-custom-background .app-root,
 html.doumi-custom-background .el-dialog,
 html.doumi-custom-background .el-message-box,
 html.doumi-custom-background .el-drawer,
@@ -20,7 +29,83 @@ html.doumi-custom-background .el-table__cell.is-fixed-column--right {
   background-repeat: no-repeat !important;
   background-attachment: fixed !important;
 }
-/* Keep overflow tooltips readable after the generic popper backdrop override. */
+
+/* 结构层父级容器完全透明，让背景无遮挡透出 */
+html.doumi-custom-background .app-main,
+html.doumi-custom-background .ssh-console,
+html.doumi-custom-background .layout,
+html.doumi-custom-background .main,
+html.doumi-custom-background .account-workspace,
+html.doumi-custom-background .account-tabs,
+html.doumi-custom-background .account-tab-pane,
+html.doumi-custom-background .terminal-file-layout,
+html.doumi-custom-background .right-workspace,
+html.doumi-custom-background .terminal-slot,
+html.doumi-custom-background .terminal-content,
+html.doumi-custom-background .terminal-tabs,
+html.doumi-custom-background .terminal-view-split,
+html.doumi-custom-background .terminal-pane,
+html.doumi-custom-background .terminal-tab-content,
+html.doumi-custom-background .ssh-terminal-wrap,
+html.doumi-custom-background .term-container,
+html.doumi-custom-background .xterm,
+html.doumi-custom-background .xterm-viewport,
+html.doumi-custom-background .xterm-screen,
+html.doumi-custom-background .xterm-screen canvas,
+html.doumi-custom-background .xterm-rows,
+html.doumi-custom-background .files-content,
+html.doumi-custom-background .el-tree,
+html.doumi-custom-background .el-card,
+html.doumi-custom-background .el-table,
+html.doumi-custom-background .el-table__inner-wrapper,
+html.doumi-custom-background .el-table tr,
+html.doumi-custom-background .el-table th.el-table__cell,
+html.doumi-custom-background .el-table td.el-table__cell,
+html.doumi-custom-background .el-table__empty-block,
+html.doumi-custom-background .el-input__wrapper,
+html.doumi-custom-background .el-textarea__inner,
+html.doumi-custom-background .el-select__wrapper,
+html.doumi-custom-background .el-dropdown-menu,
+html.doumi-custom-background .el-select-dropdown,
+html.doumi-custom-background .el-picker-panel,
+html.doumi-custom-background .el-date-picker__time-header,
+html.doumi-custom-background .el-time-panel,
+html.doumi-custom-background .el-time-panel__content,
+html.doumi-custom-background .el-tabs--border-card,
+html.doumi-custom-background .el-tabs--border-card > .el-tabs__header,
+html.doumi-custom-background .el-tabs__content,
+html.doumi-custom-background .el-pagination,
+html.doumi-custom-background .remark-bar,
+html.doumi-custom-background .reconnect-bar,
+html.doumi-custom-background .script-editor,
+html.doumi-custom-background .script-content,
+html.doumi-custom-background .cm-editor,
+html.doumi-custom-background .cm-gutters,
+html.doumi-custom-background .history pre {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+/* 顶栏、侧栏与面板等控件使用半透明亚克力表面 */
+html.doumi-custom-background .app-header,
+html.doumi-custom-background .aside,
+html.doumi-custom-background .terminal-tab-bar,
+html.doumi-custom-background .snippet-bar,
+html.doumi-custom-background .app-status-bar,
+html.doumi-custom-background .files-slot,
+html.doumi-custom-background .files-heading {
+  background: var(--doumi-surface) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+}
+
+/* 激活的终端 Tab 在自定义背景下保持可读性 */
+html.doumi-custom-background .terminal-tab.is-active {
+  background: var(--doumi-surface) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+/* 悬浮提示框保持高对比可读性 */
 html.doumi-custom-background .el-popper.is-dark {
   background: var(--el-text-color-primary) !important;
   color: var(--el-bg-color) !important;
@@ -30,31 +115,19 @@ html.doumi-custom-background .el-popper.is-dark .el-popper__arrow::before {
   background: var(--el-text-color-primary) !important;
   border-color: var(--el-text-color-primary) !important;
 }
-/* Structural children use their parent backdrop; text and controls retain full opacity. */
-html.doumi-custom-background :where(.app-root,.app-header,.aside,.ssh-monitor,.block,
-  .el-tree,.el-card,.el-table,.el-table__inner-wrapper,.el-table tr,.el-table th.el-table__cell,
-  .el-table td.el-table__cell,.el-table__empty-block,.el-input__wrapper,.el-textarea__inner,
-  .el-select__wrapper,.el-dropdown-menu,.el-select-dropdown,.el-picker-panel,
-  .el-date-picker__time-header,.el-time-panel,.el-time-panel__content,.el-tabs--border-card,
-  .el-tabs--border-card>.el-tabs__header,.el-tabs__content,.el-pagination,
-  .term-container,.xterm-viewport,.remark-bar,.reconnect-bar,.script-editor,.script-content,
-  .cm-editor,.cm-gutters,.history pre) {
-  background: transparent !important;
-}
+
 html.doumi-custom-background .el-table {
   --el-table-bg-color: transparent;
   --el-table-tr-bg-color: transparent;
   --el-table-header-bg-color: transparent;
   --el-table-row-hover-bg-color: var(--el-fill-color-light);
-  --el-table-current-row-bg-color: color-mix(in srgb,var(--el-color-primary) 10%,transparent);
+  --el-table-current-row-bg-color: color-mix(in srgb, var(--el-color-primary) 10%, transparent);
 }
-html.doumi-custom-background .el-table tr:hover>td.el-table__cell {
+html.doumi-custom-background .el-table tr:hover > td.el-table__cell {
   background-color: var(--el-table-row-hover-bg-color) !important;
 }
-html.doumi-custom-background .el-tree-node.is-current>.el-tree-node__content,
-html.doumi-custom-background .top-nav a.router-link-active {
-  background: color-mix(in srgb,var(--el-color-primary) 10%,transparent) !important;
+
+html.doumi-custom-background .el-tree-node.is-current > .el-tree-node__content,
+html.doumi-custom-background .nav-segment-item.router-link-active {
+  background: color-mix(in srgb, var(--el-color-primary) 15%, transparent) !important;
 }
-html.doumi-custom-background :is(.history pre,.script-content,.cm-editor) {color:var(--el-text-color-primary)}
-html.doumi-custom-background .cm-activeLine,
-html.doumi-custom-background .cm-activeLineGutter {background:var(--el-fill-color-light) !important}

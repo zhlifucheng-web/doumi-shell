@@ -3,6 +3,8 @@ import ElementPlus from 'element-plus'
 import { createPinia } from 'pinia'
 import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
+import './styles/modern-tokens.css'
+import './theme-background.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 
 import App from './App.vue'
