@@ -109,6 +109,7 @@
                 @dblclick.stop="onNodeDblClick(data)"
               >
                 <el-tooltip
+                  effect="light"
                   :show-after="350"
                   placement="right"
                   :offset="12"
@@ -2586,7 +2587,8 @@ async function isHostInsideGroup(hostId, groupId) {
   max-width: 320px !important;
   padding: 8px 12px !important;
   border-radius: var(--ws-radius-md, 8px) !important;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25) !important;
+  color: var(--el-text-color-primary);
+  box-shadow: var(--el-box-shadow) !important;
 }
 .tree-tip-card {
   display: flex;
