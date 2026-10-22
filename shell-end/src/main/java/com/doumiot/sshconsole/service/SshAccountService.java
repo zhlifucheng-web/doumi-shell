@@ -87,24 +87,63 @@ public class SshAccountService {
     }
 
     public SshConnectionTestResult testConnection(long id) {
-        SshAccount account = requireAccount(id);
-        SshHost host = sshHostService.getById(account.getHostId());
-        assertHostEnabled(host);
+        SshAccountTestRequest req = new SshAccountTestRequest();
+        req.setId(id);
+        return testConnection(req);
+    }
+
+    public SshConnectionTestResult testConnection(SshAccountTestRequest req) {
         long start = System.nanoTime();
+        if (req == null) {
+            return failTest(start, "测试参数不能为空");
+        }
+        Long hostId = req.getHostId();
+        String username = req.getUsername();
+        String authType = req.getAuthType();
+        CredentialCipher.SshSecretPayload secret = req.getSecret();
+
+        if (req.getId() != null) {
+            SshAccount existing = requireAccount(req.getId());
+            if (hostId == null) hostId = existing.getHostId();
+            if (!StringUtils.hasText(username)) username = existing.getUsername();
+            if (!StringUtils.hasText(authType)) authType = existing.getAuthType();
+            if (secret == null || (!StringUtils.hasText(secret.getPassword()) && !StringUtils.hasText(secret.getPrivateKeyPem()))) {
+                secret = loadSecret(existing);
+            }
+        }
+
+        if (hostId == null) {
+            return failTest(start, "请先选择所属主机");
+        }
+        if (!StringUtils.hasText(username)) {
+            return failTest(start, "请填写用户名");
+        }
+        if (!StringUtils.hasText(authType)) {
+            authType = "PASSWORD";
+        }
+        if (secret == null || (!StringUtils.hasText(secret.getPassword()) && !StringUtils.hasText(secret.getPrivateKeyPem()))) {
+            return failTest(start, "请填写密码或私钥凭据");
+        }
+
+        SshHost host = sshHostService.getById(hostId);
+        if (host == null) {
+            return failTest(start, "对应的主机不存在");
+        }
+        assertHostEnabled(host);
+
         SSHClient client = null;
         try {
-            CredentialCipher.SshSecretPayload secret = loadSecret(account);
             client = sshClientFactory.connectAndAuth(
-                    host.getHost(), portOf(host), account.getUsername(), account.getAuthType(), secret);
+                    host.getHost(), portOf(host), username.trim(), authType, secret);
             SshConnectionTestResult r = new SshConnectionTestResult();
             r.setSuccess(true);
             r.setElapsedMs(SshClientFactory.elapsedMs(start));
-            r.setMessage("连接与认证成功");
+            r.setMessage("连接与认证成功 (" + r.getElapsedMs() + "ms)");
             return r;
         } catch (BusinessRuntimeException e) {
             return failTest(start, e.getMessage());
         } catch (IOException e) {
-            log.warn("SSH test failed accountId={}: {}", id, e.getMessage());
+            log.warn("SSH test failed hostId={}, username={}: {}", hostId, username, e.getMessage());
             return failTest(start, e.getMessage());
         } finally {
             sshClientFactory.disconnectQuietly(client);
@@ -251,6 +290,15 @@ public class SshAccountService {
         private String remark;
         private Integer sortOrder;
         private Integer enabled;
+    }
+
+    @lombok.Data
+    public static class SshAccountTestRequest {
+        private Long id;
+        private Long hostId;
+        private String username;
+        private String authType;
+        private CredentialCipher.SshSecretPayload secret;
     }
 
     @lombok.Data

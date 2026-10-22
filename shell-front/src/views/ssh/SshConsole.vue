@@ -125,6 +125,7 @@
                     <el-dropdown-menu>
                       <el-dropdown-item command="edit">编辑</el-dropdown-item>
                       <el-dropdown-item v-if="data.nodeType === 'ACCOUNT'" command="terminal">新建终端</el-dropdown-item>
+                      <el-dropdown-item v-if="data.nodeType === 'ACCOUNT'" command="test">测试连接</el-dropdown-item>
                       <el-dropdown-item v-if="data.nodeType === 'GROUP'" command="host">新建主机</el-dropdown-item>
                       <el-dropdown-item v-if="data.nodeType === 'HOST'" command="account">新建账户</el-dropdown-item>
                       <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
@@ -416,8 +417,20 @@
         </el-form-item>
       </el-form>
       </el-scrollbar><template #footer>
-        <el-button @click="accountDlg = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="saveAccount">保存</el-button>
+        <div class="dialog-footer-split">
+          <el-button
+            type="warning"
+            plain
+            :loading="testingAccount"
+            @click="testAccountConnection"
+          >
+            ⚡ 测试连接
+          </el-button>
+          <div class="dialog-footer-right">
+            <el-button @click="accountDlg = false">取消</el-button>
+            <el-button type="primary" :loading="saving" @click="saveAccount">保存</el-button>
+          </div>
+        </div>
       </template>
     </el-dialog>
     <!-- 共享终端会话弹窗 -->
@@ -459,6 +472,7 @@ import {
   fetchTreeChildren,
   moveTreeNode,
   openAccountSession,
+  testAccount,
   updateAccount,
   updateGroup,
   updateHost
@@ -1157,6 +1171,7 @@ async function onNodeDblClick(data) {
 function onNodeAction(command, data) {
   selectedNode.value = data
   if (command === 'terminal') return openNewAccountTerminal(data)
+  if (command === 'test') return handleTestExistingAccount(data)
   if (command === 'edit') {
     if (data.nodeType === 'GROUP') editGroupNode(data)
     else if (data.nodeType === 'HOST') editHostNode(data)
@@ -1460,6 +1475,60 @@ async function saveAccount() {
     refreshTree()
   } finally {
     saving.value = false
+  }
+}
+
+const testingAccount = ref(false)
+
+async function testAccountConnection() {
+  const form = accountForm.value
+  if (!form.username?.trim()) {
+    ElMessage.warning('请先填写用户名')
+    return
+  }
+  if (!form.hostId) {
+    ElMessage.warning('未能识别当前所属主机')
+    return
+  }
+  const secret = buildSecretPayload()
+  if (secret === null && !form.id) {
+    ElMessage.warning('新建账户须填写密码或私钥凭据后再测试连接')
+    return
+  }
+
+  testingAccount.value = true
+  try {
+    const payload = {
+      id: form.id || undefined,
+      hostId: form.hostId,
+      username: form.username.trim(),
+      authType: form.authType || 'PASSWORD',
+      secret: secret !== undefined ? secret : undefined
+    }
+    const res = await testAccount(payload)
+    if (res && res.success) {
+      ElMessage.success(`✅ SSH 测试成功！${res.message || ''}`)
+    } else {
+      ElMessage.error(`❌ 连接失败: ${res?.message || '连接或认证失败，请检查主机、用户名和凭据'}`)
+    }
+  } catch (err) {
+    ElMessage.error(`❌ 测试失败: ${err?.message || '网络或接口异常'}`)
+  } finally {
+    testingAccount.value = false
+  }
+}
+
+async function handleTestExistingAccount(data) {
+  try {
+    ElMessage.info(`正在测试账户「${data.label}」的 SSH 连接…`)
+    const res = await testAccount(data.id)
+    if (res && res.success) {
+      ElMessage.success(`✅「${data.label}」测试成功！${res.message || ''}`)
+    } else {
+      ElMessage.error(`❌「${data.label}」连接失败: ${res?.message || '连接或认证失败'}`)
+    }
+  } catch (err) {
+    ElMessage.error(`❌ 测试失败: ${err?.message || '网络或接口异常'}`)
   }
 }
 
@@ -2179,6 +2248,17 @@ async function isHostInsideGroup(hostId, groupId) {
 }
 .host-accounts-empty p {
   margin-bottom: 12px;
+}
+.dialog-footer-split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+.dialog-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 </style>
 

@@ -116,8 +116,11 @@ export function deleteAccount(id) {
   return del(`${BASE}/accounts/${id}`)
 }
 
-export function testAccount(id) {
-  return post(`${BASE}/accounts/${id}/test`, {}, { showSuccess: false })
+export function testAccount(data) {
+  if (typeof data === 'number' || typeof data === 'string') {
+    return post(`${BASE}/accounts/${data}/test`, {}, { showSuccess: false, showFailure: false })
+  }
+  return post(`${BASE}/accounts/test`, data, { showSuccess: false, showFailure: false })
 }
 
 export function openAccountSession(id) {
