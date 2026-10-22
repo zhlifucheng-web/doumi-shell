@@ -57,7 +57,7 @@ public class SshMonitorConfigService {
         int updated = jdbc.update("UPDATE ssh_monitor_config SET config_json=?,updated_at=?,revision=? WHERE account_id=? AND revision=?", json, System.currentTimeMillis(),nextRevision,accountId,expectedRevision);
         if (updated == 0) {
             if(actualRevision!=0)throw new IllegalArgumentException("监控配置版本冲突：数据已被其他操作更新，请重新加载后再修改");
-            try { jdbc.update("INSERT INTO ssh_monitor_config(account_id,config_json,updated_at,revision) VALUES(?,?,?,?)",json,System.currentTimeMillis(),accountId,nextRevision); }
+            try { jdbc.update("INSERT INTO ssh_monitor_config(account_id,config_json,updated_at,revision) VALUES(?,?,?,?)",accountId,json,System.currentTimeMillis(),nextRevision); }
             catch(org.springframework.dao.DuplicateKeyException e){throw new IllegalArgumentException("监控配置版本冲突：数据已被其他操作创建，请重新加载后再修改");}
         }
         com.fasterxml.jackson.databind.node.ObjectNode response=(com.fasterxml.jackson.databind.node.ObjectNode)normalized;response.put("revision",nextRevision);return response;
