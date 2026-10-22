@@ -233,11 +233,17 @@
           class="sidebar-resizer"
           role="separator"
           aria-label="调整主机树侧栏宽度"
-          title="按住拖拽调整侧栏宽度，双击恢复默认"
+          aria-orientation="vertical"
+          :aria-valuenow="sidebarWidth"
+          :aria-valuemin="MIN_SIDEBAR_WIDTH"
+          :aria-valuemax="MAX_SIDEBAR_WIDTH"
+          tabindex="0"
+          title="拖动调整宽度，方向键微调，双击恢复默认"
           @pointerdown="onSidebarResizeStart"
           @pointermove="onSidebarResizeMove"
           @pointerup="onSidebarResizeEnd"
           @pointercancel="onSidebarResizeEnd"
+          @keydown="resizeSidebarByKeyboard"
           @dblclick="resetSidebarWidth"
         >
           <div class="sidebar-resizer-handle"></div>
@@ -637,6 +643,18 @@ function onSidebarResizeEnd(event) {
   } catch {}
 }
 
+function resizeSidebarByKeyboard(event) {
+  if (sidebarCollapsed.value || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  if (event.key === 'Home') sidebarWidth.value = MIN_SIDEBAR_WIDTH
+  else if (event.key === 'End') sidebarWidth.value = MAX_SIDEBAR_WIDTH
+  else sidebarWidth.value = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH,
+    sidebarWidth.value + (event.key === 'ArrowRight' ? 10 : -10)))
+  try {
+    localStorage.setItem('doumi-sidebar-width', String(sidebarWidth.value))
+  } catch { /* Preference only. */ }
+}
+
 function resetSidebarWidth() {
   if (sidebarCollapsed.value) return
   sidebarWidth.value = DEFAULT_SIDEBAR_WIDTH
@@ -833,7 +851,10 @@ onMounted(() => {
   restoreSavedAccount()
   window.addEventListener('doumi-configuration-imported', refreshTree)
 })
-onBeforeUnmount(() => window.removeEventListener('doumi-configuration-imported', refreshTree))
+onBeforeUnmount(() => {
+  window.removeEventListener('doumi-configuration-imported', refreshTree)
+  onSidebarResizeEnd()
+})
 
 async function persistAccountSelection(node, hostGroupId) {
   if (node?.nodeType !== 'ACCOUNT') return
@@ -1841,6 +1862,7 @@ async function isHostInsideGroup(hostId, groupId) {
 /* ================= 侧边栏 ================= */
 .aside {
   position: relative;
+  flex: 0 0 auto;
   border-right: 1px solid var(--ws-border);
   background: var(--ws-bg-sidebar);
   display: flex;
@@ -1869,7 +1891,8 @@ async function isHostInsideGroup(hostId, groupId) {
   transition: background-color var(--ws-transition-fast);
 }
 .sidebar-resizer:hover,
-.sidebar-resizer:active {
+.sidebar-resizer:active,
+.sidebar-resizer:focus-visible {
   background-color: var(--el-color-primary-light-8);
 }
 .sidebar-resizer-handle {
@@ -1881,9 +1904,13 @@ async function isHostInsideGroup(hostId, groupId) {
   transition: opacity var(--ws-transition-fast), background-color var(--ws-transition-fast);
 }
 .sidebar-resizer:hover .sidebar-resizer-handle,
-.sidebar-resizer:active .sidebar-resizer-handle {
+.sidebar-resizer:active .sidebar-resizer-handle,
+.sidebar-resizer:focus-visible .sidebar-resizer-handle {
   opacity: 1;
   background-color: var(--ws-accent);
+}
+@media (max-width: 700px) {
+  .aside:not(.aside-collapsed) { max-width: min(420px, 65vw); }
 }
 .sidebar-header {
   height: 36px;
