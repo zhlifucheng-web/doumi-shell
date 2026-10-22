@@ -123,13 +123,12 @@ public class SshTerminalService {
         // -2 forces 256 colors, -u forces UTF-8 support.
         // The command is conditional so hosts without tmux retain the existing shell behavior.
         if (tmux) {
+            String cwdArg = StringUtils.hasText(defaultCwd) ? " -c " + shellQuote(defaultCwd.trim()) : "";
             String tmuxCommand = "if command -v tmux >/dev/null 2>&1; then exec tmux -2 -u new-session -A -s "
-                    + tmuxSessionName(accountId, terminalId) + "; fi\n";
+                    + tmuxSessionName(accountId, terminalId) + cwdArg + "; fi\n";
             shell.getOutputStream().write(tmuxCommand.getBytes(StandardCharsets.UTF_8));
             shell.getOutputStream().flush();
-        }
-
-        if (StringUtils.hasText(defaultCwd)) {
+        } else if (StringUtils.hasText(defaultCwd)) {
             String cmd = shellCd(defaultCwd.trim()) + "\n";
             shell.getOutputStream().write(cmd.getBytes(StandardCharsets.UTF_8));
             shell.getOutputStream().flush();
@@ -146,8 +145,12 @@ public class SshTerminalService {
         }
     }
 
+    private static String shellQuote(String s) {
+        return "'" + s.replace("'", "'\"'\"'") + "'";
+    }
+
     private static String shellCd(String cwd) {
-        return "cd " + "'" + cwd.replace("'", "'\"'\"'") + "'";
+        return "cd " + shellQuote(cwd);
     }
 
     private static String tmuxSessionName(long accountId, String terminalId) {
