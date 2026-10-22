@@ -37,6 +37,12 @@ public class SshAccountController {
         return sshAccountService.delete(id);
     }
 
+    @PostMapping("/test")
+    public SshAccountService.SshConnectionTestResult testDirect(
+            @RequestBody SshAccountService.SshAccountTestRequest req) {
+        return sshAccountService.testConnection(req);
+    }
+
     @PostMapping("/{id}/test")
     public SshAccountService.SshConnectionTestResult test(@PathVariable long id) {
         return sshAccountService.testConnection(id);

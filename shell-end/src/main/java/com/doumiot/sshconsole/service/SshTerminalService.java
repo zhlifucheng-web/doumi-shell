@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
+import java.util.UUID;
 
 @Slf4j
 @SshConsoleEnabled
@@ -43,6 +44,10 @@ public class SshTerminalService {
     private SshConsoleProperties properties;
 
     public TerminalSession openTerminal(long accountId, int cols, int rows, String terminalId) throws IOException {
+        return openTerminal(accountId, cols, rows, terminalId, false);
+    }
+
+    public TerminalSession openTerminal(long accountId, int cols, int rows, String terminalId, boolean readOnly) throws IOException {
         SshAccount account = sshAccountService.requireAccount(accountId);
         if (account.getEnabled() != null && account.getEnabled() == 0) {
             throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "账户已禁用");
@@ -61,7 +66,7 @@ public class SshTerminalService {
         int r = rows > 0 ? rows : DEFAULT_ROWS;
         boolean tmux = properties.isTmuxEnabled() && hasTmux(client, entry.getExecLock());
         try {
-            attachShell(entry, c, r, account.getDefaultCwd(), accountId, terminalId, tmux);
+            attachShell(entry, c, r, account.getDefaultCwd(), accountId, terminalId, tmux, readOnly);
         } catch (IOException e) {
             sessionRegistry.close(entry.getSessionToken());
             throw e;
@@ -71,7 +76,13 @@ public class SshTerminalService {
         ts.setEntry(entry);
         ts.setLabel(label);
         ts.setReadyRemark(pickReadyRemark(account.getRemark(), host.getRemark()));
-        ts.setConnectionMode(tmux ? "SSH · tmux" : "SSH");
+        String mode;
+        if (tmux) {
+            mode = readOnly ? "SSH · tmux (只读共享)" : "SSH · tmux";
+        } else {
+            mode = "SSH";
+        }
+        ts.setConnectionMode(mode);
         return ts;
     }
 
@@ -104,7 +115,7 @@ public class SshTerminalService {
     }
 
     private void attachShell(SshSessionRegistry.SessionEntry entry, int cols, int rows, String defaultCwd,
-                             long accountId, String terminalId, boolean tmux)
+                             long accountId, String terminalId, boolean tmux, boolean readOnly)
             throws IOException {
         SSHClient client = entry.getClient();
         Session sshSession = client.startSession();
@@ -123,13 +134,16 @@ public class SshTerminalService {
         // -2 forces 256 colors, -u forces UTF-8 support.
         // The command is conditional so hosts without tmux retain the existing shell behavior.
         if (tmux) {
-            String tmuxCommand = "if command -v tmux >/dev/null 2>&1; then exec tmux -2 -u new-session -A -s "
-                    + tmuxSessionName(accountId, terminalId) + "; fi\n";
+            String cwdArg = StringUtils.hasText(defaultCwd) ? " -c " + shellQuote(defaultCwd.trim()) : "";
+            String sessName = tmuxSessionName(accountId, terminalId);
+            String attachArgs = readOnly ? "attach-session -r -t " : "attach-session -t ";
+            String tmuxCommand = "if command -v tmux >/dev/null 2>&1; then tmux set-option -g aggressive-resize on 2>/dev/null; "
+                    + "if tmux has-session -t " + sessName + " 2>/dev/null; then "
+                    + "exec tmux -2 -u " + attachArgs + sessName + "; else "
+                    + "exec tmux -2 -u new-session -s " + sessName + cwdArg + "; fi; fi\n";
             shell.getOutputStream().write(tmuxCommand.getBytes(StandardCharsets.UTF_8));
             shell.getOutputStream().flush();
-        }
-
-        if (StringUtils.hasText(defaultCwd)) {
+        } else if (StringUtils.hasText(defaultCwd)) {
             String cmd = shellCd(defaultCwd.trim()) + "\n";
             shell.getOutputStream().write(cmd.getBytes(StandardCharsets.UTF_8));
             shell.getOutputStream().flush();
@@ -146,13 +160,19 @@ public class SshTerminalService {
         }
     }
 
+    private static String shellQuote(String s) {
+        return "'" + s.replace("'", "'\"'\"'") + "'";
+    }
+
     private static String shellCd(String cwd) {
-        return "cd " + "'" + cwd.replace("'", "'\"'\"'") + "'";
+        return "cd " + shellQuote(cwd);
     }
 
     private static String tmuxSessionName(long accountId, String terminalId) {
-        String suffix = terminalId == null ? "default" : terminalId.replaceAll("[^A-Za-z0-9_-]", "");
-        if (suffix.isEmpty()) suffix = "default";
+        String suffix = terminalId == null ? null : terminalId.replaceAll("[^A-Za-z0-9_-]", "");
+        if (suffix == null || suffix.isEmpty() || "default".equalsIgnoreCase(suffix)) {
+            suffix = "s_" + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+        }
         if (suffix.length() > 48) suffix = suffix.substring(0, 48);
         return "'doumi-shell-" + accountId + "-" + suffix + "'";
     }

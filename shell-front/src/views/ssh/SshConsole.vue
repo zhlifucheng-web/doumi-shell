@@ -125,6 +125,7 @@
                     <el-dropdown-menu>
                       <el-dropdown-item command="edit">编辑</el-dropdown-item>
                       <el-dropdown-item v-if="data.nodeType === 'ACCOUNT'" command="terminal">新建终端</el-dropdown-item>
+                      <el-dropdown-item v-if="data.nodeType === 'ACCOUNT'" command="test">测试连接</el-dropdown-item>
                       <el-dropdown-item v-if="data.nodeType === 'GROUP'" command="host">新建主机</el-dropdown-item>
                       <el-dropdown-item v-if="data.nodeType === 'HOST'" command="account">新建账户</el-dropdown-item>
                       <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
@@ -187,6 +188,7 @@
                         @toggle-tone="toggleTerminalTone"
                         @toggle-fullscreen="toggleTerminalFullscreen"
                         @open-theme="workspaceStore.terminalThemeOpen = true"
+                        @open-share="shareDialogVisible = true"
                         @change-encoding="onChangeEncoding"
                       />
                     </div>
@@ -199,7 +201,7 @@
                       <div class="terminal-pane main-pane">
                         <div v-for="tab in terminalTabs" :key="`terminal-${tab.tabId}`" v-show="activeTerminalId === tab.tabId" class="terminal-tab-content">
                           <SshTerminal :account-id="tab.accountId"
-                            :terminal-id="tab.tabId"
+                            :terminal-id="tab.terminalId || tab.tabId"
                             :ref="el => setTerminalRef(tab.tabId, el)"
                             :font-size="terminalFontSize"
                             :light-tone="terminalLightTone"
@@ -220,7 +222,7 @@
                         </div>
                         <div class="split-pane-content">
                           <SshTerminal :account-id="splitTerminalTab.accountId"
-                            :terminal-id="splitTerminalTab.tabId"
+                            :terminal-id="splitTerminalTab.terminalId || splitTerminalTab.tabId"
                             :ref="el => setTerminalRef(`split-${splitTerminalTab.tabId}`, el)"
                             :font-size="terminalFontSize"
                             :light-tone="terminalLightTone"
@@ -415,10 +417,28 @@
         </el-form-item>
       </el-form>
       </el-scrollbar><template #footer>
-        <el-button @click="accountDlg = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="saveAccount">保存</el-button>
+        <div class="dialog-footer-split">
+          <el-button
+            type="warning"
+            plain
+            :loading="testingAccount"
+            @click="testAccountConnection"
+          >
+            ⚡ 测试连接
+          </el-button>
+          <div class="dialog-footer-right">
+            <el-button @click="accountDlg = false">取消</el-button>
+            <el-button type="primary" :loading="saving" @click="saveAccount">保存</el-button>
+          </div>
+        </div>
       </template>
     </el-dialog>
+    <!-- 共享终端会话弹窗 -->
+    <TerminalShareDialog
+      v-model="shareDialogVisible"
+      :account="detail?.raw"
+      :terminal-tab="activeTerminalTab"
+    />
   </div>
 </template>
 
@@ -431,6 +451,7 @@ import { Close, Expand, Fold, Folder, Monitor, MoreFilled, Plus, Refresh, Search
 import { useWorkspaceStore } from '@/stores/workspace'
 import SshTerminal from '@/components/ssh/SshTerminal.vue'
 import TerminalToolbar from '@/components/ssh/TerminalToolbar.vue'
+import TerminalShareDialog from '@/components/ssh/TerminalShareDialog.vue'
 import SnippetBar from '@/components/ssh/SnippetBar.vue'
 import TerminalFileLayout from '@/components/ssh/TerminalFileLayout.vue'
 import SshFilePanel from '@/components/ssh/SshFilePanel.vue'
@@ -451,6 +472,7 @@ import {
   fetchTreeChildren,
   moveTreeNode,
   openAccountSession,
+  testAccount,
   updateAccount,
   updateGroup,
   updateHost
@@ -459,7 +481,10 @@ import {
   clearSavedSshAccount,
   readSavedSshAccount,
   resolveSshExpandedKeys,
-  writeSavedSshAccount
+  writeSavedSshAccount,
+  allocateTerminalId,
+  saveTerminalTabs,
+  readSavedTerminalTabs
 } from '@/utils/sshConsoleStorage'
 
 const savedAccount = readSavedSshAccount()
@@ -519,6 +544,7 @@ const activeTerminalTab = computed(() => terminalTabs.value.find(item => item.ta
 const openingFileSession = ref(false)
 
 const snippetBarVisible = ref(false)
+const shareDialogVisible = ref(false)
 const isSplit = ref(false)
 const terminalFontSize = ref(14)
 const terminalLightTone = ref('paper')
@@ -549,6 +575,7 @@ function onChangeEncoding(enc, targetTabId = null) {
   try {
     localStorage.setItem('doumi-term-encoding', enc)
   } catch { /* ignore */ }
+  persistTerminalTabs()
   ElMessage.success(`终端编码已切换为: ${enc}`)
 }
 
@@ -649,16 +676,25 @@ async function persistAccountSelection(node, hostGroupId) {
 }
 
 async function restoreSavedAccount() {
+  const savedTabs = readSavedTerminalTabs()
+  if (savedTabs.tabs && savedTabs.tabs.length > 0) {
+    terminalTabs.value = savedTabs.tabs
+    const targetActive = savedTabs.tabs.find(t => t.tabId === savedTabs.activeTabId) || savedTabs.tabs[0]
+    activeTerminalId.value = targetActive?.tabId || null
+  }
+
   const saved = readSavedSshAccount()
-  if (!saved) return
+  const activeTabAccount = terminalTabs.value.find(t => t.tabId === activeTerminalId.value)
+  const targetAccountId = activeTabAccount?.accountId || saved?.id
+  if (!targetAccountId) return
   let acc
   try {
-    acc = await getAccount(saved.id)
+    acc = await getAccount(targetAccountId)
   } catch {
     clearSavedSshAccount()
     return
   }
-  let groupId = saved.groupId
+  let groupId = saved?.groupId
   if (groupId == null && acc.hostId) {
     try {
       const h = await getHost(acc.hostId)
@@ -668,22 +704,25 @@ async function restoreSavedAccount() {
     }
   }
   const keys = await resolveSshExpandedKeys(
-    { ...saved, hostId: acc.hostId, groupId },
+    { ...saved, id: acc.id, hostId: acc.hostId, groupId },
     { getGroup, getHost }
   )
   defaultExpandedKeys.value = keys
 
   const node = {
     nodeType: 'ACCOUNT',
-    id: saved.id,
-    key: saved.key || `a:${saved.id}`,
-    label: saved.label || acc.username,
+    id: acc.id,
+    key: `a:${acc.id}`,
+    label: acc.username,
     leaf: true,
     extra: { hostId: acc.hostId }
   }
   selectedNode.value = node
   treeCurrentNodeKey.value = node.key
   await loadDetail(node)
+  if (activeTabAccount) {
+    activeTerminalId.value = activeTabAccount.tabId
+  }
   await nextTick()
   if (keys.length && treeRef.value?.setExpandedKeys) {
     treeRef.value.setExpandedKeys(keys)
@@ -928,6 +967,10 @@ watch([detail,accountHostMeta],()=>{
   } else managedServer.value=null
 },{deep:true,immediate:true})
 
+function persistTerminalTabs() {
+  saveTerminalTabs(terminalTabs.value, activeTerminalId.value)
+}
+
 function terminalTabLabel(account, host = accountHostMeta.value) {
   const hostLabel = `${host.name || account.host || `主机#${account.hostId}`} (${host.host || account.host || ''})`
   return `${hostLabel} · ${account.username || '账户'}`
@@ -937,7 +980,18 @@ function activateTerminalForAccount(account) {
   if (!account?.id) return
   let tab = terminalTabs.value.find(item => item.accountId === account.id)
   if (!tab) {
-    tab = { tabId: newTerminalId(), accountId: account.id, account, hostId: account.hostId, defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account), token: '', encoding: terminalEncoding.value }
+    const { tabId, terminalId } = allocateTerminalId(account.id, terminalTabs.value)
+    tab = {
+      tabId,
+      terminalId,
+      accountId: account.id,
+      account,
+      hostId: account.hostId,
+      defaultCwd: account.defaultCwd || '',
+      label: terminalTabLabel(account),
+      token: '',
+      encoding: terminalEncoding.value
+    }
     terminalTabs.value.push(tab)
   } else {
     tab.hostId = account.hostId
@@ -947,19 +1001,27 @@ function activateTerminalForAccount(account) {
   }
   activeTerminalId.value = tab.tabId
   sessionToken.value = tab.token
-}
-
-function newTerminalId() {
-  return `terminal-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  persistTerminalTabs()
 }
 
 function openAdditionalTerminalTab() {
   const current = activeTerminalTab.value
   if (!current) return
-  const tab = { ...current, tabId: newTerminalId(), token: '', encoding: current.encoding || terminalEncoding.value }
+  const { tabId, terminalId, subIndex } = allocateTerminalId(current.accountId, terminalTabs.value, { forceNew: true })
+  const baseLabel = current.account ? terminalTabLabel(current.account) : (current.label || '终端')
+  const label = `${baseLabel} #${subIndex}`
+  const tab = {
+    ...current,
+    tabId,
+    terminalId,
+    label,
+    token: '',
+    encoding: current.encoding || terminalEncoding.value
+  }
   terminalTabs.value.push(tab)
   activeTerminalId.value = tab.tabId
   sessionToken.value = ''
+  persistTerminalTabs()
 }
 
 async function activateTerminalTab(tabId) {
@@ -972,7 +1034,9 @@ async function activateTerminalTab(tabId) {
     const node = { nodeType: 'ACCOUNT', id: tab.accountId, key: `a:${tab.accountId}`, label: tab.account.username, leaf: true, extra: { hostId: tab.hostId } }
     selectedNode.value = node
     treeCurrentNodeKey.value = node.key
+    await persistAccountSelection(node)
   }
+  persistTerminalTabs()
 }
 
 function closeTerminalTab(tabId) {
@@ -989,6 +1053,7 @@ function closeTerminalTab(tabId) {
       void loadAccountHostMeta(next.hostId)
     }
   }
+  persistTerminalTabs()
 }
 
 function onTerminalReady(tabId, payload) {
@@ -1106,6 +1171,7 @@ async function onNodeDblClick(data) {
 function onNodeAction(command, data) {
   selectedNode.value = data
   if (command === 'terminal') return openNewAccountTerminal(data)
+  if (command === 'test') return handleTestExistingAccount(data)
   if (command === 'edit') {
     if (data.nodeType === 'GROUP') editGroupNode(data)
     else if (data.nodeType === 'HOST') editHostNode(data)
@@ -1124,13 +1190,26 @@ async function openNewAccountTerminal(data) {
   try {
     const account = await getAccount(data.id)
     const host = await loadAccountHostMeta(account.hostId)
-    const tab = { tabId: newTerminalId(), accountId: account.id, account, hostId: account.hostId,
-      defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account, host), token: '', encoding: terminalEncoding.value }
+    const { tabId, terminalId, subIndex } = allocateTerminalId(account.id, terminalTabs.value, { forceNew: true })
+    const baseLabel = terminalTabLabel(account, host)
+    const label = subIndex > 1 ? `${baseLabel} #${subIndex}` : baseLabel
+    const tab = {
+      tabId,
+      terminalId,
+      accountId: account.id,
+      account,
+      hostId: account.hostId,
+      defaultCwd: account.defaultCwd || '',
+      label,
+      token: '',
+      encoding: terminalEncoding.value
+    }
     terminalTabs.value.push(tab)
     detail.value = { type: 'ACCOUNT', raw: account }
     activeTerminalId.value = tab.tabId
     sessionToken.value = ''
     terminalVisited.value = true
+    persistTerminalTabs()
     await router.push('/terminal')
     await persistAccountSelection(data)
   } catch (error) {
@@ -1396,6 +1475,60 @@ async function saveAccount() {
     refreshTree()
   } finally {
     saving.value = false
+  }
+}
+
+const testingAccount = ref(false)
+
+async function testAccountConnection() {
+  const form = accountForm.value
+  if (!form.username?.trim()) {
+    ElMessage.warning('请先填写用户名')
+    return
+  }
+  if (!form.hostId) {
+    ElMessage.warning('未能识别当前所属主机')
+    return
+  }
+  const secret = buildSecretPayload()
+  if (secret === null && !form.id) {
+    ElMessage.warning('新建账户须填写密码或私钥凭据后再测试连接')
+    return
+  }
+
+  testingAccount.value = true
+  try {
+    const payload = {
+      id: form.id || undefined,
+      hostId: form.hostId,
+      username: form.username.trim(),
+      authType: form.authType || 'PASSWORD',
+      secret: secret !== undefined ? secret : undefined
+    }
+    const res = await testAccount(payload)
+    if (res && res.success) {
+      ElMessage.success(`✅ SSH 测试成功！${res.message || ''}`)
+    } else {
+      ElMessage.error(`❌ 连接失败: ${res?.message || '连接或认证失败，请检查主机、用户名和凭据'}`)
+    }
+  } catch (err) {
+    ElMessage.error(`❌ 测试失败: ${err?.message || '网络或接口异常'}`)
+  } finally {
+    testingAccount.value = false
+  }
+}
+
+async function handleTestExistingAccount(data) {
+  try {
+    ElMessage.info(`正在测试账户「${data.label}」的 SSH 连接…`)
+    const res = await testAccount(data.id)
+    if (res && res.success) {
+      ElMessage.success(`✅「${data.label}」测试成功！${res.message || ''}`)
+    } else {
+      ElMessage.error(`❌「${data.label}」连接失败: ${res?.message || '连接或认证失败'}`)
+    }
+  } catch (err) {
+    ElMessage.error(`❌ 测试失败: ${err?.message || '网络或接口异常'}`)
   }
 }
 
@@ -2115,6 +2248,17 @@ async function isHostInsideGroup(hostId, groupId) {
 }
 .host-accounts-empty p {
   margin-bottom: 12px;
+}
+.dialog-footer-split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+.dialog-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 </style>
 
