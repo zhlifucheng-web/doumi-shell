@@ -21,7 +21,7 @@ class FolderTransferTest {
         byte[] zip=zip("资料/","资料/空目录/","资料/sub/file.txt");
         assertEquals(3,SshFolderTransferService.extract(new ByteArrayInputStream(zip),temp,1024).size());
         assertTrue(Files.isDirectory(temp.resolve("资料/空目录")));
-        assertEquals("content 中文",Files.readString(temp.resolve("资料/sub/file.txt")));
+        assertEquals("content 中文", new String(Files.readAllBytes(temp.resolve("资料/sub/file.txt")), StandardCharsets.UTF_8));
     }
     @Test void rejectsTraversalWindowsDriveAndMixedSeparators() throws Exception {
         for(String name:new String[]{"../outside","/absolute","C:/outside","root/../../outside","root\\..\\outside","root//file","root/.. /outside","root/NUL.txt","root/abc."}) {
@@ -34,7 +34,9 @@ class FolderTransferTest {
         assertThrows(IOException.class,()->SshFolderTransferService.extract(new ByteArrayInputStream(new byte[]{1,2,3}),temp,1024));
     }
     @Test void rejectsDeepPathsAndEmptyComponents() {
-        assertThrows(IOException.class,()->SshFolderTransferService.validateRelative("x/".repeat(66)+"file"));
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 66; i++) sb.append("x/");
+        assertThrows(IOException.class,()->SshFolderTransferService.validateRelative(sb.toString()+"file"));
         assertThrows(IOException.class,()->SshFolderTransferService.validateRelative("root/./file"));
         assertDoesNotThrow(()->SshFolderTransferService.validateRelative("root/a ' $ &中文/file.txt"));
     }

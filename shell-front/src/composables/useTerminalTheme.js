@@ -1,13 +1,19 @@
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { BUILTIN_TERMINAL_PRESETS } from '@/utils/terminalPresets'
 import { parseTerminalColorScheme } from '@/utils/terminalThemeParser'
 import { useTheme } from '@/composables/useTheme'
-
-const ACTIVE_THEME_KEY = 'doumi-term-theme-id'
-const CUSTOM_THEMES_KEY = 'doumi-term-custom-themes'
+import {
+  loadThemeStorage,
+  saveThemePreference,
+  resolveActiveTheme,
+  CUSTOM_THEMES_KEY,
+  DEFAULT_DARK_THEME_ID,
+  DEFAULT_LIGHT_THEME_ID
+} from '@/utils/terminalThemeStorage'
 
 // 全局单例状态，保证多终端 Tab 与设置弹窗响应一致
-const activeThemeId = ref('')
+const darkThemeId = ref(DEFAULT_DARK_THEME_ID)
+const lightThemeId = ref(DEFAULT_LIGHT_THEME_ID)
 const customThemes = ref([])
 let initialized = false
 
@@ -15,17 +21,10 @@ function loadStorage() {
   if (initialized || typeof window === 'undefined') return
   initialized = true
 
-  try {
-    const savedActive = localStorage.getItem(ACTIVE_THEME_KEY)
-    if (savedActive) activeThemeId.value = savedActive
-
-    const savedCustom = JSON.parse(localStorage.getItem(CUSTOM_THEMES_KEY) || '[]')
-    if (Array.isArray(savedCustom)) {
-      customThemes.value = savedCustom
-    }
-  } catch {
-    /* ignore storage errors */
-  }
+  const res = loadThemeStorage(localStorage, BUILTIN_TERMINAL_PRESETS)
+  darkThemeId.value = res.darkThemeId
+  lightThemeId.value = res.lightThemeId
+  customThemes.value = res.customThemes
 }
 
 export function useTerminalTheme() {
@@ -36,32 +35,61 @@ export function useTerminalTheme() {
     return [...BUILTIN_TERMINAL_PRESETS, ...customThemes.value]
   })
 
-  // 如果用户未显式选定或所选不存在，则按深色/浅色自适应默认主题
-  const activeTheme = computed(() => {
-    let match = allThemes.value.find(t => t.id === activeThemeId.value)
-    if (!match) {
-      const defaultId = effectiveDark.value ? 'doumi-obsidian' : 'doumi-paper'
-      match = allThemes.value.find(t => t.id === defaultId) || BUILTIN_TERMINAL_PRESETS[0]
-    }
-    return match
+  // 深色模式下绑定的终端主题对象
+  const darkTheme = computed(() => {
+    return allThemes.value.find(t => t.id === darkThemeId.value) ||
+      allThemes.value.find(t => t.id === DEFAULT_DARK_THEME_ID) ||
+      BUILTIN_TERMINAL_PRESETS[0]
   })
 
-  function setTheme(id) {
-    activeThemeId.value = id
-    try {
-      localStorage.setItem(ACTIVE_THEME_KEY, id)
-    } catch {
-      /* ignore */
+  // 浅色模式下绑定的终端主题对象
+  const lightTheme = computed(() => {
+    return allThemes.value.find(t => t.id === lightThemeId.value) ||
+      allThemes.value.find(t => t.id === DEFAULT_LIGHT_THEME_ID) ||
+      allThemes.value.find(t => t.category === 'light') ||
+      BUILTIN_TERMINAL_PRESETS[0]
+  })
+
+  // 当前生效的主题ID：根据当前页面是深色模式还是浅色模式，分别自适应对应绑定的配色
+  const activeThemeId = computed(() => {
+    return effectiveDark.value ? darkThemeId.value : lightThemeId.value
+  })
+
+  // 当前生效的主题对象：当切换网页深/浅色时，自动无缝切换，无需用户每次手动设置
+  const activeTheme = computed(() => {
+    return resolveActiveTheme({
+      effectiveDark: effectiveDark.value,
+      darkThemeId: darkThemeId.value,
+      lightThemeId: lightThemeId.value,
+      allThemes: allThemes.value
+    })
+  })
+
+  function setDarkTheme(id) {
+    darkThemeId.value = id
+    saveThemePreference(localStorage, 'dark', id)
+  }
+
+  function setLightTheme(id) {
+    lightThemeId.value = id
+    saveThemePreference(localStorage, 'light', id)
+  }
+
+  function setTheme(id, targetMode = null) {
+    const mode = targetMode || (effectiveDark.value ? 'dark' : 'light')
+    if (mode === 'light') {
+      setLightTheme(id)
+    } else {
+      setDarkTheme(id)
     }
   }
 
-  function importTheme(content, filename = '') {
+  function importTheme(content, filename = '', targetMode = null) {
     const parsed = parseTerminalColorScheme(content, filename)
     if (!parsed) {
       throw new Error('未能识别有效的终端或 Zsh 配色格式，请检查文件或内容')
     }
 
-    // 检查是否重名或存在相同 ID
     const newId = `imported-${Date.now()}`
     const themeToSave = {
       ...parsed,
@@ -77,7 +105,8 @@ export function useTerminalTheme() {
       /* ignore */
     }
 
-    setTheme(newId)
+    const isLight = targetMode ? (targetMode === 'light') : (parsed.category === 'light' || (!effectiveDark.value && parsed.category !== 'dark'))
+    setTheme(newId, isLight ? 'light' : 'dark')
     return themeToSave
   }
 
@@ -90,8 +119,11 @@ export function useTerminalTheme() {
       } catch {
         /* ignore */
       }
-      if (activeThemeId.value === id) {
-        setTheme(effectiveDark.value ? 'doumi-obsidian' : 'doumi-paper')
+      if (darkThemeId.value === id) {
+        setDarkTheme(DEFAULT_DARK_THEME_ID)
+      }
+      if (lightThemeId.value === id) {
+        setLightTheme(DEFAULT_LIGHT_THEME_ID)
       }
     }
   }
@@ -107,10 +139,16 @@ export function useTerminalTheme() {
   return {
     activeThemeId,
     activeTheme,
+    darkThemeId,
+    lightThemeId,
+    darkTheme,
+    lightTheme,
     allThemes,
     customThemes,
     builtinThemes: BUILTIN_TERMINAL_PRESETS,
     setTheme,
+    setDarkTheme,
+    setLightTheme,
     importTheme,
     removeCustomTheme,
     exportThemeJson

@@ -10,15 +10,75 @@
     <div class="theme-dialog-layout">
       <!-- 左侧：预设选择与导入 -->
       <div class="theme-controls-pane">
+        <!-- 深色/浅色配色方案独立绑定切换条 -->
+        <div class="mode-binding-banner">
+          <div class="mode-binding-header">
+            <span class="mode-binding-title">配置绑定目标：</span>
+            <el-radio-group v-model="configuringMode" size="small" class="mode-radios">
+              <el-radio-button label="dark">
+                🌙 深色模式配色 ({{ darkTheme.name }})
+              </el-radio-button>
+              <el-radio-button label="light">
+                ☀️ 浅色模式配色 ({{ lightTheme.name }})
+              </el-radio-button>
+            </el-radio-group>
+          </div>
+          <div class="mode-binding-desc">
+            <span>当前系统：<strong>{{ effectiveDark ? '深色模式' : '浅色模式' }}</strong>。切换网页深/浅色时，终端将自动切换至对应设置过的独立配色方案。</span>
+          </div>
+        </div>
+
         <el-tabs v-model="activeTab" class="theme-tabs">
           <!-- Tab 1: 内置主流经典配色 -->
           <el-tab-pane label="经典预设" name="presets">
+            <!-- 快捷分类筛选 -->
+            <div class="filter-bar">
+              <span class="filter-label">筛选:</span>
+              <button
+                type="button"
+                class="filter-pill"
+                :class="{ 'is-active': categoryFilter === 'all' }"
+                @click="categoryFilter = 'all'"
+              >
+                全部 ({{ allThemes.length }})
+              </button>
+              <button
+                type="button"
+                class="filter-pill"
+                :class="{ 'is-active': categoryFilter === 'dark' }"
+                @click="categoryFilter = 'dark'"
+              >
+                深色系 (🌙)
+              </button>
+              <button
+                type="button"
+                class="filter-pill"
+                :class="{ 'is-active': categoryFilter === 'light' }"
+                @click="categoryFilter = 'light'"
+              >
+                浅色系 (☀️)
+              </button>
+              <button
+                v-if="customThemes.length"
+                type="button"
+                class="filter-pill"
+                :class="{ 'is-active': categoryFilter === 'custom' }"
+                @click="categoryFilter = 'custom'"
+              >
+                我的导入 ({{ customThemes.length }})
+              </button>
+            </div>
+
             <div class="presets-scroll-grid">
               <div
-                v-for="item in allThemes"
+                v-for="item in filteredThemes"
                 :key="item.id"
                 class="preset-card"
-                :class="{ 'is-selected': item.id === previewTheme.id }"
+                :class="{
+                  'is-selected': item.id === previewTheme.id,
+                  'is-dark-target': configuringMode === 'dark' && item.id === darkThemeId,
+                  'is-light-target': configuringMode === 'light' && item.id === lightThemeId
+                }"
                 @click="onSelectTheme(item)"
               >
                 <div class="preset-card-header">
@@ -26,7 +86,11 @@
                     <span class="preset-name">{{ item.name }}</span>
                     <span class="preset-tag" :class="item.category">{{ item.tag || '主题' }}</span>
                   </div>
-                  <span v-if="item.id === activeThemeId" class="active-badge" title="当前正在使用">✓ 生效中</span>
+                  <div class="preset-status-badges">
+                    <span v-if="item.id === darkThemeId" class="binding-badge badge-dark" title="已设为深色模式下的配色">🌙 深色绑定</span>
+                    <span v-if="item.id === lightThemeId" class="binding-badge badge-light" title="已设为浅色模式下的配色">☀️ 浅色绑定</span>
+                    <span v-if="item.id === activeThemeId" class="active-badge" title="当前终端正在生效">✓ 生效中</span>
+                  </div>
                   <button
                     v-if="item.id.startsWith('imported-')"
                     type="button"
@@ -219,7 +283,9 @@
     <template #footer>
       <div class="dialog-footer">
         <el-button @click="visible = false">取消</el-button>
-        <el-button type="primary" @click="onApplyCurrent">应用该配色</el-button>
+        <el-button type="primary" @click="onApplyCurrent">
+          绑定为【{{ configuringMode === 'dark' ? '深色' : '浅色' }}模式】配色
+        </el-button>
       </div>
     </template>
   </el-dialog>
@@ -229,6 +295,7 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useTerminalTheme } from '@/composables/useTerminalTheme'
+import { useTheme } from '@/composables/useTheme'
 import { parseTerminalColorScheme } from '@/utils/terminalThemeParser'
 
 const props = defineProps({
@@ -242,29 +309,60 @@ const visible = computed({
   set: val => emit('update:modelValue', val)
 })
 
+const { effectiveDark } = useTheme()
 const {
   activeThemeId,
   activeTheme,
+  darkThemeId,
+  lightThemeId,
+  darkTheme,
+  lightTheme,
   allThemes,
+  customThemes,
   setTheme,
+  setDarkTheme,
+  setLightTheme,
   importTheme,
   removeCustomTheme
 } = useTerminalTheme()
 
+const configuringMode = ref(effectiveDark.value ? 'dark' : 'light')
+const categoryFilter = ref('all')
 const activeTab = ref(typeof window !== 'undefined' ? (new URLSearchParams(window.location.search).get('themeTab') || 'presets') : 'presets')
-const previewTheme = ref({ ...activeTheme.value })
+const previewTheme = ref({ ...(effectiveDark.value ? darkTheme.value : lightTheme.value) })
 const isDragOver = ref(false)
 const fileInputRef = ref(null)
 const pasteContent = ref('')
 const detectedFormat = ref('')
 const parsedDraft = ref(null)
 
+const filteredThemes = computed(() => {
+  if (categoryFilter.value === 'dark') {
+    return allThemes.value.filter(t => t.category !== 'light')
+  }
+  if (categoryFilter.value === 'light') {
+    return allThemes.value.filter(t => t.category === 'light')
+  }
+  if (categoryFilter.value === 'custom') {
+    return customThemes.value
+  }
+  return allThemes.value
+})
+
 watch(visible, val => {
   if (val) {
-    previewTheme.value = { ...activeTheme.value }
+    configuringMode.value = effectiveDark.value ? 'dark' : 'light'
+    previewTheme.value = { ...(effectiveDark.value ? darkTheme.value : lightTheme.value) }
     pasteContent.value = ''
     detectedFormat.value = ''
     parsedDraft.value = null
+  }
+})
+
+watch(configuringMode, mode => {
+  const target = mode === 'dark' ? darkTheme.value : lightTheme.value
+  if (target) {
+    previewTheme.value = { ...target }
   }
 })
 
@@ -274,14 +372,20 @@ function onSelectTheme(theme) {
 
 function onDeleteTheme(id) {
   removeCustomTheme(id)
-  previewTheme.value = { ...activeTheme.value }
+  previewTheme.value = { ...(configuringMode.value === 'dark' ? darkTheme.value : lightTheme.value) }
   ElMessage.success('已删除自定义配色')
 }
 
 function onApplyCurrent() {
-  setTheme(previewTheme.value.id)
-  ElMessage.success(`已应用终端配色: ${previewTheme.value.name}`)
-  emit('applied', previewTheme.value)
+  const selectedTheme = previewTheme.value
+  if (configuringMode.value === 'dark') {
+    setDarkTheme(selectedTheme.id)
+    ElMessage.success(`已绑定为【深色模式】终端配色: ${selectedTheme.name}`)
+  } else {
+    setLightTheme(selectedTheme.id)
+    ElMessage.success(`已绑定为【浅色模式】终端配色: ${selectedTheme.name}`)
+  }
+  emit('applied', selectedTheme)
   visible.value = false
 }
 
@@ -345,8 +449,8 @@ const canImport = computed(() => Boolean(parsedDraft.value))
 function onConfirmImport() {
   if (!parsedDraft.value) return
   try {
-    const saved = importTheme(pasteContent.value, parsedDraft.value.name)
-    ElMessage.success(`成功导入并应用配色: ${saved.name}`)
+    const saved = importTheme(pasteContent.value, parsedDraft.value.name, configuringMode.value)
+    ElMessage.success(`成功导入并绑定为【${configuringMode.value === 'dark' ? '深色' : '浅色'}】配色: ${saved.name}`)
     visible.value = false
   } catch (err) {
     ElMessage.error(err.message || '导入失败')
@@ -367,6 +471,67 @@ function onConfirmImport() {
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+.mode-binding-banner {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  background: var(--ws-bg-card, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--ws-border);
+  border-radius: var(--ws-radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mode-binding-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mode-binding-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ws-text-primary);
+}
+.mode-binding-desc {
+  font-size: 11px;
+  color: var(--ws-text-muted);
+  line-height: 1.4;
+}
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 2px 0;
+  flex-wrap: wrap;
+}
+.filter-label {
+  font-size: 11px;
+  color: var(--ws-text-muted);
+}
+.filter-pill {
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: var(--ws-radius-xs);
+  border: 1px solid var(--ws-border);
+  background: var(--ws-bg-card);
+  color: var(--ws-text-secondary);
+  cursor: pointer;
+  transition: all var(--ws-transition-fast);
+}
+.filter-pill:hover {
+  background: var(--ws-bg-hover);
+  color: var(--ws-text-primary);
+}
+.filter-pill.is-active {
+  background: var(--ws-accent-bg);
+  border-color: var(--ws-accent);
+  color: var(--ws-accent);
+  font-weight: 600;
 }
 
 .presets-scroll-grid {
@@ -432,6 +597,27 @@ function onConfirmImport() {
   color: #818cf8;
 }
 .preset-tag.light {
+  background: rgba(245, 158, 11, 0.15);
+  color: #d97706;
+}
+
+.preset-status-badges {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.binding-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: var(--ws-radius-xs);
+}
+.binding-badge.badge-dark {
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+}
+.binding-badge.badge-light {
   background: rgba(245, 158, 11, 0.15);
   color: #d97706;
 }
