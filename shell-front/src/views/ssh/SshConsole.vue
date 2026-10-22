@@ -1,7 +1,7 @@
 <template>
   <div class="ssh-console">
     <el-container class="layout">
-      <el-aside :width="sidebarCollapsed ? '52px' : '260px'" class="aside" :class="{'aside-collapsed':sidebarCollapsed}">
+      <el-aside :width="sidebarCollapsed ? '52px' : `${sidebarWidth}px`" class="aside" :class="{'aside-collapsed':sidebarCollapsed}">
         <div class="sidebar-header">
           <button type="button" class="sidebar-toggle" :title="sidebarCollapsed ? '展开侧栏' : '收起侧栏'" @click="sidebarCollapsed=!sidebarCollapsed">
             <el-icon><Expand v-if="sidebarCollapsed" /><Fold v-else /></el-icon>
@@ -146,6 +146,7 @@
             </button>
           </div>
         </div>
+        <div v-if="!sidebarCollapsed" class="sidebar-resize-handle" role="separator" aria-label="调整主机与分组侧栏宽度" aria-orientation="vertical" :aria-valuenow="sidebarWidth" :aria-valuemin="SIDEBAR_MIN_WIDTH" :aria-valuemax="SIDEBAR_MAX_WIDTH" tabindex="0" title="拖动调整宽度；使用左右方向键微调" @pointerdown.prevent="startSidebarResize" @keydown="resizeSidebarByKeyboard"></div>
       </el-aside>
 
       <el-main class="main">
@@ -490,8 +491,49 @@ import {
 const savedAccount = readSavedSshAccount()
 const { managedServer } = storeToRefs(useWorkspaceStore())
 const sidebarCollapsed = ref(false)
+const SIDEBAR_WIDTH_KEY = 'doumi-sidebar-width'
+const SIDEBAR_MIN_WIDTH = 220
+const SIDEBAR_MAX_WIDTH = 420
+const DEFAULT_SIDEBAR_WIDTH = 260
+const sidebarWidth = ref(DEFAULT_SIDEBAR_WIDTH)
+function clampSidebarWidth(value) {
+  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.round(value)))
+}
 try { sidebarCollapsed.value=localStorage.getItem('doumi-sidebar-collapsed')==='true' } catch { /* Default expanded. */ }
 watch(sidebarCollapsed, value=>{try{localStorage.setItem('doumi-sidebar-collapsed',String(value))}catch{/* Preference only. */}})
+try {
+  const savedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
+  if (Number.isFinite(savedWidth)) sidebarWidth.value = clampSidebarWidth(savedWidth)
+} catch { /* Use the default width when browser storage is unavailable. */ }
+
+let sidebarResizePointer = null
+function startSidebarResize(event) {
+  if (event.button !== 0) return
+  sidebarResizePointer = { pointerId: event.pointerId, startX: event.clientX, startWidth: sidebarWidth.value }
+  event.currentTarget.setPointerCapture(event.pointerId)
+  document.body.classList.add('sidebar-resizing')
+  event.currentTarget.addEventListener('pointermove', moveSidebarResize)
+  event.currentTarget.addEventListener('pointerup', stopSidebarResize, { once: true })
+  event.currentTarget.addEventListener('pointercancel', stopSidebarResize, { once: true })
+}
+function moveSidebarResize(event) {
+  if (!sidebarResizePointer || event.pointerId !== sidebarResizePointer.pointerId) return
+  sidebarWidth.value = clampSidebarWidth(sidebarResizePointer.startWidth + event.clientX - sidebarResizePointer.startX)
+}
+function stopSidebarResize(event) {
+  if (!sidebarResizePointer || (event?.pointerId != null && event.pointerId !== sidebarResizePointer.pointerId)) return
+  sidebarResizePointer = null
+  document.body.classList.remove('sidebar-resizing')
+  try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth.value)) } catch { /* Preference only. */ }
+}
+function resizeSidebarByKeyboard(event) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  if (event.key === 'Home') sidebarWidth.value = SIDEBAR_MIN_WIDTH
+  else if (event.key === 'End') sidebarWidth.value = SIDEBAR_MAX_WIDTH
+  else sidebarWidth.value = clampSidebarWidth(sidebarWidth.value + (event.key === 'ArrowRight' ? 10 : -10))
+  try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth.value)) } catch { /* Preference only. */ }
+}
 
 const treeRef = ref(null)
 const filterText = ref('')
@@ -662,7 +704,10 @@ onMounted(() => {
   restoreSavedAccount()
   window.addEventListener('doumi-configuration-imported', refreshTree)
 })
-onBeforeUnmount(() => window.removeEventListener('doumi-configuration-imported', refreshTree))
+onBeforeUnmount(() => {
+  window.removeEventListener('doumi-configuration-imported', refreshTree)
+  stopSidebarResize()
+})
 
 async function persistAccountSelection(node, hostGroupId) {
   if (node?.nodeType !== 'ACCOUNT') return
@@ -1603,6 +1648,8 @@ async function isHostInsideGroup(hostId, groupId) {
 
 /* ================= 侧边栏 ================= */
 .aside {
+  position: relative;
+  flex: 0 0 auto;
   border-right: 1px solid var(--ws-border);
   background: var(--ws-bg-sidebar);
   display: flex;
@@ -1611,6 +1658,34 @@ async function isHostInsideGroup(hostId, groupId) {
   box-sizing: border-box;
   overflow: hidden;
   transition: width var(--ws-transition-fast), background-color var(--ws-transition-normal);
+}
+.sidebar-resize-handle {
+  position: absolute;
+  z-index: 12;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.sidebar-resize-handle::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  content: '';
+}
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle:focus-visible::after {
+  width: 2px;
+  background: var(--ws-accent);
+}
+.sidebar-resize-handle:focus-visible { outline: none; }
+@media (max-width: 700px) {
+  .aside:not(.aside-collapsed) { max-width: min(420px, 65vw); }
 }
 .sidebar-header {
   height: 36px;
@@ -2262,6 +2337,13 @@ async function isHostInsideGroup(hostId, groupId) {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+</style>
+
+<style>
+body.sidebar-resizing {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 </style>
 
