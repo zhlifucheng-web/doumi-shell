@@ -91,3 +91,10 @@ test('plain SSH retry is explicit and cannot be requested by a shared terminal',
   assert.equal(new URLSearchParams(buildTerminalWsQuery({ accountId: 1, transport: 'ssh' })).get('transport'), 'ssh')
   assert.equal(new URLSearchParams(buildTerminalWsQuery({ shareToken: 'shared', transport: 'ssh' })).has('transport'), false)
 })
+
+test('terminal handshake carries the selected encoding for tmux client rendering', () => {
+  const shared = new URLSearchParams(buildTerminalWsQuery({ shareToken: 'shared', encoding: 'GBK' }))
+  const owner = new URLSearchParams(buildTerminalWsQuery({ accountId: 1, encoding: 'UTF-8' }))
+  assert.equal(shared.get('encoding'), 'GBK')
+  assert.equal(owner.get('encoding'), 'UTF-8')
+})

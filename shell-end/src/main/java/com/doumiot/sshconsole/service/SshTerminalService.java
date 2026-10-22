@@ -56,6 +56,11 @@ public class SshTerminalService {
 
     public TerminalSession openTerminal(long accountId, int cols, int rows, String terminalId,
             boolean readOnly, boolean shared, boolean plainSsh, Consumer<String> progress) throws IOException {
+        return openTerminal(accountId, cols, rows, terminalId, readOnly, shared, plainSsh, "UTF-8", progress);
+    }
+
+    public TerminalSession openTerminal(long accountId, int cols, int rows, String terminalId,
+            boolean readOnly, boolean shared, boolean plainSsh, String encoding, Consumer<String> progress) throws IOException {
         progress.accept("正在建立 SSH 连接…");
         SshAccount account = sshAccountService.requireAccount(accountId);
         if (account.getEnabled() != null && account.getEnabled() == 0) {
@@ -80,7 +85,7 @@ public class SshTerminalService {
             progress.accept("正在检查终端会话…");
             tmux = !plainSsh && properties.isTmuxEnabled() && hasTmux(client, entry.getExecLock());
             if (shared && !tmux) throw new IOException("远端未安装 tmux，无法连接共享终端");
-            attachShell(entry, c, r, account.getDefaultCwd(), accountId, terminalId, tmux, readOnly, shared, progress);
+            attachShell(entry, c, r, account.getDefaultCwd(), accountId, terminalId, tmux, readOnly, shared, encoding, progress);
         } catch (IOException | RuntimeException e) {
             sessionRegistry.close(entry.getSessionToken());
             throw e;
@@ -131,7 +136,7 @@ public class SshTerminalService {
 
     private void attachShell(SshSessionRegistry.SessionEntry entry, int cols, int rows, String defaultCwd,
             long accountId, String terminalId, boolean tmux, boolean readOnly, boolean shared,
-            Consumer<String> progress) throws IOException {
+            String encoding, Consumer<String> progress) throws IOException {
         SSHClient client = entry.getClient();
         SshTmuxSession tmuxSession = new SshTmuxSession((command, timeout) ->
                 SshRemoteExec.exec(client, entry.getExecLock(), command, timeout));
@@ -146,7 +151,7 @@ public class SshTerminalService {
         Channel channel;
         if (tmux) {
             progress.accept("正在附着 tmux 会话…");
-            channel = sshSession.exec(SshTmuxSession.attachCommand(name, readOnly));
+            channel = sshSession.exec(SshTmuxSession.attachCommand(name, readOnly, encoding));
             entry.setTerminalChannel(channel);
             entry.setShellStdout(tmuxSession.awaitAttached(channel, name, 8000));
         } else {

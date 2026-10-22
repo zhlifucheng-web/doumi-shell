@@ -134,8 +134,14 @@ function createDecoder(enc) {
 
 let textDecoder = createDecoder(props.encoding)
 
-watch(() => props.encoding, (newEnc) => {
+watch(() => props.encoding, (newEnc, oldEnc) => {
   textDecoder = createDecoder(newEnc)
+  // tmux chooses its decoration character set when attaching. Reattach the same
+  // persistent session when that choice changes; plain SSH keeps its live shell.
+  if (newEnc !== oldEnc && connectionMode.value.includes('tmux') && ws?.readyState === WebSocket.OPEN) {
+    emit('disconnected', {})
+    connect()
+  }
 })
 
 function onSwitchEncoding(enc) {
@@ -519,7 +525,8 @@ function connect() {
     rows: terminal.rows,
     terminalId: props.terminalId,
     shareToken: props.shareToken,
-    transport: preferredTransport.value
+    transport: preferredTransport.value,
+    encoding: props.encoding
   })
   const socket = new WebSocket(url)
   ws = socket

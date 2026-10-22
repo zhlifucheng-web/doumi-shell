@@ -79,11 +79,13 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
 
         int cols = parseIntQuery(session.getUri(), "cols", 0);
         int rows = parseIntQuery(session.getUri(), "rows", 0);
+        String encoding = parseStringQuery(session.getUri(), "encoding");
+        if (!StringUtils.hasText(encoding) && shareRecord != null) encoding = shareRecord.getEncoding();
 
         SshTerminalService.TerminalSession terminalSession;
         try {
             terminalSession = sshTerminalService.openTerminal(accountId, cols, rows, terminalId, readOnly, shareRecord != null,
-                    "ssh".equals(parseStringQuery(session.getUri(), "transport")),
+                    "ssh".equals(parseStringQuery(session.getUri(), "transport")), encoding,
                     stage -> {
                         SshTerminalFrame progress = new SshTerminalFrame();
                         progress.setType("connecting");

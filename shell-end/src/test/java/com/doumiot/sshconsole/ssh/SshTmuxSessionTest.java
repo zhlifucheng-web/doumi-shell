@@ -10,6 +10,28 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class SshTmuxSessionTest {
+    @Test void clientEncodingControlsDecorationsWithoutTouchingPaneBytes() throws Exception {
+        // Execute the actual attach shell with a fake external tmux, rather than assert command text.
+        java.nio.file.Path directory=java.nio.file.Files.createTempDirectory("tmux-encoding-");
+        java.nio.file.Path tmux=directory.resolve("tmux");
+        java.nio.file.Files.write(tmux,("#!/bin/sh\ncase \" $* \" in *' -u '*) printf '\\302\\267';; "
+                +"*) test \"$LC_ALL\" = C || exit 9; printf '.';; esac\nprintf '\\326\\320\\316\\304'\n").getBytes(StandardCharsets.US_ASCII));
+        tmux.toFile().setExecutable(true);
+        try {
+            String[] encodings={"GBK","GB18030","Big5","GB2312","ISO-8859-1","Windows-1252","UTF-8","utf8","invalid-codepage"};
+            byte[] legacy={'.',(byte)0xd6,(byte)0xd0,(byte)0xce,(byte)0xc4};
+            byte[] utf8={(byte)0xc2,(byte)0xb7,(byte)0xd6,(byte)0xd0,(byte)0xce,(byte)0xc4};
+            for(int i=0;i<encodings.length;i++) {
+                ProcessBuilder builder=new ProcessBuilder("sh","-c",SshTmuxSession.attachCommand("shared",true,encodings[i]));
+                builder.environment().put("PATH",directory+java.io.File.pathSeparator+System.getenv("PATH"));
+                builder.environment().put("LC_ALL","en_US.UTF-8");
+                Process process=builder.start();assertTrue(process.waitFor(3,TimeUnit.SECONDS));assertEquals(0,process.exitValue());
+                ByteArrayOutputStream bytes=new ByteArrayOutputStream();int b;while((b=process.getInputStream().read())!=-1)bytes.write(b);
+                byte[] output=bytes.toByteArray(),expected=i<6?legacy:utf8;
+                assertArrayEquals(expected,java.util.Arrays.copyOfRange(output,output.length-expected.length,output.length),encodings[i]);
+            }
+        } finally {java.nio.file.Files.deleteIfExists(tmux);java.nio.file.Files.deleteIfExists(directory);}
+    }
     private static SshRemoteExec.ExecResult result(int code, String out) {
         SshRemoteExec.ExecResult r=new SshRemoteExec.ExecResult();r.setExitStatus(code);r.setStdout(out);r.setStderr("");return r;
     }

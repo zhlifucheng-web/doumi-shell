@@ -30,13 +30,14 @@ export function formatSharePermission(permission) {
   }
 }
 
-export function buildTerminalWsQuery({ accountId, shareToken, terminalId, cols, rows, transport } = {}) {
+export function buildTerminalWsQuery({ accountId, shareToken, terminalId, cols, rows, transport, encoding } = {}) {
   const params = new URLSearchParams()
   if (accountId != null) params.set('accountId', String(accountId))
   if (shareToken) params.set('shareToken', String(shareToken))
   if (terminalId) params.set('terminalId', String(terminalId))
   if (cols > 0) params.set('cols', String(cols))
   if (rows > 0) params.set('rows', String(rows))
+  if (encoding) params.set('encoding', String(encoding))
   if (!shareToken && transport === 'ssh') params.set('transport', 'ssh')
   return params.toString()
 }

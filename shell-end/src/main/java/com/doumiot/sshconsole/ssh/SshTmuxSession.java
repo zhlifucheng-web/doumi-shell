@@ -27,7 +27,18 @@ public final class SshTmuxSession {
     }
 
     public static String attachCommand(String name, boolean readOnly) {
-        return "printf '\\036DOUMI_TTY:%s\\037' \"$(tty)\"; exec tmux -2 -u attach-session "
+        return attachCommand(name, readOnly, "UTF-8");
+    }
+
+    public static String attachCommand(String name, boolean readOnly, String encoding) {
+        String normalized = encoding == null ? "" : encoding.trim().toUpperCase(java.util.Locale.ROOT);
+        boolean legacy = java.util.Arrays.asList("GBK", "GB18030", "GB2312", "BIG5", "ISO-8859-1", "WINDOWS-1252")
+                .contains(normalized);
+        // The client locale controls tmux's own borders/filler, not the existing pane's locale or bytes.
+        // A legacy-codepage viewer must not receive UTF-8 decorations mixed into its raw pane output.
+        // Unknown labels follow the browser TextDecoder fallback to UTF-8.
+        String client = legacy ? "env LC_ALL=C LANG=C tmux -2" : "tmux -2 -u";
+        return "printf '\\036DOUMI_TTY:%s\\037' \"$(tty)\"; exec " + client + " attach-session "
                 + (readOnly ? "-r " : "") + "-t " + quote(name);
     }
 
