@@ -134,13 +134,14 @@ public class SshTerminalService {
         // -2 forces 256 colors, -u forces UTF-8 support.
         // The command is conditional so hosts without tmux retain the existing shell behavior.
         if (tmux) {
-            String cwdArg = StringUtils.hasText(defaultCwd) ? " -c " + shellQuote(defaultCwd.trim()) : "";
+            String cdPrefix = StringUtils.hasText(defaultCwd) ? shellCd(defaultCwd.trim()) + " 2>/dev/null; " : "";
             String sessName = tmuxSessionName(accountId, terminalId);
             String attachArgs = readOnly ? "attach-session -r -t " : "attach-session -t ";
-            String tmuxCommand = "if command -v tmux >/dev/null 2>&1; then tmux set-option -g aggressive-resize on 2>/dev/null; "
-                    + "if tmux has-session -t " + sessName + " 2>/dev/null; then "
+            String tmuxCommand = cdPrefix + "if command -v tmux >/dev/null 2>&1; then "
+                    + "tmux setw -g aggressive-resize on >/dev/null 2>&1; "
+                    + "if tmux has-session -t " + sessName + " >/dev/null 2>&1; then "
                     + "exec tmux -2 -u " + attachArgs + sessName + "; else "
-                    + "exec tmux -2 -u new-session -s " + sessName + cwdArg + "; fi; fi\n";
+                    + "exec tmux -2 -u new-session -s " + sessName + "; fi; fi\n";
             shell.getOutputStream().write(tmuxCommand.getBytes(StandardCharsets.UTF_8));
             shell.getOutputStream().flush();
         } else if (StringUtils.hasText(defaultCwd)) {
