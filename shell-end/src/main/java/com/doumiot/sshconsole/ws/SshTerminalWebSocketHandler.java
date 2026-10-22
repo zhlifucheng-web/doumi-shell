@@ -18,6 +18,8 @@ import javax.annotation.Resource;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -98,6 +100,15 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
             case "input":
                 if (StringUtils.hasText(frame.getData())) {
                     byte[] bytes = Base64.getDecoder().decode(frame.getData());
+                    String enc = frame.getEncoding();
+                    if (StringUtils.hasText(enc) && !"utf-8".equalsIgnoreCase(enc)) {
+                        try {
+                            String text = new String(bytes, StandardCharsets.UTF_8);
+                            bytes = text.getBytes(Charset.forName(enc));
+                        } catch (Exception ignored) {
+                            // 保留原始字节
+                        }
+                    }
                     sshTerminalService.writeInput(token, bytes);
                 }
                 break;

@@ -1,0 +1,378 @@
+/* ========================================================
+   Doumi Shell 2.0 - High-Fidelity Modern WebShell Design System
+   Pixel-Matched to Modern WebShell Prototype Specification
+   ======================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --font-mono: 'JetBrains Mono', Consolas, 'SF Mono', Monaco, monospace;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+
+  /* 通用几何与半径 */
+  --ws-radius-xs: 4px;
+  --ws-radius-sm: 6px;
+  --ws-radius-md: 8px;
+  --ws-radius-lg: 12px;
+  --ws-radius-full: 9999px;
+
+  /* 状态颜色 (语义色) */
+  --ws-color-online: #10b981;
+  --ws-color-warning: #f59e0b;
+  --ws-color-danger: #ef4444;
+  --ws-color-info: #3b82f6;
+
+  /* 动画过渡 */
+  --ws-transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  --ws-transition-normal: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ========================================================
+   1. 深色模式 (Dark Mode - Default First)
+   ======================================================== */
+html.dark, :root[data-theme='dark'] {
+  --ws-bg-root: #070a12;
+  --ws-bg-sidebar: #0a0e1a;
+  --ws-bg-header: #0d121f;
+  --ws-bg-card: #0f1523;
+  --ws-bg-terminal: #080c16;
+  --ws-bg-status: #080c16;
+  --ws-bg-tab-bar: #0b0f19;
+  --ws-bg-active-tab: #080c16;
+  --ws-bg-inactive-tab: #0e1424;
+  --ws-bg-hover: rgba(255, 255, 255, 0.05);
+  --ws-bg-active: rgba(99, 102, 241, 0.15);
+  --ws-bg-input: rgba(255, 255, 255, 0.04);
+  --ws-bg-modal: #0f1523;
+
+  --ws-border: rgba(255, 255, 255, 0.08);
+  --ws-border-hover: rgba(255, 255, 255, 0.16);
+  --ws-border-active: #6366f1;
+  --ws-border-focus: rgba(99, 102, 241, 0.4);
+
+  --ws-text-primary: #f8fafc;
+  --ws-text-regular: #cbd5e1;
+  --ws-text-muted: #64748b;
+  --ws-text-subtle: #475569;
+
+  --ws-accent: #6366f1;
+  --ws-accent-light: #818cf8;
+  --ws-accent-dark: #4f46e5;
+  --ws-accent-bg: rgba(99, 102, 241, 0.15);
+  --ws-accent-border: rgba(99, 102, 241, 0.3);
+  --ws-accent-gradient: linear-gradient(135deg, #6366f1 0%, #06b6d4 100%);
+  --ws-accent-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+
+  /* Element Plus 深色变量覆盖 */
+  --el-color-primary: #6366f1;
+  --el-color-primary-light-3: #818cf8;
+  --el-color-primary-light-5: #a5b4fc;
+  --el-color-primary-light-7: #c7d2fe;
+  --el-color-primary-light-8: #e0e7ff;
+  --el-color-primary-light-9: rgba(99, 102, 241, 0.15);
+  --el-color-primary-dark-2: #4f46e5;
+
+  --el-bg-color: #0d121f;
+  --el-bg-color-overlay: #0f1523;
+  --el-bg-color-page: #070a12;
+  --el-border-color: rgba(255, 255, 255, 0.08);
+  --el-border-color-light: rgba(255, 255, 255, 0.05);
+  --el-border-color-lighter: rgba(255, 255, 255, 0.03);
+  --el-border-color-extra-light: rgba(255, 255, 255, 0.02);
+
+  --el-text-color-primary: #f8fafc;
+  --el-text-color-regular: #cbd5e1;
+  --el-text-color-secondary: #94a3b8;
+  --el-text-color-placeholder: #475569;
+
+  --el-fill-color: rgba(255, 255, 255, 0.06);
+  --el-fill-color-light: rgba(255, 255, 255, 0.04);
+  --el-fill-color-lighter: rgba(255, 255, 255, 0.02);
+  --el-fill-color-blank: #0f1523;
+
+  --el-mask-color: rgba(0, 0, 0, 0.65);
+  --el-box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+  --el-box-shadow-light: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+}
+
+/* ========================================================
+   2. 日间模式 (Light Mode - Paper Clean)
+   ======================================================== */
+html:not(.dark), :root[data-theme='light'] {
+  --ws-bg-root: #f8fafc;
+  --ws-bg-sidebar: #f1f5f9;
+  --ws-bg-header: #ffffff;
+  --ws-bg-card: #ffffff;
+  --ws-bg-terminal: #ffffff;
+  --ws-bg-status: #f1f5f9;
+  --ws-bg-tab-bar: #e2e8f0;
+  --ws-bg-active-tab: #ffffff;
+  --ws-bg-inactive-tab: #e2e8f0;
+  --ws-bg-hover: rgba(0, 0, 0, 0.04);
+  --ws-bg-active: #eef2ff;
+  --ws-bg-input: #ffffff;
+  --ws-bg-modal: #ffffff;
+
+  --ws-border: rgba(0, 0, 0, 0.08);
+  --ws-border-hover: rgba(0, 0, 0, 0.16);
+  --ws-border-active: #4f46e5;
+  --ws-border-focus: rgba(79, 70, 229, 0.4);
+
+  --ws-text-primary: #0f172a;
+  --ws-text-regular: #334155;
+  --ws-text-muted: #64748b;
+  --ws-text-subtle: #94a3b8;
+
+  --ws-accent: #4f46e5;
+  --ws-accent-light: #6366f1;
+  --ws-accent-dark: #4338ca;
+  --ws-accent-bg: #eef2ff;
+  --ws-accent-border: rgba(79, 70, 229, 0.25);
+  --ws-accent-gradient: linear-gradient(135deg, #4f46e5 0%, #0891b2 100%);
+  --ws-accent-shadow: 0 4px 12px rgba(79, 70, 229, 0.18);
+
+  /* Element Plus 浅色变量覆盖 */
+  --el-color-primary: #4f46e5;
+  --el-color-primary-light-3: #6366f1;
+  --el-color-primary-light-5: #818cf8;
+  --el-color-primary-light-7: #c7d2fe;
+  --el-color-primary-light-8: #e0e7ff;
+  --el-color-primary-light-9: #eef2ff;
+  --el-color-primary-dark-2: #4338ca;
+
+  --el-bg-color: #ffffff;
+  --el-bg-color-overlay: #ffffff;
+  --el-bg-color-page: #f8fafc;
+  --el-border-color: rgba(0, 0, 0, 0.08);
+  --el-border-color-light: rgba(0, 0, 0, 0.05);
+  --el-border-color-lighter: rgba(0, 0, 0, 0.03);
+  --el-border-color-extra-light: rgba(0, 0, 0, 0.02);
+
+  --el-text-color-primary: #0f172a;
+  --el-text-color-regular: #334155;
+  --el-text-color-secondary: #64748b;
+  --el-text-color-placeholder: #94a3b8;
+
+  --el-fill-color: rgba(0, 0, 0, 0.04);
+  --el-fill-color-light: rgba(0, 0, 0, 0.02);
+  --el-fill-color-lighter: rgba(0, 0, 0, 0.01);
+  --el-fill-color-blank: #ffffff;
+
+  --el-mask-color: rgba(15, 23, 42, 0.45);
+  --el-box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.06);
+  --el-box-shadow-light: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+/* ========================================================
+   3. 全局重置与排版规范
+   ======================================================== */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-sans);
+  background-color: var(--ws-bg-root);
+  color: var(--ws-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+  overflow: hidden;
+  height: 100vh;
+  transition: background-color var(--ws-transition-normal), color var(--ws-transition-normal);
+}
+
+.font-mono-code {
+  font-family: var(--font-mono);
+}
+
+/* 自定义现代精细滚动条 */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+html:not(.dark) ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+}
+html:not(.dark) ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.28);
+}
+
+/* 隐藏无滚动条类 */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ========================================================
+   4. 动态光标与呼吸指示灯
+   ======================================================== */
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.term-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  vertical-align: text-bottom;
+  animation: cursor-blink 1.06s infinite;
+  background: var(--ws-accent);
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.8; }
+}
+.online-pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ws-color-online);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+  animation: pulse-ring 2s infinite ease-in-out;
+  flex-shrink: 0;
+}
+
+/* ========================================================
+   5. Element Plus 深度视觉升级 (彻底去处原生灰土风格)
+   ======================================================== */
+.el-button {
+  font-family: var(--font-sans);
+  border-radius: var(--ws-radius-sm);
+  font-weight: 500;
+  transition: all var(--ws-transition-fast);
+  border-color: var(--ws-border);
+}
+.el-button--primary {
+  background: var(--ws-accent);
+  border-color: var(--ws-accent);
+  color: #ffffff;
+}
+.el-button--primary:hover, .el-button--primary:focus {
+  background: var(--ws-accent-light);
+  border-color: var(--ws-accent-light);
+}
+
+.el-input__wrapper {
+  background-color: var(--ws-bg-input) !important;
+  border-radius: var(--ws-radius-sm) !important;
+  box-shadow: 0 0 0 1px var(--ws-border) inset !important;
+  transition: all var(--ws-transition-fast) !important;
+}
+.el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--ws-border-hover) inset !important;
+}
+.el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1.5px var(--ws-accent) inset !important;
+}
+.el-input__inner {
+  color: var(--ws-text-primary) !important;
+  font-size: 12px;
+}
+.el-input__inner::placeholder {
+  color: var(--ws-text-subtle) !important;
+}
+
+/* 树形列表精致现代重构 */
+.el-tree {
+  background: transparent !important;
+  color: var(--ws-text-regular) !important;
+}
+.el-tree-node__content {
+  border-radius: var(--ws-radius-sm) !important;
+  height: 30px !important;
+  margin: 1px 4px !important;
+  transition: background-color var(--ws-transition-fast) !important;
+}
+.el-tree-node__content:hover {
+  background-color: var(--ws-bg-hover) !important;
+}
+.el-tree-node.is-current > .el-tree-node__content {
+  background-color: var(--ws-bg-active) !important;
+  color: var(--ws-accent) !important;
+  font-weight: 600;
+}
+.el-tree-node__expand-icon {
+  color: var(--ws-text-muted) !important;
+  font-size: 11px;
+}
+.el-tree-node__expand-icon.is-leaf {
+  color: transparent !important;
+}
+
+/* 下拉菜单 & 弹出层 */
+.el-dropdown-menu, .el-popover.el-popper {
+  background: var(--ws-bg-card) !important;
+  border: 1px solid var(--ws-border) !important;
+  border-radius: var(--ws-radius-md) !important;
+  box-shadow: var(--el-box-shadow) !important;
+  padding: 4px !important;
+}
+.el-dropdown-menu__item {
+  border-radius: var(--ws-radius-xs) !important;
+  font-size: 12px !important;
+  color: var(--ws-text-regular) !important;
+  padding: 6px 10px !important;
+}
+.el-dropdown-menu__item:hover, .el-dropdown-menu__item:focus {
+  background: var(--ws-bg-hover) !important;
+  color: var(--ws-text-primary) !important;
+}
+.el-dropdown-menu__item.is-active-theme {
+  background: var(--ws-bg-active) !important;
+  color: var(--ws-accent) !important;
+  font-weight: 600;
+}
+
+/* 表格重构 */
+.el-table {
+  background: transparent !important;
+  color: var(--ws-text-regular) !important;
+  --el-table-border-color: var(--ws-border) !important;
+  --el-table-header-bg-color: var(--ws-bg-card) !important;
+  --el-table-tr-bg-color: transparent !important;
+  --el-table-row-hover-bg-color: var(--ws-bg-hover) !important;
+}
+.el-table th.el-table__cell {
+  color: var(--ws-text-muted) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  border-bottom: 1px solid var(--ws-border) !important;
+}
+.el-table td.el-table__cell {
+  border-bottom: 1px solid var(--ws-border) !important;
+  font-size: 12px !important;
+}
+
+/* 标签 Badge 优化 */
+.el-tag {
+  border-radius: var(--ws-radius-xs) !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+
+/* xterm 终端视口与画布重置，确保支持透明度与动态底色 */
+.xterm,
+.xterm .xterm-viewport,
+.xterm .xterm-screen {
+  background-color: transparent !important;
+}
+

@@ -1,17 +1,59 @@
 <template>
-  <div class="ssh-terminal-wrap">
+  <div
+    class="ssh-terminal-wrap"
+    tabindex="-1"
+    @keydown.ctrl.f.prevent.stop="openSearch"
+    @keydown.meta.f.prevent.stop="openSearch"
+  >
     <div v-if="statusMessage" class="status-overlay">{{ statusMessage }}</div>
     <div v-if="contextMenu.visible" class="terminal-context-menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @mousedown.stop>
       <button type="button" @click="copyTerminalSelection(); closeContextMenu()">复制 <kbd>Ctrl+C</kbd></button>
       <button type="button" @click="pasteTerminalClipboard(); closeContextMenu()">粘贴 <kbd>Ctrl+Shift+V</kbd></button>
       <button type="button" @click="openSearch(); closeContextMenu()">搜索 <kbd>Ctrl+F</kbd></button>
+      <div class="menu-divider"></div>
+      <div class="menu-label font-mono-code">编码: {{ encoding || 'UTF-8' }}</div>
+      <button type="button" :class="{ 'is-active-opt': (encoding || 'UTF-8') === 'UTF-8' }" @click="onSwitchEncoding('UTF-8')">UTF-8 (推荐)</button>
+      <button type="button" :class="{ 'is-active-opt': encoding === 'GBK' }" @click="onSwitchEncoding('GBK')">GBK (简体中文)</button>
+      <button type="button" :class="{ 'is-active-opt': encoding === 'GB18030' }" @click="onSwitchEncoding('GB18030')">GB18030</button>
+      <button type="button" :class="{ 'is-active-opt': encoding === 'Big5' }" @click="onSwitchEncoding('Big5')">Big5 (繁体)</button>
     </div>
     <div v-if="searchVisible" class="terminal-search" @mousedown.stop>
-      <input ref="searchInput" v-model="searchText" placeholder="搜索终端内容" @keydown.enter.prevent="findNext" @keydown.esc="closeSearch" />
+      <input
+        ref="searchInput"
+        v-model="searchText"
+        placeholder="搜索终端内容"
+        @keydown.enter.prevent="findNext"
+        @keydown.esc="closeSearch"
+        @keydown.ctrl.f.prevent.stop="findNext"
+        @keydown.meta.f.prevent.stop="findNext"
+      />
       <button type="button" @click="findPrevious">↑</button><button type="button" @click="findNext">↓</button><button type="button" @click="closeSearch">关闭</button>
     </div>
-    <div ref="termContainer" class="term-container" @click="focusTerminal" @contextmenu.prevent="showContextMenu" />
+    <div ref="termContainer" class="term-container" :class="[termContainerClass]" :style="termContainerStyle" @click="focusTerminal" @contextmenu.prevent="showContextMenu" />
     <EditorScrollbar :target="scrollTarget" />
+
+    <!-- 报错智能侦测浮层 (伴随式 AI 体验) -->
+    <transition name="fade-slide">
+      <div v-if="detectedError && !dismissedError" class="terminal-error-detective">
+        <div class="detective-icon">✨</div>
+        <div class="detective-body">
+          <div class="detective-title">
+            <span>终端异常捕获</span>
+            <span class="detective-badge">Error</span>
+          </div>
+          <div class="detective-snippet" :title="detectedError">{{ detectedError }}</div>
+        </div>
+        <div class="detective-actions">
+          <button type="button" class="detective-btn-ai" @click="handleAiTroubleshoot">
+            AI 诊断
+          </button>
+          <button type="button" class="detective-btn-close" title="忽略" @click="dismissedError = true">
+            ✕
+          </button>
+        </div>
+      </div>
+    </transition>
+
     <div v-if="disconnected" class="reconnect-bar">
       <span>会话已断开</span>
       <el-button size="small" type="primary" @click="reconnect">重新连接</el-button>
@@ -20,7 +62,7 @@
 </template>
 
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import EditorScrollbar from '@/components/EditorScrollbar.vue'
 import { Terminal } from 'xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -28,17 +70,31 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { SearchAddon } from '@xterm/addon-search'
 import 'xterm/css/xterm.css'
 import { buildTerminalWsUrl } from '@/api/sshConsole'
+import { enhanceTerminalOutput } from '@/utils/terminalColorEnhancer'
 import { useBackground } from '@/composables/useBackground'
 import { useTheme } from '@/composables/useTheme'
-const {background}=useBackground()
-const {effectiveDark}=useTheme()
+import { useTerminalTheme } from '@/composables/useTerminalTheme'
+
+const { background } = useBackground()
+const { effectiveDark } = useTheme()
+const { activeTheme } = useTerminalTheme()
 
 const props = defineProps({
   accountId: { type: Number, required: true },
-  terminalId: { type: String, required: true }
+  terminalId: { type: String, default: '' },
+  fontSize: { type: Number, default: 14 },
+  lightTone: { type: String, default: 'paper' }, // 'paper' | 'hybrid'
+  encoding: { type: String, default: 'UTF-8' }
 })
 
-const emit = defineEmits(['ready', 'disconnected', 'connection-error'])
+const emit = defineEmits([
+  'ready',
+  'disconnected',
+  'connection-error',
+  'size-change',
+  'ask-ai',
+  'change-encoding'
+])
 
 const termContainer = ref(null)
 const scrollTarget = shallowRef(null)
@@ -50,6 +106,9 @@ const searchText = ref('')
 const searchInput = ref(null)
 const contextMenu = ref({ visible: false, x: 0, y: 0 })
 
+const detectedError = ref('')
+const dismissedError = ref(false)
+
 let terminal = null
 let fitAddon = null
 let ws = null
@@ -58,14 +117,155 @@ let pingTimer = null
 let dataBound = false
 let connectGen = 0
 let searchAddon = null
-function terminalTheme(){
-  if(!background.value.enabled)return {background:'#1e1e1e',foreground:'#ffffff',cursor:'#ffffff'}
-  const foreground=effectiveDark.value?'#e5eaf3':'#303133'
-  return effectiveDark.value
-    ? {background:'#00000000',foreground,cursor:foreground,selectionBackground:'#409eff55'}
-    : {background:'#00000000',foreground,cursor:foreground,selectionBackground:'#409eff',selectionForeground:'#ffffff'}
+
+function createDecoder(enc) {
+  try {
+    return new TextDecoder(enc || 'utf-8', { stream: true })
+  } catch (err) {
+    console.warn(`[SshTerminal] 无法创建编码器 ${enc}，回退至 utf-8`, err)
+    return new TextDecoder('utf-8', { stream: true })
+  }
 }
-watch([()=>background.value.enabled,effectiveDark],()=>{if(terminal)terminal.options.theme=terminalTheme()})
+
+let textDecoder = createDecoder(props.encoding)
+
+watch(() => props.encoding, (newEnc) => {
+  textDecoder = createDecoder(newEnc)
+})
+
+function onSwitchEncoding(enc) {
+  emit('change-encoding', enc)
+  contextMenu.value.visible = false
+}
+
+// 现代化调色板定义
+const darkAnsiTheme = {
+  background: '#080c16',
+  foreground: '#e2e8f0',
+  cursor: '#6366f1',
+  cursorAccent: '#ffffff',
+  selectionBackground: 'rgba(99, 102, 241, 0.35)',
+  black: '#0f172a',
+  red: '#f87171',
+  green: '#34d399',
+  yellow: '#fbbf24',
+  blue: '#60a5fa',
+  magenta: '#c084fc',
+  cyan: '#38bdf8',
+  white: '#f1f5f9',
+  brightBlack: '#475569',
+  brightRed: '#ef4444',
+  brightGreen: '#10b981',
+  brightYellow: '#f59e0b',
+  brightBlue: '#3b82f6',
+  brightMagenta: '#a855f7',
+  brightCyan: '#06b6d4',
+  brightWhite: '#ffffff'
+}
+
+const paperLightAnsiTheme = {
+  background: '#ffffff',
+  foreground: '#0f172a',
+  cursor: '#4f46e5',
+  cursorAccent: '#ffffff',
+  selectionBackground: 'rgba(79, 70, 229, 0.2)',
+  black: '#0f172a',
+  red: '#dc2626',
+  green: '#047857',
+  yellow: '#b45309',
+  blue: '#2563eb',
+  magenta: '#7c3aed',
+  cyan: '#0891b2',
+  white: '#64748b',
+  brightBlack: '#64748b',
+  brightRed: '#b91c1c',
+  brightGreen: '#065f46',
+  brightYellow: '#92400e',
+  brightBlue: '#1d4ed8',
+  brightMagenta: '#6d28d9',
+  brightCyan: '#0e7490',
+  brightWhite: '#0f172a'
+}
+
+function pickXtermTheme(theme) {
+  if (!theme) return darkAnsiTheme
+  return {
+    background: theme.background || '#080c16',
+    foreground: theme.foreground || '#e2e8f0',
+    cursor: theme.cursor || '#6366f1',
+    cursorAccent: theme.cursorAccent || '#ffffff',
+    selectionBackground: theme.selectionBackground || 'rgba(99, 102, 241, 0.35)',
+    selectionForeground: theme.selectionForeground,
+    black: theme.black,
+    red: theme.red,
+    green: theme.green,
+    yellow: theme.yellow,
+    blue: theme.blue,
+    magenta: theme.magenta,
+    cyan: theme.cyan,
+    white: theme.white,
+    brightBlack: theme.brightBlack,
+    brightRed: theme.brightRed,
+    brightGreen: theme.brightGreen,
+    brightYellow: theme.brightYellow,
+    brightBlue: theme.brightBlue,
+    brightMagenta: theme.brightMagenta,
+    brightCyan: theme.brightCyan,
+    brightWhite: theme.brightWhite
+  }
+}
+
+function terminalTheme() {
+  const current = activeTheme.value || darkAnsiTheme
+  let res = current
+  if (background.value.enabled) {
+    const foreground = effectiveDark.value ? '#e5eaf3' : (current.foreground || '#303133')
+    res = {
+      ...current,
+      background: '#00000000',
+      foreground,
+      cursor: foreground
+    }
+  } else if (!effectiveDark.value && props.lightTone === 'hybrid' && current.category === 'light') {
+    res = darkAnsiTheme
+  }
+
+  return pickXtermTheme(res)
+}
+
+const termContainerStyle = computed(() => {
+  if (background.value.enabled) return { backgroundColor: 'transparent' }
+  const bg = terminalTheme().background
+  return { backgroundColor: bg }
+})
+
+const termContainerClass = computed(() => {
+  if (background.value.enabled) return 'theme-custom-bg'
+  if (effectiveDark.value) return 'theme-dark'
+  return props.lightTone === 'paper' ? 'theme-paper' : 'theme-hybrid-dark'
+})
+
+watch(
+  [() => background.value.enabled, effectiveDark, activeTheme, () => props.lightTone],
+  () => {
+    if (terminal) {
+      terminal.options.theme = terminalTheme()
+      if (typeof terminal.refresh === 'function' && terminal.rows) {
+        terminal.refresh(0, terminal.rows - 1)
+      }
+    }
+  }
+)
+
+watch(
+  () => props.fontSize,
+  (newSize) => {
+    if (terminal && newSize >= 12 && newSize <= 24) {
+      terminal.options.fontSize = newSize
+      fitAddon?.fit()
+    }
+  }
+)
 
 function b64Encode(str) {
   const bytes = new TextEncoder().encode(str)
@@ -82,7 +282,7 @@ function b64Decode(b64) {
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i)
   }
-  return new TextDecoder().decode(bytes)
+  return textDecoder.decode(bytes, { stream: true })
 }
 
 function sendJson(obj) {
@@ -127,7 +327,13 @@ async function pasteTerminalClipboard() {
 
 function showContextMenu(event) { contextMenu.value = { visible: true, x: event.offsetX, y: event.offsetY } }
 function closeContextMenu() { contextMenu.value.visible = false }
-function openSearch() { searchVisible.value = true; nextTick(() => searchInput.value?.focus()) }
+function openSearch() {
+  searchVisible.value = true
+  nextTick(() => {
+    searchInput.value?.focus()
+    searchInput.value?.select()
+  })
+}
 function closeSearch() { searchVisible.value = false; searchAddon?.clearDecorations(); terminal?.focus() }
 function findNext() { if (searchText.value) searchAddon?.findNext(searchText.value) }
 function findPrevious() { if (searchText.value) searchAddon?.findPrevious(searchText.value) }
@@ -138,6 +344,7 @@ function sendResize() {
   }
   fitAddon.fit()
   sendJson({ type: 'resize', cols: terminal.cols, rows: terminal.rows })
+  emit('size-change', { cols: terminal.cols, rows: terminal.rows })
 }
 
 function clearPing() {
@@ -156,7 +363,7 @@ function bindTerminalData() {
   if (!terminal || dataBound) return
   dataBound = true
   terminal.onData((data) => {
-    sendJson({ type: 'input', data: b64Encode(data) })
+    sendJson({ type: 'input', data: b64Encode(data), encoding: props.encoding })
   })
   sendResize()
 }
@@ -175,7 +382,7 @@ function activateSession(frame) {
 }
 
 function disposeTerminal() {
-  scrollTarget.value=null
+  scrollTarget.value = null
   resizeObserver?.disconnect()
   resizeObserver = null
   clearPing()
@@ -197,6 +404,29 @@ function disposeTerminal() {
   }
 }
 
+// 检查输出流中的典型报错
+function inspectErrorOutput(text) {
+  const errorPatterns = [
+    /command not found/i,
+    /No such file or directory/i,
+    /Permission denied/i,
+    /Connection refused/i,
+    /fatal: /i,
+    /syntax error/i,
+    /failed to start/i
+  ]
+  for (const pattern of errorPatterns) {
+    if (pattern.test(text)) {
+      const line = text.split('\n').find(l => pattern.test(l))?.trim()
+      if (line && line.length < 120) {
+        detectedError.value = line
+        dismissedError.value = false
+        break
+      }
+    }
+  }
+}
+
 function handleWsMessage(ev) {
   let frame
   try {
@@ -212,7 +442,10 @@ function handleWsMessage(ev) {
     if (!dataBound) {
       activateSession(null)
     }
-    terminal?.write(b64Decode(frame.data))
+    const decoded = b64Decode(frame.data)
+    const formatted = enhanceTerminalOutput(decoded)
+    terminal?.write(formatted)
+    inspectErrorOutput(decoded)
     return
   }
   if (frame.type === 'pong') {
@@ -236,24 +469,29 @@ function connect() {
 
   terminal = new Terminal({
     cursorBlink: true,
-    fontSize: 14,
-    fontFamily: 'Consolas, "Courier New", monospace',
+    fontSize: props.fontSize || 14,
+    fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
     allowTransparency: true,
-    theme: terminalTheme()
+    theme: terminalTheme(),
+    convertEol: true
   })
   terminal.attachCustomKeyEventHandler((event) => {
-    if (event.type !== 'keydown') return true
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
-      openSearch()
+    if ((event.ctrlKey || event.metaKey) && (event.key?.toLowerCase() === 'f' || event.code === 'KeyF')) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.type === 'keydown') {
+        openSearch()
+      }
       return false
     }
+    if (event.type !== 'keydown') return true
     if (event.key === 'Insert' && event.shiftKey) {
       void pasteTerminalClipboard()
       return false
     }
     const modifier = event.ctrlKey || event.metaKey
     if (!modifier) return true
-    if (event.key.toLowerCase() === 'c' && terminal.hasSelection()) {
+    if (event.key?.toLowerCase() === 'c' && terminal.hasSelection()) {
       void copyTerminalSelection()
       return false
     }
@@ -261,7 +499,7 @@ function connect() {
       void copyTerminalSelection()
       return false
     }
-    if (event.key.toLowerCase() === 'v' && event.shiftKey) {
+    if (event.key?.toLowerCase() === 'v' && event.shiftKey) {
       void pasteTerminalClipboard()
       return false
     }
@@ -273,7 +511,7 @@ function connect() {
   searchAddon = new SearchAddon()
   terminal.loadAddon(searchAddon)
   terminal.open(termContainer.value)
-  scrollTarget.value=termContainer.value.querySelector('.xterm-viewport')
+  scrollTarget.value = termContainer.value.querySelector('.xterm-viewport')
   fitAddon.fit()
 
   const url = buildTerminalWsUrl(props.accountId, {
@@ -311,6 +549,31 @@ function focusTerminal() {
   terminal?.focus()
 }
 
+// 供父组件调用的指令注入与清屏方法
+function sendInput(cmd) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    sendJson({ type: 'input', data: b64Encode(cmd + '\n'), encoding: props.encoding })
+  }
+}
+
+function clearScreen() {
+  terminal?.clear()
+  focusTerminal()
+}
+
+function handleAiTroubleshoot() {
+  const err = detectedError.value
+  dismissedError.value = true
+  emit('ask-ai', `请分析此终端报错并给出解决办法：${err}`)
+}
+
+defineExpose({
+  sendInput,
+  clearScreen,
+  focusTerminal,
+  reconnect
+})
+
 onMounted(() => {
   connect()
 })
@@ -335,20 +598,37 @@ watch(
   min-height: 0;
   position: relative;
   overflow: hidden;
+  outline: none;
 }
 .terminal-context-menu { position:absolute; z-index:8; min-width:170px; padding:4px; border:1px solid var(--el-border-color); border-radius:6px; background:var(--el-bg-color); box-shadow:var(--el-box-shadow); }
 .terminal-context-menu button { display:flex; justify-content:space-between; width:100%; padding:7px 9px; border:0; background:transparent; color:var(--el-text-color-primary); cursor:pointer; text-align:left; }
 .terminal-context-menu button:hover { background:var(--el-fill-color-light); }
 .terminal-context-menu kbd { color:var(--el-text-color-secondary); font-size:11px; }
+.terminal-context-menu .menu-divider { height: 1px; background: var(--el-border-color-lighter); margin: 4px 0; }
+.terminal-context-menu .menu-label { padding: 4px 9px; font-size: 11px; color: var(--el-text-color-secondary); }
+.terminal-context-menu button.is-active-opt { color: var(--el-color-primary); font-weight: 600; }
 .terminal-search { position:absolute; right:12px; top:8px; z-index:7; display:flex; gap:4px; padding:5px; border:1px solid var(--el-border-color); border-radius:6px; background:var(--el-bg-color); box-shadow:var(--el-box-shadow); }
 .terminal-search input { width:210px; padding:4px 7px; border:1px solid var(--el-border-color); border-radius:4px; background:var(--el-bg-color); color:var(--el-text-color-primary); }
 .terminal-search button { border:0; background:transparent; color:var(--el-text-color-primary); cursor:pointer; }
 .term-container {
   flex: 1;
   min-height: 0;
-  padding: 4px;
-  background: #1e1e1e;
+  padding: 6px;
   overflow: hidden;
+  background: var(--ws-bg-terminal);
+  transition: background-color var(--ws-transition-normal);
+}
+.term-container.theme-dark {
+  background: var(--ws-bg-terminal, #080c16);
+}
+.term-container.theme-paper {
+  background: #ffffff;
+}
+.term-container.theme-hybrid-dark {
+  background: #080c16;
+}
+.term-container.theme-custom-bg {
+  background: transparent !important;
 }
 .status-overlay {
   position: absolute;
@@ -367,5 +647,107 @@ watch(
   padding: 8px 12px;
   border-top: 1px solid var(--el-border-color-lighter);
   font-size: 13px;
+  background: var(--ws-bg-card, #ffffff);
+}
+html.dark .reconnect-bar {
+  background: #0f1523;
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+/* 报错伴随胶囊 */
+.terminal-error-detective {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--ws-radius-md, 8px);
+  background: var(--ws-bg-card, #ffffff);
+  border: 1px solid var(--el-color-primary-light-5, #a5b4fc);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(12px);
+  max-width: 440px;
+}
+html.dark .terminal-error-detective {
+  background: #0f1523;
+  border-color: rgba(99, 102, 241, 0.4);
+}
+.detective-icon {
+  font-size: 16px;
+  color: var(--el-color-primary, #6366f1);
+  flex-shrink: 0;
+}
+.detective-body {
+  min-width: 0;
+  flex: 1;
+}
+.detective-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+.detective-badge {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  font-weight: 500;
+}
+.detective-snippet {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+.detective-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.detective-btn-ai {
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--el-color-primary, #6366f1);
+  color: #ffffff;
+  border: none;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.detective-btn-ai:hover {
+  opacity: 0.9;
+}
+.detective-btn-close {
+  background: transparent;
+  border: none;
+  color: var(--el-text-color-placeholder);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px;
+}
+.detective-btn-close:hover {
+  color: var(--el-text-color-primary);
+}
+
+.fade-slide-enter-active,
+.fade-slide-leave-active {
+  transition: all 0.25s ease;
+}
+.fade-slide-enter-from,
+.fade-slide-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
 }
 </style>

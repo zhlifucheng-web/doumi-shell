@@ -11,14 +11,23 @@
     </div>
     <template v-else>
       <div class="toolbar">
-        <el-breadcrumb separator="/">
-          <el-breadcrumb-item>
-            <a href="#" @click.prevent="goRoot">根</a>
-          </el-breadcrumb-item>
-          <el-breadcrumb-item v-for="(seg, idx) in breadcrumbs" :key="idx">
-            <a href="#" @click.prevent="goToIndex(idx)">{{ seg }}</a>
-          </el-breadcrumb-item>
-        </el-breadcrumb>
+        <div class="toolbar-left">
+          <el-breadcrumb separator="/">
+            <el-breadcrumb-item>
+              <a href="#" @click.prevent="goRoot">根</a>
+            </el-breadcrumb-item>
+            <el-breadcrumb-item v-for="(seg, idx) in breadcrumbs" :key="idx">
+              <a href="#" @click.prevent="goToIndex(idx)">{{ seg }}</a>
+            </el-breadcrumb-item>
+          </el-breadcrumb>
+          <div class="quick-bookmarks">
+            <button type="button" class="bookmark-pill" title="前往家目录" @click="navigateToQuickPath('~')">~ 家目录</button>
+            <button type="button" class="bookmark-pill" title="前往根目录" @click="navigateToQuickPath('/')">/ 根</button>
+            <button type="button" class="bookmark-pill" title="前往日志目录" @click="navigateToQuickPath('/var/log')">/var/log</button>
+            <button type="button" class="bookmark-pill" title="前往配置目录" @click="navigateToQuickPath('/etc')">/etc</button>
+            <button type="button" class="bookmark-pill" title="前往临时目录" @click="navigateToQuickPath('/tmp')">/tmp</button>
+          </div>
+        </div>
         <div class="toolbar-actions">
           <el-input
             v-model="pathInput"
@@ -38,23 +47,37 @@
         </div>
       </div>
 
-      <el-table
-        v-loading="loading"
-        :data="items"
-        size="small"
-        height="100%"
-        class="file-table"
-        @row-dblclick="onRowDblClick"
+      <div
+        class="file-table-container"
+        :class="{ 'is-dragover': isDragOver }"
+        @dragover.prevent="isDragOver = true"
+        @dragleave.prevent="isDragOver = false"
+        @drop.prevent="onDropFiles"
       >
-        <el-table-column label="名称" min-width="200">
-          <template #default="{ row }">
-            <el-icon class="row-ico">
-              <Folder v-if="row.dir" />
-              <Document v-else />
-            </el-icon>
-            <span>{{ row.name }}</span>
-          </template>
-        </el-table-column>
+        <div v-if="isDragOver" class="drop-upload-overlay">
+          <el-icon class="drop-upload-ico"><Upload /></el-icon>
+          <span>松开鼠标立即上传到当前目录 ({{ currentPath }})</span>
+        </div>
+
+        <el-table
+          v-loading="loading"
+          :data="items"
+          size="small"
+          height="100%"
+          class="file-table"
+          @row-dblclick="onRowDblClick"
+        >
+          <el-table-column label="名称" min-width="200">
+            <template #default="{ row }">
+              <div class="file-name-cell">
+                <el-icon class="row-ico" :class="{ 'is-dir': row.dir }">
+                  <Folder v-if="row.dir" />
+                  <Document v-else />
+                </el-icon>
+                <span class="file-name-text" :class="{ 'is-dir': row.dir }">{{ row.name }}</span>
+              </div>
+            </template>
+          </el-table-column>
         <el-table-column label="大小" width="100">
           <template #default="{ row }">
             {{ row.dir ? '—' : formatSize(row.size) }}
@@ -85,7 +108,8 @@
             <el-button link type="danger" size="small" @click="confirmDelete(row)">删除</el-button>
           </template>
         </el-table-column>
-      </el-table>
+        </el-table>
+      </div>
     </template>
 
     <el-dialog v-model="showTransfers" title="文件传输 · 当前服务器" width="min(1080px, 94vw)" top="8vh" append-to-body destroy-on-close>
@@ -130,7 +154,7 @@
 <script setup>
 import { computed, onDeactivated, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Document, Folder } from '@element-plus/icons-vue'
+import { Document, Folder, Upload } from '@element-plus/icons-vue'
 import { sftpDelete, sftpDownloadLarge, sftpList, sftpMkdir, sftpRename, sftpUploadLarge } from '@/api/sshConsole'
 import { useTransfers } from '@/composables/useTransfers'
 import { storeToRefs } from 'pinia'
@@ -159,7 +183,7 @@ watch(() => [props.accountId, props.hostId], ([accountId, hostId]) => {
   // Old records predate host metadata; assign only when the account's actual server is known.
   assignTransferHost(accountId, hostId)
 }, { immediate: true })
-const visibleTransfers = computed(() => transfersForServer(transfers, props.hostId))
+const visibleTransfers = computed(() => transfersForServer(transfers?.value || transfers, props.hostId))
 const showTransfers = ref(false)
 const activeTransferCount = computed(() => visibleTransfers.value.filter(isTransferActive).length)
 const transferButtonLabel = computed(() => activeTransferCount.value
@@ -186,6 +210,7 @@ const showRename = ref(false)
 const renameName = ref('')
 const renameTarget = ref(null)
 const renameLoading = ref(false)
+const isDragOver = ref(false)
 
 const breadcrumbs = computed(() => {
   const p = currentPath.value
@@ -293,6 +318,32 @@ async function downloadRow(row) {
   } catch (error) {
     if (error.name !== 'AbortError') ElMessage.error(transferErrorMessage(error, '下载'))
   }
+}
+
+function navigateToQuickPath(target) {
+  pathInput.value = target
+  void navigateToPath()
+}
+
+function onDropFiles(event) {
+  isDragOver.value = false
+  const files = Array.from(event.dataTransfer?.files || [])
+  if (!files.length || !props.sessionToken) return
+  const dir = currentPath.value || pathInput.value || ''
+  const token = props.sessionToken
+  const accountId = props.accountId, hostId = props.hostId
+  for (const file of files) enqueueTransfer({
+    name: file.name,
+    direction: '上传',
+    path: dir,
+    total: file.size,
+    accountId,
+    hostId,
+    run: async transferOptions => {
+      await sftpUploadLarge(token, dir, file, transferOptions)
+      if (props.sessionToken === token && currentPath.value === dir) void refresh()
+    }
+  })
 }
 
 function uploadFiles(event) {
@@ -455,5 +506,109 @@ function formatMtime(sec) {
 .perm-cell {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
+}
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.quick-bookmarks {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.bookmark-pill {
+  padding: 1px 6px;
+  border-radius: var(--ws-radius-xs, 4px);
+  background: var(--el-fill-color-light, rgba(0, 0, 0, 0.04));
+  border: 1px solid var(--el-border-color-lighter);
+  color: var(--ws-text-muted, #64748b);
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+html.dark .bookmark-pill {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+}
+.bookmark-pill:hover {
+  background: var(--ws-fill-active, rgba(99, 102, 241, 0.15));
+  border-color: var(--el-color-primary, #6366f1);
+  color: var(--el-color-primary, #6366f1);
+}
+.file-table-container {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.drop-upload-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  background: rgba(99, 102, 241, 0.15);
+  backdrop-filter: blur(4px);
+  border: 2px dashed var(--el-color-primary, #6366f1);
+  border-radius: var(--ws-radius-md, 8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--el-color-primary, #6366f1);
+  font-weight: 600;
+  font-size: 13px;
+  pointer-events: none;
+}
+.drop-upload-ico {
+  font-size: 32px;
+}
+.file-name-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.file-type-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+  font-family: var(--font-mono, monospace);
+}
+.badge-dir {
+  background: rgba(99, 102, 241, 0.15);
+  color: #6366f1;
+}
+.badge-log {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+.badge-sh {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+.badge-cfg {
+  background: rgba(6, 182, 212, 0.15);
+  color: #06b6d4;
+}
+.badge-zip {
+  background: rgba(168, 85, 247, 0.15);
+  color: #a855f7;
+}
+.row-ico.is-dir {
+  color: var(--el-color-primary, #6366f1);
+}
+.file-name-text {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+}
+.file-name-text.is-dir {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
 }
 </style>

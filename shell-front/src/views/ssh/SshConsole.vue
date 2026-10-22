@@ -1,86 +1,149 @@
 <template>
   <div class="ssh-console">
     <el-container class="layout">
-      <el-aside :width="sidebarCollapsed ? '48px' : '280px'" class="aside" :class="{'aside-collapsed':sidebarCollapsed}">
-        <el-button class="sidebar-toggle" text :aria-label="sidebarCollapsed ? '展开分组侧栏' : '收起分组侧栏'" :title="sidebarCollapsed ? '展开分组侧栏' : '收起分组侧栏'" @click="sidebarCollapsed=!sidebarCollapsed"><el-icon><Expand v-if="sidebarCollapsed" /><Fold v-else /></el-icon><span v-if="!sidebarCollapsed">分组与服务器</span></el-button>
-        <div v-show="!sidebarCollapsed" class="aside-content">
-        <div class="aside-toolbar">
-          <el-input
-            v-model="filterText"
-            placeholder="筛选分组/主机/账户"
-            clearable
-            class="aside-filter"
+      <el-aside :width="sidebarCollapsed ? '52px' : '260px'" class="aside" :class="{'aside-collapsed':sidebarCollapsed}">
+        <div class="sidebar-header">
+          <button type="button" class="sidebar-toggle" :title="sidebarCollapsed ? '展开侧栏' : '收起侧栏'" @click="sidebarCollapsed=!sidebarCollapsed">
+            <el-icon><Expand v-if="sidebarCollapsed" /><Fold v-else /></el-icon>
+            <span v-if="!sidebarCollapsed" class="sidebar-title">主机与分组</span>
+          </button>
+        </div>
+        
+        <!-- Mini-Dock 模式 (侧栏收起时展示，保持轻快切换会话) -->
+        <div v-show="sidebarCollapsed" class="aside-mini-dock">
+          <div
+            v-for="tab in terminalTabs"
+            :key="`mini-${tab.accountId}`"
+            class="mini-dock-item"
+            :class="{ 'is-active': activeTerminalId === tab.accountId }"
+            :title="`${tab.label} (点击切换)`"
+            @click="activateTerminalTab(tab.accountId)"
           >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
-          <el-dropdown trigger="click" @command="onAddCommand">
-            <el-button type="primary" title="新建">
-              <el-icon><Plus /></el-icon>
-            </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="group">新建分组</el-dropdown-item>
-                <el-dropdown-item command="host" :disabled="!selectedGroupId">新建主机</el-dropdown-item>
-                <el-dropdown-item command="account" :disabled="!selectedHostId">新建账户</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-          <el-button :loading="treeLoading" title="刷新" @click="refreshTree">
-            <el-icon><Refresh /></el-icon>
-          </el-button>
+            <el-icon><Monitor /></el-icon>
+            <span class="mini-status-dot" :class="{ 'is-connected': !!tab.token }"></span>
+          </div>
         </div>
 
-        <el-scrollbar class="asset-scroll"><el-tree
-          :key="treeVersion"
-          ref="treeRef"
-          class="asset-tree"
-          node-key="key"
-          highlight-current
-          lazy
-          :load="loadNode"
-          :props="treeProps"
-          :default-expanded-keys="defaultExpandedKeys"
-          :current-node-key="treeCurrentNodeKey"
-          :filter-node-method="filterNode"
-          :draggable="!filterText"
-          :allow-drop="allowTreeDrop"
-          @node-click="onNodeClick"
-          @node-drag-start="onNodeDragStart"
-          @node-drop="onNodeDrop"
-        >
-          <template #default="{ data }">
-            <div
-              class="tree-node"
-              :class="{ 'is-account': data.nodeType === 'ACCOUNT' }"
-              @dblclick.stop="onNodeDblClick(data)"
+        <div v-show="!sidebarCollapsed" class="aside-content">
+          <div class="aside-toolbar">
+            <el-input
+              v-model="filterText"
+              placeholder="筛选分组/主机/账户..."
+              clearable
+              class="aside-filter"
             >
-              <el-icon class="node-ico">
-                <User v-if="data.nodeType === 'ACCOUNT'" />
-                <Monitor v-else-if="data.nodeType === 'HOST'" />
-                <Folder v-else />
-              </el-icon>
-              <div class="node-text">
-                <span class="node-label" :title="nodeTitle(data)">{{ data.label }}</span>
-                <span v-if="nodeSubtitle(data)" class="node-sub">{{ nodeSubtitle(data) }}</span>
-              </div>
-              <el-dropdown class="node-actions" trigger="click" @command="(command) => onNodeAction(command, data)" @click.stop>
-                <el-button text circle size="small" title="更多操作" @click.stop><el-icon><MoreFilled /></el-icon></el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item command="edit">编辑</el-dropdown-item>
-                    <el-dropdown-item v-if="data.nodeType === 'ACCOUNT'" command="terminal">新建终端</el-dropdown-item>
-                    <el-dropdown-item v-if="data.nodeType === 'GROUP'" command="host">新建主机</el-dropdown-item>
-                    <el-dropdown-item v-if="data.nodeType === 'HOST'" command="account">新建账户</el-dropdown-item>
-                    <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+            <el-dropdown trigger="click" @command="onAddCommand">
+              <button type="button" class="tool-icon-btn primary" title="新建">
+                <el-icon><Plus /></el-icon>
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="group">新建分组</el-dropdown-item>
+                  <el-dropdown-item command="host" :disabled="!selectedGroupId">新建主机</el-dropdown-item>
+                  <el-dropdown-item command="account" :disabled="!selectedHostId">新建账户</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <button type="button" class="tool-icon-btn" :disabled="treeLoading" title="刷新" @click="refreshTree">
+              <el-icon :class="{ 'is-loading': treeLoading }"><Refresh /></el-icon>
+            </button>
+          </div>
+
+          <!-- 常用与快捷会话 -->
+          <div v-if="terminalTabs.length" class="quick-pins-section">
+            <div class="quick-pins-header">
+              <span>快捷会话 ({{ terminalTabs.length }})</span>
+              <span class="quick-pins-tag font-mono-code">运行中</span>
             </div>
-          </template>
-        </el-tree></el-scrollbar>
-        <div class="aside-hint">拖拽分组、主机或账户可排序和移动；双击分组/主机编辑，双击账户打开终端</div>
+            <div class="quick-pins-list">
+              <div
+                v-for="tab in terminalTabs"
+                :key="`pin-${tab.tabId}`"
+                class="quick-pin-item"
+                :class="{ 'is-active': activeTerminalId === tab.tabId }"
+                @click="activateTerminalTab(tab.tabId)"
+              >
+                <div class="pin-left">
+                  <span class="online-pulse-dot"></span>
+                  <span class="pin-name">{{ tab.label }}</span>
+                </div>
+                <div class="pin-right font-mono-code">
+                  <span class="pin-latency">12ms</span>
+                  <span class="pin-badge">{{ tab.connectionMode || 'SSH' }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tree-section-header">
+            <span>集群与主机</span>
+          </div>
+
+          <el-scrollbar class="asset-scroll"><el-tree
+            :key="treeVersion"
+            ref="treeRef"
+            class="asset-tree"
+            node-key="key"
+            highlight-current
+            lazy
+            :load="loadNode"
+            :props="treeProps"
+            :default-expanded-keys="defaultExpandedKeys"
+            :current-node-key="treeCurrentNodeKey"
+            :filter-node-method="filterNode"
+            :draggable="!filterText"
+            :allow-drop="allowTreeDrop"
+            @node-click="onNodeClick"
+            @node-drag-start="onNodeDragStart"
+            @node-drop="onNodeDrop"
+          >
+            <template #default="{ data }">
+              <div
+                class="tree-node"
+                :class="{ 'is-account': data.nodeType === 'ACCOUNT', 'is-host': data.nodeType === 'HOST' }"
+                @dblclick.stop="onNodeDblClick(data)"
+              >
+                <el-icon class="node-ico" :class="{ 'ico-acc': data.nodeType === 'ACCOUNT', 'ico-host': data.nodeType === 'HOST', 'ico-group': data.nodeType === 'GROUP' }">
+                  <User v-if="data.nodeType === 'ACCOUNT'" />
+                  <Monitor v-else-if="data.nodeType === 'HOST'" />
+                  <Folder v-else />
+                </el-icon>
+                <div class="node-text">
+                  <div class="node-title-row">
+                    <span class="node-label" :title="nodeTitle(data)">{{ data.label }}</span>
+                    <span v-if="data.nodeType === 'ACCOUNT'" class="node-status-pill" :class="{ 'is-open': terminalTabs.some(t => t.accountId === data.id) }"></span>
+                  </div>
+                  <span v-if="nodeSubtitle(data)" class="node-sub">{{ nodeSubtitle(data) }}</span>
+                </div>
+                <el-dropdown class="node-actions" trigger="click" @command="(command) => onNodeAction(command, data)" @click.stop>
+                  <el-button text circle size="small" title="更多操作" @click.stop><el-icon><MoreFilled /></el-icon></el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="edit">编辑</el-dropdown-item>
+                      <el-dropdown-item v-if="data.nodeType === 'ACCOUNT'" command="terminal">新建终端</el-dropdown-item>
+                      <el-dropdown-item v-if="data.nodeType === 'GROUP'" command="host">新建主机</el-dropdown-item>
+                      <el-dropdown-item v-if="data.nodeType === 'HOST'" command="account">新建账户</el-dropdown-item>
+                      <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </div>
+            </template>
+          </el-tree></el-scrollbar>
+
+          <div class="aside-footer">
+            <span class="footer-status">
+              <span class="online-pulse-dot"></span>
+              <span>SSH 资产正常</span>
+            </span>
+            <button type="button" class="footer-refresh-btn" :disabled="treeLoading" title="刷新主机树" @click="refreshTree">
+              ⟳ 刷新
+            </button>
+          </div>
         </div>
       </el-aside>
 
@@ -98,19 +161,75 @@
                 <template #terminal>
                   <div v-if="terminalTabs.length" class="terminal-tabs">
                     <div class="terminal-tab-bar" role="tablist" aria-label="已打开的终端">
-                      <button v-for="tab in terminalTabs" :key="tab.tabId" type="button" role="tab"
-                        class="terminal-tab" :class="{ 'is-active': activeTerminalId === tab.tabId }"
-                        :aria-selected="activeTerminalId === tab.tabId" @click="activateTerminalTab(tab.tabId)">
-                        <span>{{ tab.label }}</span>
-                        <el-icon class="terminal-tab-close" title="关闭终端" @click.stop="closeTerminalTab(tab.tabId)"><Close /></el-icon>
-                      </button>
-                      <button class="terminal-tab-add" type="button" title="打开同一账户的新终端" @click="openAdditionalTerminalTab">+</button>
-                      <span v-if="activeTerminalTab?.connectionMode" class="terminal-connection-mode" :title="activeTerminalTab.connectionMode">{{ activeTerminalTab.connectionMode }}</span>
+                      <div class="terminal-tab-scroll">
+                        <button v-for="(tab, idx) in terminalTabs" :key="tab.tabId" type="button" role="tab"
+                          class="terminal-tab" :class="{ 'is-active': activeTerminalId === tab.tabId }"
+                          :aria-selected="activeTerminalId === tab.tabId" @click="activateTerminalTab(tab.tabId)">
+                          <span class="tab-status-dot" :class="{ 'is-connected': !!tab.token }"></span>
+                          <span class="tab-label">{{ tab.label }}</span>
+                          <span class="tab-index">#{{ idx + 1 }}</span>
+                          <el-icon class="terminal-tab-close" title="关闭终端" @click.stop="closeTerminalTab(tab.tabId)"><Close /></el-icon>
+                        </button>
+                        <button class="terminal-tab-add" type="button" title="打开同一账户的新终端" @click="openAdditionalTerminalTab">+</button>
+                        <span v-if="activeTerminalTab?.connectionMode" class="terminal-connection-mode" :title="activeTerminalTab.connectionMode">{{ activeTerminalTab.connectionMode }}</span>
+                      </div>
+                      <TerminalToolbar
+                        :snippet-visible="snippetBarVisible"
+                        :is-split="isSplit"
+                        :allow-split="terminalTabs.length > 1"
+                        :font-size="terminalFontSize"
+                        :terminal-tone="terminalLightTone"
+                        :encoding="activeTerminalTab?.encoding || terminalEncoding"
+                        @clear="onClearActiveTerminal"
+                        @toggle-snippets="snippetBarVisible = !snippetBarVisible"
+                        @toggle-split="isSplit = !isSplit"
+                        @change-font-size="size => terminalFontSize = size"
+                        @toggle-tone="toggleTerminalTone"
+                        @toggle-fullscreen="toggleTerminalFullscreen"
+                        @open-theme="workspaceStore.terminalThemeOpen = true"
+                        @change-encoding="onChangeEncoding"
+                      />
                     </div>
-                    <div v-for="tab in terminalTabs" :key="`terminal-${tab.tabId}`" v-show="activeTerminalId === tab.tabId" class="terminal-tab-content">
-                      <SshTerminal :account-id="tab.accountId" :terminal-id="tab.tabId"
-                        @ready="payload => onTerminalReady(tab.tabId, payload)"
-                        @disconnected="() => onTerminalDisconnected(tab.tabId)" />
+
+                    <!-- 常用快捷命令架 -->
+                    <SnippetBar v-if="snippetBarVisible" @run="onRunSnippet" />
+
+                    <!-- 终端显示区域 (支持左右分屏对比) -->
+                    <div class="terminal-view-split" :class="{ 'is-split-active': isSplit && splitTerminalTab }">
+                      <div class="terminal-pane main-pane">
+                        <div v-for="tab in terminalTabs" :key="`terminal-${tab.tabId}`" v-show="activeTerminalId === tab.tabId" class="terminal-tab-content">
+                          <SshTerminal :account-id="tab.accountId"
+                            :terminal-id="tab.tabId"
+                            :ref="el => setTerminalRef(tab.tabId, el)"
+                            :font-size="terminalFontSize"
+                            :light-tone="terminalLightTone"
+                            :encoding="tab.encoding || terminalEncoding"
+                            @ready="payload => onTerminalReady(tab.tabId, payload)"
+                            @disconnected="() => onTerminalDisconnected(tab.tabId)"
+                            @size-change="onTerminalSizeChange"
+                            @change-encoding="enc => onChangeEncoding(enc, tab.tabId)"
+                            @ask-ai="handleTerminalAskAi" />
+                        </div>
+                      </div>
+
+                      <div v-if="isSplit && splitTerminalTab" class="terminal-pane split-pane">
+                        <div class="split-pane-header">
+                          <span class="split-badge">分屏会话</span>
+                          <span class="split-label">{{ splitTerminalTab.label }}</span>
+                          <button type="button" class="split-close-btn" title="关闭分屏" @click="isSplit = false">✕</button>
+                        </div>
+                        <div class="split-pane-content">
+                          <SshTerminal :account-id="splitTerminalTab.accountId"
+                            :terminal-id="splitTerminalTab.tabId"
+                            :ref="el => setTerminalRef(`split-${splitTerminalTab.tabId}`, el)"
+                            :font-size="terminalFontSize"
+                            :light-tone="terminalLightTone"
+                            :encoding="splitTerminalTab.encoding || terminalEncoding"
+                            @ready="payload => onTerminalReady(splitTerminalTab.tabId, payload)"
+                            @disconnected="() => onTerminalDisconnected(splitTerminalTab.tabId)"
+                            @change-encoding="enc => onChangeEncoding(enc, splitTerminalTab.tabId)" />
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <el-empty v-else description="从左侧选择账户以打开终端" />
@@ -140,6 +259,13 @@
           <div class="detail-head">
             <h2>{{ detailTitle }}</h2>
             <div class="detail-actions">
+              <el-button
+                v-if="detail.type === 'HOST' && hostAccounts.length"
+                type="success"
+                @click="connectHostAccount(hostAccounts[0])"
+              >
+                🚀 快速打开终端
+              </el-button>
               <el-button type="primary" @click="openEditFromDetail">编辑</el-button>
               <el-button type="danger" plain @click="confirmDeleteDetail">删除</el-button>
             </div>
@@ -149,6 +275,34 @@
               {{ row.value }}
             </el-descriptions-item>
           </el-descriptions>
+
+          <!-- 若为主机，展示其下属的 SSH 账户列表与快捷直连入口 -->
+          <div v-if="detail.type === 'HOST'" class="host-accounts-card">
+            <div class="host-accounts-header">
+              <span class="host-accounts-title">关联 SSH 账户 ({{ hostAccounts.length }})</span>
+              <el-button size="small" type="primary" plain @click="openAddAccount(detail.raw.id)">
+                + 新建账户
+              </el-button>
+            </div>
+            <div v-if="hostAccounts.length" class="host-accounts-list">
+              <div v-for="acc in hostAccounts" :key="acc.id" class="host-account-item">
+                <div class="acc-info">
+                  <el-icon class="acc-icon"><User /></el-icon>
+                  <span class="acc-name">{{ acc.label || acc.username }}</span>
+                  <el-tag size="small" type="info">{{ acc.extra?.authType || 'PASSWORD' }}</el-tag>
+                </div>
+                <el-button size="small" type="primary" @click="connectHostAccount(acc)">
+                  打开终端
+                </el-button>
+              </div>
+            </div>
+            <div v-else class="host-accounts-empty">
+              <p>该主机暂未配置 SSH 登录账户，无法直接开启终端</p>
+              <el-button type="primary" size="small" @click="openAddAccount(detail.raw.id)">
+                立即新建 SSH 账户
+              </el-button>
+            </div>
+          </div>
         </div>
       </el-main>
     </el-container>
@@ -276,6 +430,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Close, Expand, Fold, Folder, Monitor, MoreFilled, Plus, Refresh, Search, User } from '@element-plus/icons-vue'
 import { useWorkspaceStore } from '@/stores/workspace'
 import SshTerminal from '@/components/ssh/SshTerminal.vue'
+import TerminalToolbar from '@/components/ssh/TerminalToolbar.vue'
+import SnippetBar from '@/components/ssh/SnippetBar.vue'
 import TerminalFileLayout from '@/components/ssh/TerminalFileLayout.vue'
 import SshFilePanel from '@/components/ssh/SshFilePanel.vue'
 import SshMonitorPanel from '@/components/ssh/SshMonitorPanel.vue'
@@ -347,6 +503,7 @@ const secretPrivateKey = ref('')
 const secretPassphrase = ref('')
 
 const detail = ref({ type: null, raw: null })
+const hostAccounts = ref([])
 const route = useRoute()
 const router = useRouter()
 const accountTab = computed(() => route.meta.panel || '')
@@ -360,6 +517,81 @@ const terminalTabs = ref([])
 const activeTerminalId = ref(null)
 const activeTerminalTab = computed(() => terminalTabs.value.find(item => item.tabId === activeTerminalId.value) || null)
 const openingFileSession = ref(false)
+
+const snippetBarVisible = ref(false)
+const isSplit = ref(false)
+const terminalFontSize = ref(14)
+const terminalLightTone = ref('paper')
+try {
+  const savedTone = localStorage.getItem('doumi-term-tone')
+  if (savedTone) terminalLightTone.value = savedTone
+} catch { /* ignore */ }
+
+const terminalEncoding = ref('UTF-8')
+try {
+  const savedEnc = localStorage.getItem('doumi-term-encoding')
+  if (savedEnc) terminalEncoding.value = savedEnc
+} catch { /* ignore */ }
+
+function toggleTerminalTone() {
+  terminalLightTone.value = terminalLightTone.value === 'paper' ? 'hybrid' : 'paper'
+  try { localStorage.setItem('doumi-term-tone', terminalLightTone.value) } catch { /* ignore */ }
+}
+
+function onChangeEncoding(enc, targetTabId = null) {
+  terminalEncoding.value = enc
+  const tab = targetTabId
+    ? terminalTabs.value.find(t => t.tabId === targetTabId)
+    : activeTerminalTab.value
+  if (tab) {
+    tab.encoding = enc
+  }
+  try {
+    localStorage.setItem('doumi-term-encoding', enc)
+  } catch { /* ignore */ }
+  ElMessage.success(`终端编码已切换为: ${enc}`)
+}
+
+const splitTerminalTab = computed(() => {
+  if (!isSplit.value || terminalTabs.value.length < 2) return null
+  return terminalTabs.value.find(tab => tab.tabId !== activeTerminalId.value) || null
+})
+
+const terminalRefs = new Map()
+function setTerminalRef(key, el) {
+  if (el) terminalRefs.set(key, el)
+  else terminalRefs.delete(key)
+}
+
+function onRunSnippet(cmd) {
+  const term = terminalRefs.get(activeTerminalId.value)
+  if (term) term.sendInput(cmd)
+}
+
+function onClearActiveTerminal() {
+  const term = terminalRefs.get(activeTerminalId.value)
+  if (term) term.clearScreen()
+}
+
+function toggleTerminalFullscreen() {
+  const el = document.querySelector('.terminal-slot')
+  if (!el) return
+  if (document.fullscreenElement) {
+    void document.exitFullscreen()
+  } else {
+    void el.requestFullscreen()
+  }
+}
+
+const workspaceStore = useWorkspaceStore()
+function onTerminalSizeChange(size) {
+  workspaceStore.terminalCols = size.cols
+  workspaceStore.terminalRows = size.rows
+}
+
+function handleTerminalAskAi(prompt) {
+  workspaceStore.openAi(prompt)
+}
 
 const groupRules = { name: [{ required: true, message: '请输入名称', trigger: 'blur' }] }
 const hostRules = {
@@ -606,15 +838,38 @@ function onNodeClick(data) {
   loadDetail(data)
 }
 
+async function connectHostAccount(acc) {
+  if (!acc?.id) return
+  await loadDetail({
+    nodeType: 'ACCOUNT',
+    id: acc.id,
+    key: `a:${acc.id}`,
+    label: acc.label || acc.username,
+    leaf: true,
+    extra: { hostId: detail.value.raw?.id }
+  })
+  if (route.meta.panel !== 'terminal') {
+    router.push('/terminal')
+  }
+}
+
 async function loadDetail(data) {
   try {
     if (data.nodeType === 'GROUP') {
       sessionToken.value = ''
+      hostAccounts.value = []
       detail.value = { type: 'GROUP', raw: await getGroup(data.id) }
     } else if (data.nodeType === 'HOST') {
       sessionToken.value = ''
       detail.value = { type: 'HOST', raw: await getHost(data.id) }
+      try {
+        const accs = await fetchTreeChildren('HOST', data.id)
+        hostAccounts.value = accs || []
+      } catch {
+        hostAccounts.value = []
+      }
     } else {
+      hostAccounts.value = []
       const raw = await getAccount(data.id)
       detail.value = { type: 'ACCOUNT', raw }
       terminalVisited.value = accountTab.value === 'terminal'
@@ -639,8 +894,11 @@ async function loadDetail(data) {
     }
   } catch {
     detail.value = { type: data.nodeType, raw: data }
-    if (data.nodeType === 'ACCOUNT' && data.extra?.hostId) {
-      await loadAccountHostMeta(data.extra.hostId)
+    if (data.nodeType === 'ACCOUNT') {
+      if (data.extra?.hostId) {
+        await loadAccountHostMeta(data.extra.hostId)
+      }
+      activateTerminalForAccount(data)
     }
   }
 }
@@ -679,7 +937,7 @@ function activateTerminalForAccount(account) {
   if (!account?.id) return
   let tab = terminalTabs.value.find(item => item.accountId === account.id)
   if (!tab) {
-    tab = { tabId: newTerminalId(), accountId: account.id, account, hostId: account.hostId, defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account), token: '' }
+    tab = { tabId: newTerminalId(), accountId: account.id, account, hostId: account.hostId, defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account), token: '', encoding: terminalEncoding.value }
     terminalTabs.value.push(tab)
   } else {
     tab.hostId = account.hostId
@@ -698,7 +956,7 @@ function newTerminalId() {
 function openAdditionalTerminalTab() {
   const current = activeTerminalTab.value
   if (!current) return
-  const tab = { ...current, tabId: newTerminalId(), token: '' }
+  const tab = { ...current, tabId: newTerminalId(), token: '', encoding: current.encoding || terminalEncoding.value }
   terminalTabs.value.push(tab)
   activeTerminalId.value = tab.tabId
   sessionToken.value = ''
@@ -821,14 +1079,27 @@ const detailRows = computed(() => {
   ]
 })
 
-function onNodeDblClick(data) {
+async function onNodeDblClick(data) {
   selectedNode.value = data
   if (data.nodeType === 'ACCOUNT') {
     void openNewAccountTerminal(data)
     return
   }
+  if (data.nodeType === 'HOST') {
+    try {
+      const children = await fetchTreeChildren('HOST', data.id)
+      if (children && children.length > 0) {
+        const firstAccount = children.find(c => c.nodeType === 'ACCOUNT') || children[0]
+        void openNewAccountTerminal(firstAccount)
+        return
+      }
+    } catch {
+      /* fallback */
+    }
+    editHostNode(data)
+    return
+  }
   if (data.nodeType === 'GROUP') editGroupNode(data)
-  else if (data.nodeType === 'HOST') editHostNode(data)
   else editAccountNode(data)
 }
 
@@ -854,7 +1125,7 @@ async function openNewAccountTerminal(data) {
     const account = await getAccount(data.id)
     const host = await loadAccountHostMeta(account.hostId)
     const tab = { tabId: newTerminalId(), accountId: account.id, account, hostId: account.hostId,
-      defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account, host), token: '' }
+      defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account, host), token: '', encoding: terminalEncoding.value }
     terminalTabs.value.push(tab)
     detail.value = { type: 'ACCOUNT', raw: account }
     activeTerminalId.value = tab.tabId
@@ -1184,121 +1455,347 @@ async function isHostInsideGroup(hostId, groupId) {
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--ws-bg-root);
 }
 .layout {
   height: 100%;
+  width: 100%;
+  overflow: hidden;
 }
+
+/* ================= 侧边栏 ================= */
 .aside {
-  border-right: 1px solid var(--el-border-color-lighter);
+  border-right: 1px solid var(--ws-border);
+  background: var(--ws-bg-sidebar);
   display: flex;
   flex-direction: column;
-  padding: 8px;
+  padding: 0;
   box-sizing: border-box;
+  overflow: hidden;
+  transition: width var(--ws-transition-fast), background-color var(--ws-transition-normal);
 }
-.aside-content {display:flex;flex-direction:column;flex:1;min-height:0}
-.sidebar-toggle {justify-content:flex-start;margin-bottom:8px;flex-shrink:0}
-.aside-collapsed .sidebar-toggle {padding:8px;justify-content:center}
-.asset-scroll {flex:1;min-height:0}
+.sidebar-header {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--ws-border);
+}
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  color: var(--ws-text-regular);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--ws-radius-sm);
+  transition: all var(--ws-transition-fast);
+}
+.sidebar-toggle:hover {
+  background: var(--ws-bg-hover);
+  color: var(--ws-text-primary);
+}
+.sidebar-title {
+  white-space: nowrap;
+}
+
+.aside-mini-dock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+}
+.mini-dock-item {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--ws-radius-md);
+  background: var(--ws-bg-card);
+  border: 1px solid var(--ws-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  cursor: pointer;
+  color: var(--ws-text-muted);
+  font-size: 15px;
+  transition: all var(--ws-transition-fast);
+}
+.mini-dock-item:hover, .mini-dock-item.is-active {
+  background: var(--ws-bg-active);
+  border-color: var(--ws-accent);
+  color: var(--ws-accent);
+}
+.mini-status-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ws-text-muted);
+}
+.mini-status-dot.is-connected {
+  background: var(--ws-color-online);
+  box-shadow: 0 0 5px rgba(16, 185, 129, 0.6);
+}
+
+.aside-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
 .aside-toolbar {
   display: flex;
   gap: 6px;
-  margin-bottom: 8px;
+  padding: 8px 10px;
   align-items: center;
+  border-bottom: 1px solid var(--ws-border);
 }
 .aside-filter {
   flex: 1;
+}
+.tool-icon-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--ws-radius-sm);
+  background: var(--ws-bg-input);
+  border: 1px solid var(--ws-border);
+  color: var(--ws-text-regular);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--ws-transition-fast);
+}
+.tool-icon-btn:hover {
+  background: var(--ws-bg-hover);
+  color: var(--ws-text-primary);
+}
+.tool-icon-btn.primary {
+  background: var(--ws-accent-bg);
+  border-color: var(--ws-accent-border);
+  color: var(--ws-accent);
+}
+.tool-icon-btn.primary:hover {
+  background: var(--ws-accent);
+  color: #ffffff;
+}
+
+/* 常用与置顶会话列表 */
+.quick-pins-section {
+  padding: 8px 10px 4px;
+  border-bottom: 1px solid var(--ws-border);
+}
+.quick-pins-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--ws-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.quick-pins-tag {
+  color: var(--ws-color-online);
+  font-size: 10px;
+}
+.quick-pins-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.quick-pin-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: var(--ws-radius-sm);
+  background: var(--ws-bg-card);
+  border: 1px solid var(--ws-border);
+  cursor: pointer;
+  transition: all var(--ws-transition-fast);
+  font-size: 12px;
+}
+.quick-pin-item:hover {
+  background: var(--ws-bg-hover);
+  border-color: var(--ws-border-hover);
+}
+.quick-pin-item.is-active {
+  background: var(--ws-bg-active);
+  border-color: var(--ws-accent-border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+.pin-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.pin-name {
+  font-weight: 500;
+  color: var(--ws-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pin-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.pin-latency {
+  font-size: 10px;
+  color: var(--ws-color-online);
+}
+.pin-badge {
+  font-size: 9px;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: var(--ws-bg-hover);
+  color: var(--ws-text-muted);
+}
+
+.tree-section-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--ws-text-muted);
+  padding: 8px 10px 4px;
+}
+.asset-scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 0 4px;
 }
 .asset-tree {
   flex: 1;
   min-height: 0;
 }
-.asset-tree :deep(.el-tree-node__content) {
-  height: auto;
-  min-height: 40px;
-  align-items: flex-start;
-  padding-top: 6px;
-  padding-bottom: 6px;
-  border-radius: 6px;
-}
-.asset-tree :deep(.el-tree-node__expand-icon) {
-  margin-top: 2px;
-  font-size: 14px;
-}
 .tree-node {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
   flex: 1;
   min-width: 0;
   padding-right: 4px;
-  line-height: 1.35;
 }
 .node-ico {
-  margin-top: 2px;
-  font-size: 16px;
+  font-size: 14px;
   flex-shrink: 0;
 }
+.node-ico.ico-acc { color: var(--ws-accent); }
+.node-ico.ico-host { color: #06b6d4; }
+.node-ico.ico-group { color: #f59e0b; }
 .node-text {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
 }
-.node-actions { margin-left:auto; opacity:0; flex-shrink:0 }
-.tree-node:hover .node-actions, .tree-node:focus-within .node-actions { opacity:1 }
+.node-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
 .node-label {
   display: block;
-  font-size: 13px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--ws-text-primary);
 }
 .node-sub {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  margin-top: 2px;
-  font-size: 12px;
-  line-height: 1.35;
-  color: var(--el-text-color-secondary);
-  overflow: hidden;
-  word-break: break-all;
-}
-.aside-hint {
   font-size: 11px;
-  color: var(--el-text-color-secondary);
-  margin-top: 6px;
+  color: var(--ws-text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
 }
+.node-status-pill {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ws-color-online);
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.node-status-pill.is-open {
+  opacity: 1;
+  box-shadow: 0 0 5px rgba(16, 185, 129, 0.6);
+}
+.node-actions {
+  margin-left: auto;
+  opacity: 0;
+  flex-shrink: 0;
+}
+.tree-node:hover .node-actions, .tree-node:focus-within .node-actions {
+  opacity: 1;
+}
+
+.aside-footer {
+  padding: 6px 10px;
+  border-top: 1px solid var(--ws-border);
+  background: var(--ws-bg-hover);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--ws-text-muted);
+}
+.footer-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.footer-refresh-btn {
+  background: transparent;
+  border: none;
+  color: var(--ws-text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: var(--ws-radius-xs);
+}
+.footer-refresh-btn:hover {
+  color: var(--ws-accent);
+}
+
+/* ================= 主体工作区 (Edge-to-Edge) ================= */
 .main {
-  padding: 16px 20px;
+  padding: 0;
+  margin: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-}
-.detail-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-.detail-head h2 {
-  margin: 0;
-  font-size: 18px;
-}
-.detail-actions {
-  display: flex;
-  gap: 8px;
-}
-.detail-desc {
-  max-width: 640px;
+  background: var(--ws-bg-root);
+  flex: 1;
 }
 .account-workspace {
   display: flex;
   flex-direction: column;
   height: 100%;
+  width: 100%;
   min-height: 0;
-}
-.account-head {
-  flex-shrink: 0;
 }
 .account-tabs {
   flex: 1;
@@ -1306,52 +1803,318 @@ async function isHostInsideGroup(hostId, groupId) {
   display: flex;
   flex-direction: column;
 }
-.account-tabs :deep(.el-tabs__content) {
-  flex: 1;
-  min-height: 0;
-}
-.account-tabs :deep(.el-tabs__header) {
-  flex-shrink: 0;
-  margin-bottom: 8px;
-  position: relative;
-  z-index: 2;
-}
-.account-tabs :deep(.el-tabs__nav-wrap) {
-  overflow: visible;
-}
-.account-tabs :deep(.el-tabs__item) {
-  min-height: 40px;
-  padding: 0 22px;
-  font-size: 14px;
-  line-height: 40px;
-}
-.account-tabs :deep(.el-tabs__content) {
-  position: relative;
-  z-index: 1;
-}
 .account-tab-pane {
   height: 100%;
+  width: 100%;
   overflow: hidden;
 }
-.terminal-tabs { display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; overflow:hidden; }
-.terminal-tab-bar { display:flex; flex-shrink:0; gap:2px; min-width:0; height:34px; overflow-x:auto; overflow-y:hidden; border-bottom:1px solid var(--el-border-color); background:var(--el-fill-color-light); }
-.terminal-tab { display:inline-flex; align-items:center; gap:10px; max-width:260px; min-width:120px; padding:0 10px; border:0; border-bottom:2px solid transparent; color:var(--el-text-color-regular); background:transparent; font:inherit; font-size:12px; white-space:nowrap; cursor:pointer; }
-.terminal-tab span { overflow:hidden; text-overflow:ellipsis; }
-.terminal-tab:hover { background:var(--el-fill-color); }
-.terminal-tab.is-active { border-bottom-color:var(--el-color-primary); color:var(--el-color-primary); background:var(--el-bg-color); }
-.terminal-tab-close { flex-shrink:0; color:var(--el-text-color-secondary); }
-.terminal-tab-close:hover { color:var(--el-color-danger); }
-.terminal-tab-add { flex:0 0 30px; border:0; background:transparent; color:var(--el-color-primary); font-size:18px; cursor:pointer; }
-.terminal-connection-mode { flex:0 0 auto; align-self:center; margin-left:auto; margin-right:8px; padding:2px 7px; border:1px solid var(--el-border-color); border-radius:10px; background:var(--el-bg-color); color:var(--el-text-color-secondary); font-size:11px; white-space:nowrap; }
-.terminal-tab-content { display:flex; flex:1; min-width:0; min-height:0; overflow:hidden; }
+
+/* ================= 终端标签栏 (Warp/VS Code Style 36px) ================= */
+.terminal-tabs {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.terminal-tab-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--ws-border);
+  background: var(--ws-bg-tab-bar);
+  gap: 8px;
+  transition: background-color var(--ws-transition-normal), border-color var(--ws-transition-normal);
+}
+.terminal-tab-scroll {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 100%;
+  flex: 1;
+  scrollbar-width: none;
+}
+.terminal-tab-scroll::-webkit-scrollbar {
+  display: none;
+}
+.terminal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  min-width: 110px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--ws-radius-sm) var(--ws-radius-sm) 0 0;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  background: var(--ws-bg-inactive-tab);
+  color: var(--ws-text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--ws-transition-fast);
+  user-select: none;
+}
+.terminal-tab:hover {
+  background: var(--ws-bg-card);
+  color: var(--ws-text-regular);
+}
+.terminal-tab.is-active {
+  background: var(--ws-bg-active-tab);
+  color: var(--ws-text-primary);
+  border-bottom: 2px solid var(--ws-accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  font-weight: 600;
+}
+.tab-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ws-text-muted);
+  flex-shrink: 0;
+}
+.tab-status-dot.is-connected {
+  background: var(--ws-color-online);
+  box-shadow: 0 0 5px rgba(16, 185, 129, 0.6);
+}
+.tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.tab-index {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--ws-accent);
+  opacity: 0.8;
+}
+.terminal-tab-close {
+  flex-shrink: 0;
+  color: var(--ws-text-muted);
+  border-radius: 3px;
+  padding: 1px;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity var(--ws-transition-fast);
+}
+.terminal-tab:hover .terminal-tab-close {
+  opacity: 1;
+}
+.terminal-tab-close:hover {
+  color: var(--ws-color-danger);
+  background: var(--ws-bg-hover);
+}
+
+/* 分屏显示 */
+.terminal-view-split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.terminal-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.terminal-pane.split-pane {
+  border-left: 1px solid var(--ws-border);
+}
+.split-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--ws-bg-hover);
+  border-bottom: 1px solid var(--ws-border);
+  font-size: 11px;
+}
+.split-badge {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  font-weight: 600;
+  font-size: 10px;
+}
+.split-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ws-text-regular);
+}
+.split-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--ws-text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+.split-close-btn:hover {
+  color: var(--ws-color-danger);
+}
+.split-pane-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
+.terminal-tab-content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.terminal-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--ws-radius-sm, 4px);
+  border: 1px dashed var(--ws-border);
+  background: transparent;
+  color: var(--ws-text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  margin-bottom: 3px;
+  transition: all var(--ws-transition-fast);
+}
+.terminal-tab-add:hover {
+  border-color: var(--ws-accent);
+  color: var(--ws-accent);
+  background: var(--ws-bg-card);
+}
+.terminal-connection-mode {
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: 6px;
+  margin-right: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--ws-border);
+  border-radius: 10px;
+  background: var(--ws-bg-card);
+  color: var(--ws-accent);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+}
 .account-tabs :deep(.el-tab-pane) {
   height: 100%;
   overflow: hidden;
 }
 .sftp-stub {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--ws-text-muted);
   word-break: break-all;
+}
+
+/* 主机/分组详情与关联账户卡片 */
+.detail-panel {
+  padding: 24px;
+  max-width: 840px;
+  overflow-y: auto;
+}
+.detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.detail-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ws-text-primary);
+}
+.detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.detail-desc {
+  margin-bottom: 20px;
+}
+.host-accounts-card {
+  margin-top: 24px;
+  padding: 16px;
+  background: var(--ws-bg-card);
+  border: 1px solid var(--ws-border);
+  border-radius: var(--ws-radius-md);
+}
+.host-accounts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.host-accounts-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ws-text-primary);
+}
+.host-accounts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.host-account-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--ws-bg-hover);
+  border: 1px solid var(--ws-border);
+  border-radius: var(--ws-radius-sm);
+  transition: all var(--ws-transition-fast);
+}
+.host-account-item:hover {
+  border-color: var(--ws-accent);
+}
+.acc-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.acc-icon {
+  font-size: 16px;
+  color: var(--ws-accent);
+}
+.acc-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ws-text-primary);
+}
+.host-accounts-empty {
+  text-align: center;
+  padding: 24px 16px;
+  color: var(--ws-text-muted);
+  font-size: 13px;
+}
+.host-accounts-empty p {
+  margin-bottom: 12px;
 }
 </style>
 

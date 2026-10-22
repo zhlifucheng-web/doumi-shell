@@ -10,12 +10,14 @@ export function transferSnapshot(task) {
 
 export function transfersForSession(tasks, accountId, sessionId) {
   if (accountId == null) return []
-  return tasks.filter(task => task.accountId === accountId && (task.sessionId || '') === sessionId)
+  const list = Array.isArray(tasks) ? tasks : (tasks?.value || [])
+  return list.filter(task => task.accountId === accountId && (task.sessionId || '') === sessionId)
 }
 
 export function transfersForServer(tasks, hostId) {
   if (hostId == null) return []
-  return tasks.filter(task => task.hostId === hostId)
+  const list = Array.isArray(tasks) ? tasks : (tasks?.value || [])
+  return list.filter(task => task.hostId === hostId)
 }
 
 export function restoreTransfer(record) {
