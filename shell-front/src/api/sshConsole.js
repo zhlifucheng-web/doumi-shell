@@ -387,6 +387,7 @@ export async function sftpDownload(sessionToken, path, filename, options={}) {
 export const startExecution = (scriptId, accountId) => post(`${BASE}/executions`, {scriptId,accountId}, {showSuccess:false})
 export const listExecutions = params => get(`${BASE}/executions`, params, {showSuccess:false})
 export const getExecution = id => get(`${BASE}/executions/${id}`, {}, {showSuccess:false})
+export const executionEventsUrl = id => `${API_BASE}${BASE}/executions/${encodeURIComponent(id)}/events`
 export const stopExecution = id => post(`${BASE}/executions/${id}/stop`, {}, {showSuccess:false})
 export const cleanupTables = () => get(`${BASE}/data-cleanup/tables`, {}, {showSuccess:false})
 export const previewCleanup = body => post(`${BASE}/data-cleanup/preview`, body, {showSuccess:false})

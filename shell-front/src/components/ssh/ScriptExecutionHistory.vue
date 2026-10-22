@@ -38,22 +38,53 @@
   </section></el-scrollbar>
 </template>
 <script setup>
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listExecutions, getExecution, stopExecution } from '@/api/sshConsole'
+import { listExecutions, getExecution, stopExecution, executionEventsUrl } from '@/api/sshConsole'
 const props=defineProps({scriptId:{type:Number,default:null},active:{type:Boolean,default:true}})
 const rows=ref([]),total=ref(0),page=ref(1),status=ref(''),source=ref(''),loading=ref(false),drawer=ref(false),detail=ref(null)
 const statuses={QUEUED:'排队中',RUNNING:'执行中',CANCELLING:'正在结束',SUCCESS:'成功',FAILED:'执行失败',ERROR:'连接或执行错误',CANCELLED:'已结束',CANCEL_FAILED:'终止失败',TIMED_OUT:'超时',INTERRUPTED:'服务中断'}
 const active=row=>['QUEUED','RUNNING','CANCELLING'].includes(row.status)
 const date=value=>value ? new Date(value).toLocaleString() : '—'
-let requestVersion=0
+let requestVersion=0,detailEvents=null
 async function load(){
   const version=++requestVersion;loading.value=true
   try {const data=await listExecutions({scriptId:props.scriptId,status:status.value,source:source.value,page:page.value});if(version===requestVersion){rows.value=data.rows;total.value=data.total}}
   finally {if(version===requestVersion)loading.value=false}
 }
 function reset(){page.value=1;load()}
-async function open(id){detail.value=await getExecution(id);drawer.value=true}
+function closeDetailEvents(){if(detailEvents){detailEvents.close();detailEvents=null}}
+function openDetailEvents(id){
+  closeDetailEvents()
+  if(typeof EventSource==='undefined')return
+  const source=new EventSource(executionEventsUrl(id));detailEvents=source
+  source.addEventListener('snapshot',event=>{
+    if(detailEvents!==source)return
+    try {
+      const snapshot=JSON.parse(event.data)
+      if(snapshot.id!==id)return
+      detail.value=snapshot
+      // A reconnect can arrive after the execution has already finished. The
+      // server sends a final snapshot and closes that one-shot stream; close
+      // EventSource here to prevent its automatic reconnect loop.
+      if(!active(snapshot))closeDetailEvents()
+    }catch{/* Reconnect supplies a fresh snapshot. */}
+  })
+  source.addEventListener('execution',event=>{
+    if(detail.value?.id!==id||detailEvents!==source)return
+    try {
+      const update=JSON.parse(event.data),next={...detail.value,...update}
+      for(const channel of ['stdout','stderr']){
+        const offset=Number(update[`${channel}Offset`])||0,delta=update[channel]||'',current=detail.value[channel]||''
+        if(offset<=current.length)next[channel]=current+delta.slice(Math.max(0,current.length-offset))
+        else next[channel]=current+delta
+      }
+      detail.value=next
+      if(!active(next))closeDetailEvents()
+    } catch { /* Ignore malformed update; EventSource reconnects if needed. */ }
+  })
+}
+async function open(id){closeDetailEvents();detail.value=await getExecution(id);drawer.value=true;if(active(detail.value))openDetailEvents(id)}
 async function copyText(value){
   try {
     if(navigator.clipboard?.writeText) await navigator.clipboard.writeText(value)
@@ -65,8 +96,10 @@ async function stop(row){
   try {await ElMessageBox.confirm(`结束脚本「${row.script_name}」及其进程组？`,'结束执行',{type:'warning',confirmButtonText:'结束执行'})}catch{return}
   await stopExecution(row.id);await load();if(detail.value?.id===row.id)detail.value=await getExecution(row.id)
 }
-watch(()=>props.active,enabled=>{if(enabled)load();else{requestVersion++;loading.value=false}},{immediate:true})
+watch(drawer,opened=>{if(!opened)closeDetailEvents();else if(detail.value&&active(detail.value))openDetailEvents(detail.value.id)})
+watch(()=>props.active,enabled=>{if(enabled)load();else{requestVersion++;loading.value=false;closeDetailEvents()}},{immediate:true})
 watch(()=>props.scriptId,()=>{if(props.active)reset()})
+onBeforeUnmount(closeDetailEvents)
 defineExpose({open,load})
 </script>
 <style scoped>

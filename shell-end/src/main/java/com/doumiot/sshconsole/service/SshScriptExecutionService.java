@@ -11,6 +11,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.annotation.Order;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import javax.annotation.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -33,6 +34,7 @@ public class SshScriptExecutionService {
     private final ConcurrentMap<String, Control> active = new ConcurrentHashMap<>();
     private final ThreadPoolExecutor workers = new ThreadPoolExecutor(4,4,0,TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(16), r -> { Thread t=new Thread(r,"script-execution"); t.setDaemon(true); return t; });
+    private final ConcurrentMap<String, CopyOnWriteArrayList<DetailSubscription>> detailSubscribers = new ConcurrentHashMap<>();
     private volatile boolean closing;
     private static final String ACTIVE = "('QUEUED','RUNNING','CANCELLING')";
 
@@ -90,6 +92,85 @@ public class SshScriptExecutionService {
         return rows.get(0);
     }
 
+    /** Stream only the opened execution detail; the history list remains explicitly refreshed. */
+    public SseEmitter streamDetail(String id) {
+        SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
+        Control control = active.get(id);
+        DetailSubscription subscription = null;
+        if (control != null) {
+            synchronized (control) {
+                Map<String,Object> initial = new LinkedHashMap<>(detail(id));
+                initial.put("stdout", text(control.stdout));
+                initial.put("stderr", text(control.stderr));
+                subscription = new DetailSubscription(emitter,
+                        Objects.toString(initial.get("stdout"), "").length(),
+                        Objects.toString(initial.get("stderr"), "").length());
+                detailSubscribers.computeIfAbsent(id, key -> new CopyOnWriteArrayList<>()).add(subscription);
+                try { emitter.send(SseEmitter.event().name("snapshot").data(initial)); }
+                catch (IOException e) { removeDetailSubscription(id, subscription); emitter.completeWithError(e); }
+            }
+        } else {
+            try { emitter.send(SseEmitter.event().name("snapshot").data(detail(id))); emitter.complete(); }
+            catch (IOException e) { emitter.completeWithError(e); }
+        }
+        DetailSubscription registered = subscription;
+        Runnable close = () -> { if (registered != null) removeDetailSubscription(id, registered); };
+        emitter.onCompletion(close);
+        emitter.onTimeout(() -> { close.run(); emitter.complete(); });
+        emitter.onError(error -> close.run());
+        return emitter;
+    }
+
+    private void removeDetailSubscription(String id, DetailSubscription subscription) {
+        CopyOnWriteArrayList<DetailSubscription> listeners = detailSubscribers.get(id);
+        if (listeners != null) { listeners.remove(subscription); if (listeners.isEmpty()) detailSubscribers.remove(id, listeners); }
+    }
+
+    private void publishOutput(String id, Control control) {
+      synchronized (control) {
+        CopyOnWriteArrayList<DetailSubscription> listeners = detailSubscribers.get(id);
+        if (listeners == null || listeners.isEmpty()) return;
+        String stdout = text(control.stdout), stderr = text(control.stderr);
+        for (DetailSubscription subscription : listeners) {
+            try {
+                synchronized (subscription) {
+                    Map<String,Object> update = new LinkedHashMap<>();
+                    update.put("stdoutOffset", subscription.stdoutLength);
+                    update.put("stderrOffset", subscription.stderrLength);
+                    update.put("stdout", stdout.substring(Math.min(subscription.stdoutLength, stdout.length())));
+                    update.put("stderr", stderr.substring(Math.min(subscription.stderrLength, stderr.length())));
+                    subscription.stdoutLength = stdout.length(); subscription.stderrLength = stderr.length();
+                    if (!update.get("stdout").equals("") || !update.get("stderr").equals(""))
+                        subscription.emitter.send(SseEmitter.event().name("execution").data(update));
+                }
+            } catch (Exception e) { removeDetailSubscription(id, subscription); }
+        }
+      }
+    }
+
+    private void publishState(String id, Control control, Map<String,Object> row) {
+      synchronized (control) {
+        CopyOnWriteArrayList<DetailSubscription> listeners = detailSubscribers.get(id);
+        if (listeners == null || listeners.isEmpty()) return;
+        Map<String,Object> update = new LinkedHashMap<>();
+        for (String key : Arrays.asList("status", "exit_status", "error", "finished_at", "duration_ms", "truncated")) update.put(key, row.get(key));
+        boolean done = !Arrays.asList("QUEUED", "RUNNING", "CANCELLING").contains(row.get("status"));
+        for (DetailSubscription subscription : listeners) {
+            try {
+                synchronized (subscription) {
+                    update.put("stdoutOffset", subscription.stdoutLength); update.put("stderrOffset", subscription.stderrLength);
+                    String stdout=text(control.stdout), stderr=text(control.stderr);
+                    update.put("stdout", stdout.substring(Math.min(subscription.stdoutLength, stdout.length())));
+                    update.put("stderr", stderr.substring(Math.min(subscription.stderrLength, stderr.length())));
+                    subscription.stdoutLength=stdout.length(); subscription.stderrLength=stderr.length();
+                    subscription.emitter.send(SseEmitter.event().name("execution").data(update));
+                }
+                if (done) { subscription.emitter.complete(); removeDetailSubscription(id, subscription); }
+            } catch (Exception e) { removeDetailSubscription(id, subscription); }
+        }
+      }
+    }
+
     public Map<String,Object> stop(String id) {
         synchronized(maintenanceLock) {
             detail(id);
@@ -99,7 +180,10 @@ public class SshScriptExecutionService {
                 if(!c.started) {
                     c.completed=true;workers.remove(c.task);
                     finish(id,"CANCELLED",null,null,c);active.remove(id);
-                } else jdbc.update("UPDATE ssh_script_execution SET status='CANCELLING' WHERE id=? AND status IN "+ACTIVE,id);
+                } else {
+                    jdbc.update("UPDATE ssh_script_execution SET status='CANCELLING' WHERE id=? AND status IN "+ACTIVE,id);
+                    publishState(id,c,detail(id));
+                }
             }
             return detail(id);
         }
@@ -112,13 +196,14 @@ public class SshScriptExecutionService {
         try {
             if(c.cancel) {status="CANCELLED";return;}
             jdbc.update("UPDATE ssh_script_execution SET status='RUNNING' WHERE id=? AND status='QUEUED'",id);
+            publishState(id,c,detail(id));
             if("CRON".equals(source)) jdbc.update("UPDATE ssh_script_schedule SET last_run_at=?,last_status='RUNNING',last_output=NULL WHERE script_id=?",Instant.now().toString(),script.getId());
             client=clients.connectAndAuth(host.getHost(),host.getPort()==null?22:host.getPort(),account.getUsername(),account.getAuthType(),accounts.loadSecret(account));
             if(c.cancel) {status="CANCELLED";return;}
             try(Session session=client.startSession()) {
                 Session.Command command=session.exec(remoteCommand(id,script));
                 launched=true;
-                out=pump(command.getInputStream(),c.stdout,c); err=pump(command.getErrorStream(),c.stderr,c);
+                out=pump(id,command.getInputStream(),c.stdout,c); err=pump(id,command.getErrorStream(),c.stderr,c);
                 // 独立写线程避免大脚本写入阻塞取消处理。
                 CountDownLatch writerDone=new CountDownLatch(1);
                 AtomicReference<IOException> writerFailure=new AtomicReference<>();
@@ -194,10 +279,11 @@ public class SshScriptExecutionService {
         if(result.getExitStatus()!=0) throw new IOException("远端终止未确认，请检查远端进程："+result.getStderr());
     }
 
-    private Thread pump(InputStream input,ByteArrayOutputStream buffer,Control c) {
+    private Thread pump(String id,InputStream input,ByteArrayOutputStream buffer,Control c) {
         Thread thread=new Thread(() -> {try {byte[] bytes=new byte[4096];int n;
-            while((n=input.read(bytes))!=-1) synchronized(buffer) {
-                int take=Math.min(n,512*1024-buffer.size()); if(take>0)buffer.write(bytes,0,take);if(take<n)c.truncated=true;
+            while((n=input.read(bytes))!=-1) {
+                synchronized(buffer) { int take=Math.min(n,512*1024-buffer.size()); if(take>0)buffer.write(bytes,0,take);if(take<n)c.truncated=true; }
+                publishOutput(id,c);
             }
         }catch(IOException ignored) {}},"script-output");thread.setDaemon(true);thread.start();return thread;
     }
@@ -206,6 +292,7 @@ public class SshScriptExecutionService {
     private void finish(String id,String status,Integer code,String error,Control c) {
         persistOutput(id,c);
         jdbc.update("UPDATE ssh_script_execution SET status=?,exit_status=?,error=?,finished_at=?,duration_ms=? WHERE id=?",status,code,error,Instant.now().toString(),System.currentTimeMillis()-c.created,id);
+        publishState(id,c,detail(id));
     }
     @PreDestroy public void shutdown() {
         closing=true;active.values().forEach(c -> c.cancel=true);workers.shutdown();
@@ -214,5 +301,11 @@ public class SshScriptExecutionService {
     private static class Control {
         volatile boolean cancel,truncated; boolean started,completed; Runnable task; final long created=System.currentTimeMillis();
         final ByteArrayOutputStream stdout=new ByteArrayOutputStream(),stderr=new ByteArrayOutputStream();
+    }
+    private static class DetailSubscription {
+        final SseEmitter emitter; int stdoutLength,stderrLength;
+        DetailSubscription(SseEmitter emitter,int stdoutLength,int stderrLength) {
+            this.emitter=emitter;this.stdoutLength=stdoutLength;this.stderrLength=stderrLength;
+        }
     }
 }
