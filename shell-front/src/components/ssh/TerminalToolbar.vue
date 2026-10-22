@@ -91,6 +91,17 @@
       <span class="tool-btn-text">配色</span>
     </button>
 
+    <!-- 共享终端协同 -->
+    <button
+      type="button"
+      class="tool-btn"
+      title="生成分享链接，共享当前 tmux 会话 (实时协同或只读观看)"
+      @click="$emit('open-share')"
+    >
+      <el-icon><Share /></el-icon>
+      <span class="tool-btn-text">分享</span>
+    </button>
+
     <!-- 字符编码切换 -->
     <el-dropdown trigger="click" @command="enc => $emit('change-encoding', enc)">
       <button
@@ -129,7 +140,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { ArrowDown, Delete, Document, FullScreen, Rank } from '@element-plus/icons-vue'
+import { ArrowDown, Delete, Document, FullScreen, Rank, Share } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 
 const { effectiveDark: isDark } = useTheme()
@@ -151,6 +162,7 @@ defineEmits([
   'toggle-fullscreen',
   'toggle-tone',
   'open-theme',
+  'open-share',
   'change-encoding'
 ])
 </script>

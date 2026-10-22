@@ -48,21 +48,40 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
     private SshTerminalService sshTerminalService;
     @Resource
     private SshSessionRegistry sessionRegistry;
+    @Resource
+    private com.doumiot.sshconsole.service.SshShareSessionService shareSessionService;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
+        String shareToken = parseStringQuery(session.getUri(), "shareToken");
         Long accountId = parseAccountId(session.getUri());
-        if (accountId == null) {
+        String terminalId = parseStringQuery(session.getUri(), "terminalId");
+        boolean readOnly = false;
+        com.doumiot.sshconsole.service.SshShareSessionService.ShareRecord shareRecord = null;
+
+        if (StringUtils.hasText(shareToken)) {
+            shareRecord = shareSessionService.getValidShare(shareToken);
+            if (shareRecord == null) {
+                sendErrorAndClose(session, "SHARE_INVALID", "共享会话链接已失效或已过期");
+                return;
+            }
+            accountId = shareRecord.getAccountId();
+            terminalId = shareRecord.getTerminalId();
+            readOnly = shareRecord.isReadOnly();
+            shareRecord.getActiveConnections().incrementAndGet();
+            session.getAttributes().put("shareToken", shareToken);
+            session.getAttributes().put("readOnly", readOnly);
+        } else if (accountId == null) {
             sendErrorAndClose(session, "BAD_REQUEST", "缺少或无效的 accountId");
             return;
         }
+
         int cols = parseIntQuery(session.getUri(), "cols", 0);
         int rows = parseIntQuery(session.getUri(), "rows", 0);
-        String terminalId = parseStringQuery(session.getUri(), "terminalId");
 
         SshTerminalService.TerminalSession terminalSession;
         try {
-            terminalSession = sshTerminalService.openTerminal(accountId, cols, rows, terminalId);
+            terminalSession = sshTerminalService.openTerminal(accountId, cols, rows, terminalId, readOnly);
         } catch (BusinessRuntimeException e) {
             sendErrorAndClose(session, "CONNECT_FAILED", e.getMessage());
             return;
@@ -98,6 +117,10 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
         }
         switch (frame.getType()) {
             case "input":
+                if (Boolean.TRUE.equals(session.getAttributes().get("readOnly"))) {
+                    // 只读共享会话：丢弃输入
+                    break;
+                }
                 if (StringUtils.hasText(frame.getData())) {
                     byte[] bytes = Base64.getDecoder().decode(frame.getData());
                     String enc = frame.getEncoding();
@@ -128,6 +151,13 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        String shareToken = (String) session.getAttributes().get("shareToken");
+        if (StringUtils.hasText(shareToken)) {
+            com.doumiot.sshconsole.service.SshShareSessionService.ShareRecord record = shareSessionService.getShare(shareToken);
+            if (record != null) {
+                record.getActiveConnections().decrementAndGet();
+            }
+        }
         String token = (String) session.getAttributes().get("sessionToken");
         if (StringUtils.hasText(token)) {
             cleanupSession(token);
@@ -137,6 +167,13 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
         log.debug("WebSocket transport error: {}", exception.getMessage());
+        String shareToken = (String) session.getAttributes().get("shareToken");
+        if (StringUtils.hasText(shareToken)) {
+            com.doumiot.sshconsole.service.SshShareSessionService.ShareRecord record = shareSessionService.getShare(shareToken);
+            if (record != null) {
+                record.getActiveConnections().decrementAndGet();
+            }
+        }
         String token = (String) session.getAttributes().get("sessionToken");
         if (StringUtils.hasText(token)) {
             cleanupSession(token);

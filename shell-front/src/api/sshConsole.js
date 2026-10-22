@@ -1,4 +1,5 @@
 import { del, get, patch, post, put, apiClient, API_BASE, handleApiResponse } from '@/utils/apiHandler'
+import { buildTerminalWsQuery } from '@/utils/terminalShareHelper'
 
 const BASE = '/api/ssh-console'
 
@@ -6,15 +7,29 @@ export function getMonitorConfig(accountId) { return get(`${BASE}/host/monitor-c
 export function saveMonitorConfig(accountId, config) { return put(`${BASE}/host/monitor-config?accountId=${encodeURIComponent(accountId)}`, config, { showSuccess: false, showFailure: false }) }
 
 /** 与 HTTP 共用同源地址；支持显式 VITE_API_BASE。 */
-export function buildTerminalWsUrl(accountId, { cols, rows, terminalId } = {}) {
-  const params = new URLSearchParams({ accountId: String(accountId) })
-  if (terminalId) params.set('terminalId', String(terminalId))
-  if (cols > 0) params.set('cols', String(cols))
-  if (rows > 0) params.set('rows', String(rows))
+export function buildTerminalWsUrl(accountId, { cols, rows, terminalId, shareToken } = {}) {
+  const query = buildTerminalWsQuery({ accountId, shareToken, terminalId, cols, rows })
   const url = new URL(`${API_BASE}/ws/ssh-console/terminal`, window.location.origin)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  url.search = params.toString()
+  url.search = query
   return url.toString()
+}
+
+/** 终端协同共享会话 API */
+export function createShareSession(data) {
+  return post(`${BASE}/share/create`, data, { showSuccess: false })
+}
+
+export function getShareSessionInfo(token) {
+  return get(`${BASE}/share/info`, { token }, { showSuccess: false })
+}
+
+export function listShareSessions(accountId, terminalId) {
+  return get(`${BASE}/share/list`, { accountId, terminalId }, { showSuccess: false })
+}
+
+export function revokeShareSession(token) {
+  return post(`${BASE}/share/revoke?token=${encodeURIComponent(token)}`, {}, { showSuccess: false })
 }
 
 export function listScheduleAccounts() {

@@ -45,13 +45,63 @@ export function clearSavedSshAccount() {
 export const SS_SSH_TERMINAL_TABS = 'sshConsoleTerminalTabs'
 export const SS_SSH_ACTIVE_TERMINAL_ID = 'sshConsoleActiveTerminalId'
 
+/** 本地账户默认终端会话 Key 映射（避免多人全局使用默认 default 导致串 session） */
+export const LS_ACCOUNT_TERMINAL_SESSION_MAP = 'sshConsoleAccountTerminalSessionMap'
+
+/**
+ * 生成随机唯一的终端会话 Key（8-10位字母数字，tmux与URL安全）
+ */
+export function generateTerminalSessionKey() {
+  const rand = Math.random().toString(36).slice(2, 8)
+  const time = Date.now().toString(36).slice(-4)
+  return `s_${time}${rand}`
+}
+
+export function getAccountSavedTerminalKey(accountId, storage = (typeof localStorage !== 'undefined' ? localStorage : null)) {
+  if (!storage || !accountId) return null
+  try {
+    const raw = storage.getItem(LS_ACCOUNT_TERMINAL_SESSION_MAP)
+    if (!raw) return null
+    const map = JSON.parse(raw)
+    const val = map && map[accountId]
+    return (typeof val === 'string' && val.trim() && val.trim() !== 'default') ? val.trim() : null
+  } catch {
+    return null
+  }
+}
+
+export function saveAccountTerminalKey(accountId, terminalKey, storage = (typeof localStorage !== 'undefined' ? localStorage : null)) {
+  if (!storage || !accountId || !terminalKey) return
+  try {
+    const raw = storage.getItem(LS_ACCOUNT_TERMINAL_SESSION_MAP)
+    const map = raw ? JSON.parse(raw) : {}
+    map[accountId] = terminalKey
+    storage.setItem(LS_ACCOUNT_TERMINAL_SESSION_MAP, JSON.stringify(map))
+  } catch {
+    /* ignore storage quota errors */
+  }
+}
+
+export function removeAccountTerminalKey(accountId, storage = (typeof localStorage !== 'undefined' ? localStorage : null)) {
+  if (!storage || !accountId) return
+  try {
+    const raw = storage.getItem(LS_ACCOUNT_TERMINAL_SESSION_MAP)
+    if (!raw) return
+    const map = JSON.parse(raw)
+    delete map[accountId]
+    storage.setItem(LS_ACCOUNT_TERMINAL_SESSION_MAP, JSON.stringify(map))
+  } catch {
+    /* ignore */
+  }
+}
+
 export function saveTerminalTabs(tabs, activeTabId, storage = (typeof sessionStorage !== 'undefined' ? sessionStorage : null)) {
   if (!storage) return
   try {
     if (!Array.isArray(tabs)) return
     const serialized = tabs.map(t => ({
       tabId: t.tabId,
-      terminalId: t.terminalId || 'default',
+      terminalId: (t.terminalId && t.terminalId !== 'default') ? t.terminalId : generateTerminalSessionKey(),
       accountId: t.accountId,
       hostId: t.hostId,
       defaultCwd: t.defaultCwd || '',
@@ -78,18 +128,24 @@ export function readSavedTerminalTabs(storage = (typeof sessionStorage !== 'unde
     if (!Array.isArray(parsed)) return { tabs: [], activeTabId: null }
     const tabs = parsed
       .filter(t => t && t.accountId && t.tabId)
-      .map(t => ({
-        tabId: String(t.tabId),
-        terminalId: String(t.terminalId || 'default'),
-        accountId: Number(t.accountId),
-        hostId: t.hostId != null ? Number(t.hostId) : null,
-        defaultCwd: t.defaultCwd || '',
-        label: t.label || '',
-        encoding: t.encoding || 'UTF-8',
-        account: t.account || null,
-        token: '',
-        connectionMode: ''
-      }))
+      .map(t => {
+        let termId = String(t.terminalId || '').trim()
+        if (!termId || termId === 'default') {
+          termId = generateTerminalSessionKey()
+        }
+        return {
+          tabId: String(t.tabId),
+          terminalId: termId,
+          accountId: Number(t.accountId),
+          hostId: t.hostId != null ? Number(t.hostId) : null,
+          defaultCwd: t.defaultCwd || '',
+          label: t.label || '',
+          encoding: t.encoding || 'UTF-8',
+          account: t.account || null,
+          token: '',
+          connectionMode: ''
+        }
+      })
     return {
       tabs,
       activeTabId: activeTabId ? String(activeTabId) : (tabs[0]?.tabId || null)
@@ -110,32 +166,47 @@ export function clearSavedTerminalTabs(storage = (typeof sessionStorage !== 'und
 }
 
 /**
- * 分配确定性、可持久化重连的终端会话 ID：
- * - 同一账户的首个主终端使用稳定标识 'default'（对应 tmux 会话 doumi-shell-{accountId}-default）
- * - 额外新建的终端使用递增编号 'term-2', 'term-3' 等（对应 tmux 会话 doumi-shell-{accountId}-term-2）
+ * 分配独立且本地持久化的终端会话 ID：
+ * - 避免使用全局固定的 'default'，防止不同用户在未分享时意外加入同一 tmux 会话
+ * - 首个主终端优先恢复当前本地已记录的专属随机 key（不存在则生成全新随机 key 并记录于 localStorage）
+ * - 额外新建的终端（点击"+"或右键新建）每次分配全新独立随机 key
+ * - 统一在 sessionStorage 中保持当前窗口活跃标签页列表，支持刷新页面保持重连
  */
-export function allocateTerminalId(accountId, existingTabs = []) {
+export function allocateTerminalId(accountId, existingTabs = [], options = {}) {
   const accountTabs = Array.isArray(existingTabs)
     ? existingTabs.filter(t => t && t.accountId === accountId)
     : []
-  const usedSuffixes = new Set(accountTabs.map(t => t.terminalId || 'default'))
+  const usedKeys = new Set(accountTabs.map(t => t.terminalId).filter(Boolean))
 
-  if (!usedSuffixes.has('default')) {
-    return {
-      tabId: `term-${accountId}-default`,
-      terminalId: 'default',
-      subIndex: 1
+  const isPrimary = accountTabs.length === 0
+  let terminalId = null
+
+  const storage = options.localStorage !== undefined
+    ? options.localStorage
+    : (typeof localStorage !== 'undefined' ? localStorage : null)
+
+  if (isPrimary && !options.forceNew) {
+    const savedKey = getAccountSavedTerminalKey(accountId, storage)
+    if (savedKey && savedKey !== 'default' && !usedKeys.has(savedKey)) {
+      terminalId = savedKey
     }
   }
 
-  let idx = 2
-  while (usedSuffixes.has(`term-${idx}`)) {
-    idx++
+  if (!terminalId) {
+    do {
+      terminalId = generateTerminalSessionKey()
+    } while (usedKeys.has(terminalId))
+
+    if (isPrimary && !options.forceNew) {
+      saveAccountTerminalKey(accountId, terminalId, storage)
+    }
   }
+
+  const subIndex = accountTabs.length + 1
   return {
-    tabId: `term-${accountId}-term-${idx}`,
-    terminalId: `term-${idx}`,
-    subIndex: idx
+    tabId: `term-${accountId}-${terminalId}`,
+    terminalId,
+    subIndex
   }
 }
 

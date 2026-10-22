@@ -80,8 +80,10 @@ const { effectiveDark } = useTheme()
 const { activeTheme } = useTerminalTheme()
 
 const props = defineProps({
-  accountId: { type: Number, required: true },
+  accountId: { type: [Number, String], default: 0 },
   terminalId: { type: String, default: '' },
+  shareToken: { type: String, default: '' },
+  readOnly: { type: Boolean, default: false },
   fontSize: { type: Number, default: 14 },
   lightTone: { type: String, default: 'paper' }, // 'paper' | 'hybrid'
   encoding: { type: String, default: 'UTF-8' }
@@ -484,6 +486,13 @@ function connect() {
       }
       return false
     }
+    if (props.readOnly) {
+      // 只读共享模式：允许搜索和复制快捷键，阻止向终端发送任何输入按键
+      if ((event.ctrlKey || event.metaKey) && (event.key?.toLowerCase() === 'c' || event.key?.toLowerCase() === 'f')) {
+        return true
+      }
+      return false
+    }
     if (event.type !== 'keydown') return true
     if (event.key === 'Insert' && event.shiftKey) {
       void pasteTerminalClipboard()
@@ -517,7 +526,8 @@ function connect() {
   const url = buildTerminalWsUrl(props.accountId, {
     cols: terminal.cols,
     rows: terminal.rows,
-    terminalId: props.terminalId
+    terminalId: props.terminalId,
+    shareToken: props.shareToken
   })
   ws = new WebSocket(url)
   ws.onmessage = handleWsMessage

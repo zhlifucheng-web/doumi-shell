@@ -187,6 +187,7 @@
                         @toggle-tone="toggleTerminalTone"
                         @toggle-fullscreen="toggleTerminalFullscreen"
                         @open-theme="workspaceStore.terminalThemeOpen = true"
+                        @open-share="shareDialogVisible = true"
                         @change-encoding="onChangeEncoding"
                       />
                     </div>
@@ -419,6 +420,12 @@
         <el-button type="primary" :loading="saving" @click="saveAccount">保存</el-button>
       </template>
     </el-dialog>
+    <!-- 共享终端会话弹窗 -->
+    <TerminalShareDialog
+      v-model="shareDialogVisible"
+      :account="detail?.raw"
+      :terminal-tab="activeTerminalTab"
+    />
   </div>
 </template>
 
@@ -431,6 +438,7 @@ import { Close, Expand, Fold, Folder, Monitor, MoreFilled, Plus, Refresh, Search
 import { useWorkspaceStore } from '@/stores/workspace'
 import SshTerminal from '@/components/ssh/SshTerminal.vue'
 import TerminalToolbar from '@/components/ssh/TerminalToolbar.vue'
+import TerminalShareDialog from '@/components/ssh/TerminalShareDialog.vue'
 import SnippetBar from '@/components/ssh/SnippetBar.vue'
 import TerminalFileLayout from '@/components/ssh/TerminalFileLayout.vue'
 import SshFilePanel from '@/components/ssh/SshFilePanel.vue'
@@ -522,6 +530,7 @@ const activeTerminalTab = computed(() => terminalTabs.value.find(item => item.ta
 const openingFileSession = ref(false)
 
 const snippetBarVisible = ref(false)
+const shareDialogVisible = ref(false)
 const isSplit = ref(false)
 const terminalFontSize = ref(14)
 const terminalLightTone = ref('paper')
@@ -984,7 +993,7 @@ function activateTerminalForAccount(account) {
 function openAdditionalTerminalTab() {
   const current = activeTerminalTab.value
   if (!current) return
-  const { tabId, terminalId, subIndex } = allocateTerminalId(current.accountId, terminalTabs.value)
+  const { tabId, terminalId, subIndex } = allocateTerminalId(current.accountId, terminalTabs.value, { forceNew: true })
   const baseLabel = current.account ? terminalTabLabel(current.account) : (current.label || '终端')
   const label = `${baseLabel} #${subIndex}`
   const tab = {
@@ -1166,7 +1175,7 @@ async function openNewAccountTerminal(data) {
   try {
     const account = await getAccount(data.id)
     const host = await loadAccountHostMeta(account.hostId)
-    const { tabId, terminalId, subIndex } = allocateTerminalId(account.id, terminalTabs.value)
+    const { tabId, terminalId, subIndex } = allocateTerminalId(account.id, terminalTabs.value, { forceNew: true })
     const baseLabel = terminalTabLabel(account, host)
     const label = subIndex > 1 ? `${baseLabel} #${subIndex}` : baseLabel
     const tab = {
