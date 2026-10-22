@@ -145,6 +145,7 @@ public class SshSessionRegistry {
         private Channel terminalChannel;
         private OutputStream shellStdin;
         private InputStream shellStdout;
+        private SshTmuxSession tmuxSession;
         private int ptyCols;
         private int ptyRows;
         private boolean terminalAttached;
@@ -178,6 +179,7 @@ public class SshSessionRegistry {
             sshSession = null;
             shellStdin = null;
             shellStdout = null;
+            tmuxSession = null;
             terminalAttached = false;
         }
 

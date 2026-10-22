@@ -34,6 +34,12 @@ Linux 终端默认使用由账户 ID 和终端 ID 确定的 tmux 会话。相同
 
 ## tmux 启动与故障处理
 
+终端滚轮使用 tmux 自身的历史缓冲区。准备新会话和重连已有会话时，按会话设置 `mouse on`，旧版回退到当前窗口的 `mode-mouse on`，不修改全局选项。前端同时转发 xterm 的 `onData` 与 `onBinary`，鼠标协议字节绕过 GBK 等正文编码转换。
+
+tmux 兼容探测须保留 SSH stderr 管道，不可把 tmux 的错误输出重定向到 `/dev/null`：实机 tmux 1.6 在此场景下会挂住，导致旧版选项回退无法执行并最终启动超时。
+
+新版 tmux 按 `alternate_on`、`mouse_any_flag` 与 `pane_in_mode` 区分历史滚动和编辑器输入：编辑器未开启鼠标时将滚轮转为方向键，原生鼠标和历史复制模式保留鼠标事件。tmux 1.6 缺少这些字段，Linux 下通过前台进程组识别 vim、nano、emacs、less 等常见全屏工具；普通前台命令仍滚动历史。未知工具或状态查询失败时保留鼠标事件。状态查询使用独立 SSH 通道和短命令超时，连续滚动缓存 250ms，键盘输入立即使缓存失效。该旧版识别不保证覆盖自定义名称的编辑器。
+
 启动分为 SSH 连接、检查、准备、附着四个阶段，通过 WebSocket `connecting` 帧显示进度。短命令在独立 SSH 通道执行：检查和创建命令有 3 秒远端看门狗；附着确认预算为 8 秒，使用客户端 PTY 标识与 `tmux list-clients` 的结果精确匹配后才发送 `ready`。远端看门狗使用 POSIX shell，不依赖 GNU `timeout`。健康的交互会话没有固定存活时限。
 
 兼容命令按 tmux 1.6 验证，不使用 `new-session -A`、`new-session -c`。启动过程不修改全局 `aggressive-resize`。在 192.168.78.140 的 tmux 1.6 上，旧启动链中的 `tmux setw -g aggressive-resize on` 曾阻塞且持续累积；旧实现提前发送 `ready`，导致页面接受输入但 shell 尚未进入 tmux。底层旧版本 tmux 的内部阻塞原因尚未进一步定位。

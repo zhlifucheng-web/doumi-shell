@@ -10,6 +10,83 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class SshTmuxSessionTest {
+    private static final byte[] WHEEL_UP = "\033[M`!!".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] WHEEL_DOWN = "\033[<65;10;8M".getBytes(StandardCharsets.UTF_8);
+
+    private static SshTmuxSession mouseSession(String state) throws Exception {
+        SshTmuxSession manager = new SshTmuxSession((cmd, seconds) -> result(0, state));
+        manager.prepare("persistent", null, 120, 40, false);
+        return manager;
+    }
+
+    @Test void shellWheelRemainsAMouseEventForTmuxHistory() throws Exception {
+        assertArrayEquals(WHEEL_UP, mouseSession("mouse").filterWheelInput(WHEEL_UP));
+        assertArrayEquals(WHEEL_DOWN, mouseSession("mouse").filterWheelInput(WHEEL_DOWN));
+    }
+
+    @Test void editorWithoutMouseReceivesCursorKeysInBothProtocols() throws Exception {
+        SshTmuxSession manager = mouseSession("keys");
+        assertArrayEquals("\033[A".getBytes(StandardCharsets.UTF_8), manager.filterWheelInput(WHEEL_UP));
+        assertArrayEquals("\033[B".getBytes(StandardCharsets.UTF_8), manager.filterWheelInput(WHEEL_DOWN));
+        byte[] utf8Coordinates = "\033[Md中文".getBytes(StandardCharsets.UTF_8);
+        assertArrayEquals("\033[A".getBytes(StandardCharsets.UTF_8), manager.filterWheelInput(utf8Coordinates));
+    }
+
+    @Test void binaryCoordinatesThatResembleUtf8AreStillTwoX10Coordinates() throws Exception {
+        byte[] raw = {27, 91, 77, 96, (byte) 195, (byte) 169};
+        assertArrayEquals("\033[A".getBytes(StandardCharsets.UTF_8), mouseSession("keys").filterWheelInput(raw));
+    }
+
+    @Test void typingAndPastingNeverBecomeMouseInputOrRunRemoteProbes() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        SshTmuxSession manager = new SshTmuxSession((cmd, seconds) -> {
+            calls.incrementAndGet();
+            return result(0, "keys");
+        });
+        manager.prepare("persistent", null, 120, 40, false);
+        int prepared = calls.get();
+        for (String input : new String[]{"vim file\r", "\033[A", "\033[M !!", "\033[<0;1;1M", "pasted \033[M`!! text"}) {
+            byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
+            assertArrayEquals(bytes, manager.filterWheelInput(bytes));
+        }
+        assertEquals(prepared, calls.get());
+    }
+
+    @Test void wheelBurstSharesAProbeButTypingInvalidatesTheEditorState() throws Exception {
+        java.util.concurrent.atomic.AtomicReference<String> state = new java.util.concurrent.atomic.AtomicReference<>("keys");
+        AtomicInteger calls = new AtomicInteger();
+        SshTmuxSession manager = new SshTmuxSession((cmd, seconds) -> {
+            calls.incrementAndGet();
+            return result(0, state.get());
+        });
+        manager.prepare("persistent", null, 120, 40, false);
+        int prepared = calls.get();
+        manager.filterWheelInput(WHEEL_UP);
+        manager.filterWheelInput(WHEEL_UP);
+        assertEquals(prepared + 1, calls.get());
+        state.set("mouse");
+        manager.filterWheelInput(":q\r".getBytes(StandardCharsets.UTF_8));
+        assertArrayEquals(WHEEL_UP, manager.filterWheelInput(WHEEL_UP));
+        assertEquals(prepared + 2, calls.get());
+    }
+
+    @Test void failedStateProbePreservesMouseRatherThanRecallingAShellCommand() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        SshTmuxSession manager = new SshTmuxSession((cmd, seconds) -> {
+            if (calls.incrementAndGet() > 2) throw new IOException("probe failed");
+            return result(0, "");
+        });
+        manager.prepare("persistent", null, 120, 40, false);
+        assertArrayEquals(WHEEL_UP, manager.filterWheelInput(WHEEL_UP));
+    }
+
+    @Test void mouseConfigurationFailureDoesNotPublishAReadySession() {
+        AtomicInteger calls = new AtomicInteger();
+        SshTmuxSession manager = new SshTmuxSession((cmd, seconds) ->
+                result(calls.incrementAndGet() == 1 ? 0 : 1, ""));
+        assertThrows(IOException.class, () -> manager.prepare("persistent", null, 120, 40, false));
+    }
+
     @Test void clientEncodingControlsDecorationsWithoutTouchingPaneBytes() throws Exception {
         // Execute the actual attach shell with a fake external tmux, rather than assert command text.
         java.nio.file.Path directory=java.nio.file.Files.createTempDirectory("tmux-encoding-");
@@ -53,8 +130,8 @@ class SshTmuxSessionTest {
     }
     @Test void concurrentCreatorIsAcceptedOnlyAfterTheSessionExists() throws Exception {
         AtomicInteger calls=new AtomicInteger();
-        SshTmuxSession manager=new SshTmuxSession((cmd,seconds)->result(calls.incrementAndGet()==3?0:1,""));
-        assertDoesNotThrow(()->manager.prepare("persistent",null,120,40,false));assertEquals(3,calls.get());
+        SshTmuxSession manager=new SshTmuxSession((cmd,seconds)->result(calls.incrementAndGet()>=3?0:1,""));
+        assertDoesNotThrow(()->manager.prepare("persistent",null,120,40,false));assertEquals(4,calls.get());
     }
     @Test void missingSharedSessionNeverCreatesADifferentShellOrSession() {
         AtomicInteger calls=new AtomicInteger();

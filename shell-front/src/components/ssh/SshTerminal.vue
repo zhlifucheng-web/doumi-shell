@@ -64,6 +64,7 @@
 
 <script setup>
 import { createTerminalConnectionGuard } from '@/utils/terminalConnectionGuard'
+import { bindTerminalInput, encodeTerminalText } from '@/utils/terminalInput'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import EditorScrollbar from '@/components/EditorScrollbar.vue'
 import { Terminal } from 'xterm'
@@ -278,15 +279,6 @@ watch(
   }
 )
 
-function b64Encode(str) {
-  const bytes = new TextEncoder().encode(str)
-  let binary = ''
-  bytes.forEach((b) => {
-    binary += String.fromCharCode(b)
-  })
-  return btoa(binary)
-}
-
 function b64Decode(b64) {
   const binary = atob(b64)
   const bytes = new Uint8Array(binary.length)
@@ -361,9 +353,7 @@ function sendResize() {
 function bindTerminalData() {
   if (!terminal || dataBound) return
   dataBound = true
-  terminal.onData((data) => {
-    sendJson({ type: 'input', data: b64Encode(data), encoding: props.encoding })
-  })
+  bindTerminalInput(terminal, sendJson, () => props.encoding)
   sendResize()
 }
 
@@ -468,6 +458,7 @@ function connect() {
 
   terminal = new Terminal({
     cursorBlink: true,
+    macOptionClickForcesSelection: true,
     fontSize: props.fontSize || 14,
     fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
     allowTransparency: true,
@@ -569,7 +560,7 @@ function focusTerminal() {
 // 供父组件调用的指令注入与清屏方法
 function sendInput(cmd) {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    sendJson({ type: 'input', data: b64Encode(cmd + '\n'), encoding: props.encoding })
+    sendJson({ type: 'input', data: encodeTerminalText(cmd + '\n'), encoding: props.encoding })
   }
 }
 

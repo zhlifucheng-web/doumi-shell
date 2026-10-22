@@ -66,4 +66,22 @@ class SshTerminalStartupTest {
         assertThrows(Exception.class, () -> service.openTerminal(1L,120,40,"stable",false,false,true,stage -> {}));
         assertEquals(0, registry.activeCount());
     }
+
+    @Test void tmuxWheelRoutingReachesTheActualInputStreamAndPlainSshKeepsItsProtocol() throws Exception {
+        SshRemoteExec.ExecResult state = new SshRemoteExec.ExecResult();
+        state.setExitStatus(0); state.setStdout("keys");
+        SshTmuxSession tmux = new SshTmuxSession((command, seconds) -> state);
+        tmux.prepare("persistent", null, 120, 40, false);
+        SshSessionRegistry.SessionEntry entry = registry.register(client, 1L, "test", null, null, null);
+        ByteArrayOutputStream input = new ByteArrayOutputStream();
+        entry.setShellStdin(input);
+        entry.setTmuxSession(tmux);
+        byte[] wheel = "\033[M`!!".getBytes("UTF-8");
+        service.writeInput(entry.getSessionToken(), wheel);
+        assertArrayEquals("\033[A".getBytes("UTF-8"), input.toByteArray());
+        input.reset();
+        entry.setTmuxSession(null);
+        service.writeInput(entry.getSessionToken(), wheel);
+        assertArrayEquals(wheel, input.toByteArray());
+    }
 }

@@ -130,6 +130,7 @@ public class SshTerminalService {
         if (stdin == null) {
             throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "终端未就绪");
         }
+        if (entry.getTmuxSession() != null) bytes = entry.getTmuxSession().filterWheelInput(bytes);
         stdin.write(bytes);
         stdin.flush();
     }
@@ -138,12 +139,15 @@ public class SshTerminalService {
             long accountId, String terminalId, boolean tmux, boolean readOnly, boolean shared,
             String encoding, Consumer<String> progress) throws IOException {
         SSHClient client = entry.getClient();
+        // Mouse state queries use independent SSH channels, so a monitor scan cannot block input.
+        Object tmuxLock = new Object();
         SshTmuxSession tmuxSession = new SshTmuxSession((command, timeout) ->
-                SshRemoteExec.exec(client, entry.getExecLock(), command, timeout));
+                SshRemoteExec.exec(client, tmuxLock, command, timeout));
         String name = tmux ? tmuxSessionName(accountId, terminalId) : null;
         if (tmux) {
             progress.accept("正在准备 tmux 会话…");
             tmuxSession.prepare(name, defaultCwd, cols, rows, shared);
+            entry.setTmuxSession(tmuxSession);
         }
         Session sshSession = client.startSession();
         entry.setSshSession(sshSession);

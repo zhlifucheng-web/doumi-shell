@@ -4,6 +4,8 @@ import net.schmizz.sshj.connection.channel.Channel;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Short-lived tmux preparation and exact-client attachment confirmation (tmux 1.6+). */
 public final class SshTmuxSession {
@@ -11,19 +13,75 @@ public final class SshTmuxSession {
         SshRemoteExec.ExecResult run(String command, int timeoutSeconds) throws IOException;
     }
     private final CommandRunner runner;
+    private String sessionName;
+    private long mouseStateUntil;
+    private boolean wheelAsKeys;
+    private static final Pattern X10_WHEEL = Pattern.compile("\033\\[M([\\s\\S])([\\s\\S]{2})");
+    private static final Pattern SGR_WHEEL = Pattern.compile("\033\\[<(\\d{1,3});\\d+;\\d+M");
     public SshTmuxSession(CommandRunner runner) { this.runner = runner; }
 
     public void prepare(String name, String cwd, int cols, int rows, boolean shared) throws IOException {
         SshRemoteExec.ExecResult exists = run("exec tmux has-session -t " + quote(name), 3);
-        if (exists.getExitStatus() == 0) return;
-        if (exists.getExitStatus() != 1) throw failure("检查会话", exists);
-        if (shared) throw new IOException("共享的 tmux 会话不存在，请发起者先连接原终端");
-        String cd = cwd == null || cwd.trim().isEmpty() ? "" : "cd " + quote(cwd.trim()) + " && ";
-        SshRemoteExec.ExecResult created = run(cd + "exec tmux -2 -u new-session -d -s " + quote(name)
-                + " -x " + cols + " -y " + rows, 3);
-        // Another browser may have created this same persistent session concurrently.
-        if (created.getExitStatus() != 0 && run("exec tmux has-session -t " + quote(name), 3).getExitStatus() != 0)
-            throw failure("创建会话", created);
+        if (exists.getExitStatus() != 0) {
+            if (exists.getExitStatus() != 1) throw failure("检查会话", exists);
+            if (shared) throw new IOException("共享的 tmux 会话不存在，请发起者先连接原终端");
+            String cd = cwd == null || cwd.trim().isEmpty() ? "" : "cd " + quote(cwd.trim()) + " && ";
+            SshRemoteExec.ExecResult created = run(cd + "exec tmux -2 -u new-session -d -s " + quote(name)
+                    + " -x " + cols + " -y " + rows, 3);
+            // Another browser may have created this same persistent session concurrently.
+            if (created.getExitStatus() != 0 && run("exec tmux has-session -t " + quote(name), 3).getExitStatus() != 0)
+                throw failure("创建会话", created);
+        }
+        // 2.1+ uses a session option; 1.6 uses a window option. Never change global defaults.
+        // Keep stderr on the SSH pipe: tmux 1.6 can stall flushing errors to /dev/null.
+        SshRemoteExec.ExecResult mouse = run("tmux set-option -t " + quote(name)
+                + " mouse on || tmux set-window-option -t " + quote(name) + " mode-mouse on", 3);
+        if (mouse.getExitStatus() != 0) throw failure("配置鼠标滚动", mouse);
+        sessionName = name;
+    }
+
+    /** Keep shell wheels in tmux history, but retain cursor movement in editors without mouse support. */
+    public synchronized byte[] filterWheelInput(byte[] input) {
+        String text = new String(input, StandardCharsets.UTF_8);
+        Matcher x10 = X10_WHEEL.matcher(text), sgr = SGR_WHEEL.matcher(text);
+        int button;
+        if (input.length == 6 && input[0] == 27 && input[1] == '[' && input[2] == 'M') button = (input[3] & 255) - 32;
+        else if (x10.matches()) button = x10.group(1).charAt(0) - 32;
+        else if (sgr.matches()) button = Integer.parseInt(sgr.group(1));
+        else { mouseStateUntil = 0; return input; }
+        // Accept only wheel up/down, with optional Shift/Alt/Ctrl modifier bits.
+        if ((button & ~28) != 64 && (button & ~28) != 65) { mouseStateUntil = 0; return input; }
+        if (sessionName == null) return input;
+        long now = System.nanoTime();
+        if (now >= mouseStateUntil) {
+            wheelAsKeys = false;
+            try {
+                SshRemoteExec.ExecResult state = run(mouseStateCommand(), 1);
+                wheelAsKeys = state.getExitStatus() == 0 && "keys".equals(state.getStdout().trim());
+            } catch (IOException ignored) {
+                // A failed probe must never turn a shell wheel into command-history cursor keys.
+            }
+            mouseStateUntil = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(250);
+        }
+        return wheelAsKeys ? (button % 2 == 0 ? "\033[A" : "\033[B").getBytes(StandardCharsets.UTF_8) : input;
+    }
+
+    private String mouseStateCommand() {
+        // 1.6 has no alternate_on/mouse_any_flag formats. Its Linux pane process still exposes
+        // the foreground process group. Recognize common full-screen tools, leaving commands
+        // such as tail and Python REPLs in history scrolling rather than recalling their input.
+        return "tmux list-panes -t " + quote(sessionName)
+                + " -F '#{pane_active}|#{pane_pid}|#{alternate_on}|#{mouse_any_flag}|#{pane_in_mode}'"
+                + " | while IFS='|' read -r active pid alternate mouse in_mode; do "
+                + "[ \"$active\" = 1 ] || continue; "
+                + "if [ -n \"$alternate\" ]; then "
+                + "if [ \"$alternate\" = 1 ] && [ \"$mouse\" = 0 ] && [ \"$in_mode\" != 1 ]; then printf keys; else printf mouse; fi; "
+                + "else case \"$pid\" in ''|*[!0-9]*) exit 1;; esac; "
+                + "groups=$(ps -o pgid=,tpgid= -p \"$pid\") || exit 1; set -- $groups; "
+                + "if [ \"$#\" = 2 ] && [ \"$1\" != \"$2\" ] && [ \"$2\" -gt 0 ]; then "
+                + "foreground=$(ps -o comm= -p \"$2\") || exit 1; "
+                + "case \"${foreground##*/}\" in vi|view|vim|vim.*|nvim|nano|pico|emacs*|less|more|man|top|htop|btop|mcedit|mc|ranger|joe|jed|micro) printf keys;; *) printf mouse;; esac; "
+                + "else printf mouse; fi; fi; break; done";
     }
 
     public static String attachCommand(String name, boolean readOnly) {
