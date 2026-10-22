@@ -136,15 +136,11 @@ public class SshTerminalService {
         if (tmux) {
             String cwdArg = StringUtils.hasText(defaultCwd) ? " -c " + shellQuote(defaultCwd.trim()) : "";
             String sessName = tmuxSessionName(accountId, terminalId);
-            String tmuxCommand;
-            if (readOnly) {
-                tmuxCommand = "if command -v tmux >/dev/null 2>&1; then tmux set-option -g aggressive-resize on 2>/dev/null; "
-                        + "if ! tmux has-session -t " + sessName + " 2>/dev/null; then exec tmux -2 -u new-session -s "
-                        + sessName + cwdArg + "; else exec tmux -2 -u attach-session -r -t " + sessName + "; fi; fi\n";
-            } else {
-                tmuxCommand = "if command -v tmux >/dev/null 2>&1; then tmux set-option -g aggressive-resize on 2>/dev/null; "
-                        + "exec tmux -2 -u new-session -A -s " + sessName + cwdArg + "; fi\n";
-            }
+            String attachArgs = readOnly ? "attach-session -r -t " : "attach-session -t ";
+            String tmuxCommand = "if command -v tmux >/dev/null 2>&1; then tmux set-option -g aggressive-resize on 2>/dev/null; "
+                    + "if tmux has-session -t " + sessName + " 2>/dev/null; then "
+                    + "exec tmux -2 -u " + attachArgs + sessName + "; else "
+                    + "exec tmux -2 -u new-session -s " + sessName + cwdArg + "; fi; fi\n";
             shell.getOutputStream().write(tmuxCommand.getBytes(StandardCharsets.UTF_8));
             shell.getOutputStream().flush();
         } else if (StringUtils.hasText(defaultCwd)) {
