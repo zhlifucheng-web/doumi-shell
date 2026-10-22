@@ -70,16 +70,11 @@
           <el-table-column label="名称" min-width="200">
             <template #default="{ row }">
               <div class="file-name-cell">
-                <span v-if="row.dir" class="file-type-badge badge-dir">DIR</span>
-                <span v-else-if="/\.(log|out)$/i.test(row.name)" class="file-type-badge badge-log">LOG</span>
-                <span v-else-if="/\.(sh|bash|py)$/i.test(row.name)" class="file-type-badge badge-sh">SH</span>
-                <span v-else-if="/\.(conf|cfg|ini|yaml|yml|json|toml)$/i.test(row.name)" class="file-type-badge badge-cfg">CFG</span>
-                <span v-else-if="/\.(tar|gz|zip|bz2|xz|7z)$/i.test(row.name)" class="file-type-badge badge-zip">ZIP</span>
                 <el-icon class="row-ico" :class="{ 'is-dir': row.dir }">
                   <Folder v-if="row.dir" />
                   <Document v-else />
                 </el-icon>
-                <span class="file-name-text">{{ row.name }}</span>
+                <span class="file-name-text" :class="{ 'is-dir': row.dir }">{{ row.name }}</span>
               </div>
             </template>
           </el-table-column>
@@ -611,5 +606,9 @@ html.dark .bookmark-pill {
 .file-name-text {
   font-family: var(--font-mono, monospace);
   font-size: 12px;
+}
+.file-name-text.is-dir {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
 }
 </style>

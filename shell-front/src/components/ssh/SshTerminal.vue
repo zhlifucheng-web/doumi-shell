@@ -57,6 +57,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { SearchAddon } from '@xterm/addon-search'
 import 'xterm/css/xterm.css'
 import { buildTerminalWsUrl } from '@/api/sshConsole'
+import { enhanceTerminalOutput } from '@/utils/terminalColorEnhancer'
 import { useBackground } from '@/composables/useBackground'
 import { useTheme } from '@/composables/useTheme'
 import { useTerminalTheme } from '@/composables/useTerminalTheme'
@@ -423,7 +424,8 @@ function handleWsMessage(ev) {
       activateSession(null)
     }
     const decoded = b64Decode(frame.data)
-    terminal?.write(decoded)
+    const formatted = enhanceTerminalOutput(decoded)
+    terminal?.write(formatted)
     inspectErrorOutput(decoded)
     return
   }
