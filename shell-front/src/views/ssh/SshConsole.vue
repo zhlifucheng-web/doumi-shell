@@ -28,7 +28,7 @@
           <div class="aside-toolbar">
             <el-input
               v-model="filterText"
-              placeholder="筛选分组/主机/账户..."
+              placeholder="筛选分组/主机名/IP/账户..."
               clearable
               class="aside-filter"
             >
@@ -743,8 +743,11 @@ function nodeSubtitle(data) {
 
 function filterNode(value, data) {
   if (!value) return true
-  const v = String(value)
-  return (data.label && data.label.includes(v)) || (data.remark && data.remark.includes(v))
+  const v = String(value).trim().toLocaleLowerCase()
+  if (!v) return true
+  const endpoint = data.nodeType === 'HOST' ? data.extra?.endpoint || '' : ''
+  return [data.label, data.remark, endpoint]
+    .some(field => String(field || '').toLocaleLowerCase().includes(v))
 }
 
 async function loadNode(node, resolve) {
