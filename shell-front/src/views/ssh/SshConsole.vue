@@ -1005,15 +1005,35 @@ async function loadAccountHostMeta(hostId) {
   }
 }
 
-watch([detail,accountHostMeta],()=>{
-  const raw=detail.value.raw
-  if(detail.value.type==='ACCOUNT'&&raw) {
-    const host=accountHostMeta.value
-    managedServer.value={hostId:raw.hostId,accountId:raw.id,name:host.name||`主机#${raw.hostId}`,address:host.host||'',port:host.port||22,username:raw.username||''}
-  } else if(detail.value.type==='HOST'&&raw) {
-    managedServer.value={hostId:raw.id,name:raw.name||raw.host,address:raw.host||'',port:raw.port||22,username:''}
-  } else managedServer.value=null
-},{deep:true,immediate:true})
+// Keep the shared AI context tied to the terminal tab currently in the foreground.
+// An account may have multiple tabs, so accountId alone is not enough to identify it.
+watch([detail, accountHostMeta, activeTerminalTab], () => {
+  const tab = activeTerminalTab.value
+  const raw = tab?.account || detail.value.raw
+  if (tab?.accountId && raw) {
+    const host = accountHostMeta.value
+    managedServer.value = {
+      hostId: tab.hostId || raw.hostId,
+      accountId: tab.accountId,
+      name: host.name || `主机#${tab.hostId || raw.hostId}`,
+      address: host.host || '',
+      port: host.port || 22,
+      username: raw.username || '',
+      tabId: tab.tabId,
+      terminalId: tab.terminalId || tab.tabId,
+      terminalLabel: tab.label || '',
+      connectionMode: tab.connectionMode || ''
+    }
+  } else if (detail.value.type === 'ACCOUNT' && raw) {
+    const host = accountHostMeta.value
+    managedServer.value = {
+      hostId: raw.hostId, accountId: raw.id, name: host.name || `主机#${raw.hostId}`,
+      address: host.host || '', port: host.port || 22, username: raw.username || ''
+    }
+  } else if (detail.value.type === 'HOST' && raw) {
+    managedServer.value = { hostId: raw.id, name: raw.name || raw.host, address: raw.host || '', port: raw.port || 22, username: '' }
+  } else managedServer.value = null
+}, { deep: true, immediate: true })
 
 function persistTerminalTabs() {
   saveTerminalTabs(terminalTabs.value, activeTerminalId.value)

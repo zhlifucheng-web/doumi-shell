@@ -33,7 +33,7 @@
       </el-select>
       <el-button title="刷新主机列表" aria-label="刷新主机列表" :loading="hostLoading" @click="loadHostAccounts">↻</el-button>
     </div>
-    <div class="ai-context"><span :title="selectedServer ? `${selectedServer.username || ''}@${selectedServer.address}:${selectedServer.port}` : '未选择主机'">{{ pageName }} · {{ selectedServer ? `${selectedServer.username ? selectedServer.username + '@' : ''}${selectedServer.name}` : '未选择主机' }}</span><el-tooltip :content="authorizationMode === 'auto' ? '当前对话的读写操作自动执行' : '写操作执行前需要确认'"><el-button link size="small" @click="controlsVisible = !controlsVisible">{{ authorizationMode === 'auto' ? '全部权限' : '写操作询问' }}</el-button></el-tooltip></div>
+    <div class="ai-context"><span :title="selectedServer ? `${selectedServer.username || ''}@${selectedServer.address}:${selectedServer.port}` : '未选择主机'">{{ pageName }} · {{ selectedServer ? `${selectedServer.username ? selectedServer.username + '@' : ''}${selectedServer.name}${selectedServer.terminalLabel ? ` · ${selectedServer.terminalLabel}` : ''}` : '未选择主机' }}</span><el-tooltip :content="authorizationMode === 'auto' ? '当前对话的读写操作自动执行' : '写操作执行前需要确认'"><el-button link size="small" @click="controlsVisible = !controlsVisible">{{ authorizationMode === 'auto' ? '全部权限' : '写操作询问' }}</el-button></el-tooltip></div>
     <div class="ai-conversation">
     <div ref="history" class="ai-history" aria-live="polite" @scroll="onHistoryScroll">
       <div v-if="!events.length" class="ai-empty">
@@ -236,8 +236,12 @@ async function loadProviders() {
   try { providers.value = await aiApi.providers(); if (!providerId.value || !providers.value.some(p => p.id === providerId.value)) providerId.value = providers.value[0]?.id || ''; previousProviderId.value = providerId.value }
   catch (e) { report(e) }
 }
-// AI 会话跟随账户连接切换；分组浏览、主机详情和备注更新不应改变当前会话。
-watch(() => managedServer.value?.accountId ?? null, accountId => {
+// AI 会话跟随前台终端切换。同一账户可以有多个终端标签，必须监听终端身份，
+// 不能只监听 accountId；分组浏览和主机备注更新不应切换 AI 会话。
+watch(() => {
+  const server = managedServer.value
+  return [server?.accountId ?? null, server?.tabId ?? null, server?.terminalId ?? null]
+}, ([accountId]) => {
   if (!followsCurrentHost.value || accountId == null) return
   void switchServerConversation(managedServer.value)
 })

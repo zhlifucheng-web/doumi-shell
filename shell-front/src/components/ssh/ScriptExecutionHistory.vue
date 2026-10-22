@@ -38,7 +38,7 @@
   </section></el-scrollbar>
 </template>
 <script setup>
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listExecutions, getExecution, stopExecution } from '@/api/sshConsole'
 const props=defineProps({scriptId:{type:Number,default:null},active:{type:Boolean,default:true}})
@@ -46,7 +46,7 @@ const rows=ref([]),total=ref(0),page=ref(1),status=ref(''),source=ref(''),loadin
 const statuses={QUEUED:'排队中',RUNNING:'执行中',CANCELLING:'正在结束',SUCCESS:'成功',FAILED:'执行失败',ERROR:'连接或执行错误',CANCELLED:'已结束',CANCEL_FAILED:'终止失败',TIMED_OUT:'超时',INTERRUPTED:'服务中断'}
 const active=row=>['QUEUED','RUNNING','CANCELLING'].includes(row.status)
 const date=value=>value ? new Date(value).toLocaleString() : '—'
-let timer,disposed=false,busy=false,requestVersion=0
+let requestVersion=0
 async function load(){
   const version=++requestVersion;loading.value=true
   try {const data=await listExecutions({scriptId:props.scriptId,status:status.value,source:source.value,page:page.value});if(version===requestVersion){rows.value=data.rows;total.value=data.total}}
@@ -65,15 +65,7 @@ async function stop(row){
   try {await ElMessageBox.confirm(`结束脚本「${row.script_name}」及其进程组？`,'结束执行',{type:'warning',confirmButtonText:'结束执行'})}catch{return}
   await stopExecution(row.id);await load();if(detail.value?.id===row.id)detail.value=await getExecution(row.id)
 }
-async function poll(){
-  if(disposed||busy||!props.active)return;busy=true
-  try {
-    await load()
-    if(drawer.value&&detail.value&&active(detail.value))detail.value=await getExecution(detail.value.id)
-  }catch{/* API 已显示错误，下一轮可重试 */}finally{busy=false}
-}
-watch(()=>props.active,enabled=>{clearInterval(timer);if(enabled){load();timer=setInterval(poll,1500)}else{requestVersion++;loading.value=false}},{immediate:true})
-onBeforeUnmount(()=>{disposed=true;clearInterval(timer)})
+watch(()=>props.active,enabled=>{if(enabled)load();else{requestVersion++;loading.value=false}},{immediate:true})
 watch(()=>props.scriptId,()=>{if(props.active)reset()})
 defineExpose({open,load})
 </script>

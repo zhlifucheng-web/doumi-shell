@@ -461,6 +461,13 @@ function onThemeCommand(cmd) {
   text-decoration: none;
   transition: all var(--ws-transition-fast);
 }
+.about-btn > .el-badge {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .about-btn:hover {
   background: var(--ws-bg-hover);
   color: var(--ws-text-primary);
