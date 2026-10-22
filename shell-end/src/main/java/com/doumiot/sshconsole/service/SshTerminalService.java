@@ -108,7 +108,7 @@ public class SshTerminalService {
             throws IOException {
         SSHClient client = entry.getClient();
         Session sshSession = client.startSession();
-        sshSession.allocatePTY("xterm", cols, rows, 0, 0, Collections.emptyMap());
+        sshSession.allocatePTY("xterm-256color", cols, rows, 0, 0, Collections.emptyMap());
         Session.Shell shell = sshSession.startShell();
         entry.setSshSession(sshSession);
         entry.setShell(shell);
@@ -120,9 +120,10 @@ public class SshTerminalService {
         sessionRegistry.touchSession(entry.getSessionToken());
 
         // tmux keeps the interactive process alive after the browser/WebSocket disconnects.
+        // -2 forces 256 colors, -u forces UTF-8 support.
         // The command is conditional so hosts without tmux retain the existing shell behavior.
         if (tmux) {
-            String tmuxCommand = "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s "
+            String tmuxCommand = "if command -v tmux >/dev/null 2>&1; then exec tmux -2 -u new-session -A -s "
                     + tmuxSessionName(accountId, terminalId) + "; fi\n";
             shell.getOutputStream().write(tmuxCommand.getBytes(StandardCharsets.UTF_8));
             shell.getOutputStream().flush();

@@ -18,6 +18,7 @@ public class SshTerminalFrame {
     private String connectionMode;
     private String code;
     private String message;
+    private String encoding;
 
     public static SshTerminalFrame ready(String sessionToken, String label, String remark, String connectionMode) {
         SshTerminalFrame f = new SshTerminalFrame();

@@ -90,12 +90,46 @@
       <span>🎨</span>
       <span class="tool-btn-text">配色</span>
     </button>
+
+    <!-- 字符编码切换 -->
+    <el-dropdown trigger="click" @command="enc => $emit('change-encoding', enc)">
+      <button
+        type="button"
+        class="tool-btn"
+        :title="`当前字符编码: ${encoding || 'UTF-8'} (点击切换)`"
+      >
+        <span class="tool-btn-text font-mono-code">{{ encoding || 'UTF-8' }}</span>
+        <el-icon class="tool-btn-caret"><ArrowDown /></el-icon>
+      </button>
+      <template #dropdown>
+        <el-dropdown-menu>
+          <el-dropdown-item command="UTF-8" :class="{ 'is-active-enc': (encoding || 'UTF-8') === 'UTF-8' }">
+            UTF-8 (国际通用)
+          </el-dropdown-item>
+          <el-dropdown-item command="GBK" :class="{ 'is-active-enc': encoding === 'GBK' }">
+            GBK / GB2312 (简体中文)
+          </el-dropdown-item>
+          <el-dropdown-item command="GB18030" :class="{ 'is-active-enc': encoding === 'GB18030' }">
+            GB18030 (国家大字库)
+          </el-dropdown-item>
+          <el-dropdown-item command="Big5" :class="{ 'is-active-enc': encoding === 'Big5' }">
+            Big5 (繁体中文)
+          </el-dropdown-item>
+          <el-dropdown-item command="ISO-8859-1" :class="{ 'is-active-enc': encoding === 'ISO-8859-1' }">
+            ISO-8859-1 (西欧 Latin-1)
+          </el-dropdown-item>
+          <el-dropdown-item command="Windows-1252" :class="{ 'is-active-enc': encoding === 'Windows-1252' }">
+            Windows-1252 (ANSI)
+          </el-dropdown-item>
+        </el-dropdown-menu>
+      </template>
+    </el-dropdown>
   </div>
 </template>
 
 <script setup>
 import { computed } from 'vue'
-import { Delete, Document, FullScreen, Rank } from '@element-plus/icons-vue'
+import { ArrowDown, Delete, Document, FullScreen, Rank } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 
 const { effectiveDark: isDark } = useTheme()
@@ -105,7 +139,8 @@ defineProps({
   isSplit: { type: Boolean, default: false },
   allowSplit: { type: Boolean, default: true },
   fontSize: { type: Number, default: 14 },
-  terminalTone: { type: String, default: 'paper' } // 'paper' | 'hybrid'
+  terminalTone: { type: String, default: 'paper' }, // 'paper' | 'hybrid'
+  encoding: { type: String, default: 'UTF-8' }
 })
 
 defineEmits([
@@ -115,7 +150,8 @@ defineEmits([
   'change-font-size',
   'toggle-fullscreen',
   'toggle-tone',
-  'open-theme'
+  'open-theme',
+  'change-encoding'
 ])
 </script>
 
@@ -156,6 +192,14 @@ defineEmits([
 .tool-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+.tool-btn-caret {
+  font-size: 10px;
+  margin-left: 1px;
+}
+:deep(.is-active-enc) {
+  color: var(--el-color-primary) !important;
+  font-weight: 600;
 }
 .tool-group {
   display: inline-flex;

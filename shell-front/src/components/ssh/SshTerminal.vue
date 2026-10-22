@@ -5,6 +5,12 @@
       <button type="button" @click="copyTerminalSelection(); closeContextMenu()">复制 <kbd>Ctrl+C</kbd></button>
       <button type="button" @click="pasteTerminalClipboard(); closeContextMenu()">粘贴 <kbd>Ctrl+Shift+V</kbd></button>
       <button type="button" @click="openSearch(); closeContextMenu()">搜索 <kbd>Ctrl+F</kbd></button>
+      <div class="menu-divider"></div>
+      <div class="menu-label font-mono-code">编码: {{ encoding || 'UTF-8' }}</div>
+      <button type="button" :class="{ 'is-active-opt': (encoding || 'UTF-8') === 'UTF-8' }" @click="onSwitchEncoding('UTF-8')">UTF-8 (推荐)</button>
+      <button type="button" :class="{ 'is-active-opt': encoding === 'GBK' }" @click="onSwitchEncoding('GBK')">GBK (简体中文)</button>
+      <button type="button" :class="{ 'is-active-opt': encoding === 'GB18030' }" @click="onSwitchEncoding('GB18030')">GB18030</button>
+      <button type="button" :class="{ 'is-active-opt': encoding === 'Big5' }" @click="onSwitchEncoding('Big5')">Big5 (繁体)</button>
     </div>
     <div v-if="searchVisible" class="terminal-search" @mousedown.stop>
       <input ref="searchInput" v-model="searchText" placeholder="搜索终端内容" @keydown.enter.prevent="findNext" @keydown.esc="closeSearch" />
@@ -63,7 +69,8 @@ const props = defineProps({
   accountId: { type: Number, required: true },
   terminalId: { type: String, default: '' },
   fontSize: { type: Number, default: 14 },
-  lightTone: { type: String, default: 'paper' } // 'paper' | 'hybrid'
+  lightTone: { type: String, default: 'paper' }, // 'paper' | 'hybrid'
+  encoding: { type: String, default: 'UTF-8' }
 })
 
 const emit = defineEmits([
@@ -71,7 +78,8 @@ const emit = defineEmits([
   'disconnected',
   'connection-error',
   'size-change',
-  'ask-ai'
+  'ask-ai',
+  'change-encoding'
 ])
 
 const termContainer = ref(null)
@@ -95,6 +103,26 @@ let pingTimer = null
 let dataBound = false
 let connectGen = 0
 let searchAddon = null
+
+function createDecoder(enc) {
+  try {
+    return new TextDecoder(enc || 'utf-8', { stream: true })
+  } catch (err) {
+    console.warn(`[SshTerminal] 无法创建编码器 ${enc}，回退至 utf-8`, err)
+    return new TextDecoder('utf-8', { stream: true })
+  }
+}
+
+let textDecoder = createDecoder(props.encoding)
+
+watch(() => props.encoding, (newEnc) => {
+  textDecoder = createDecoder(newEnc)
+})
+
+function onSwitchEncoding(enc) {
+  emit('change-encoding', enc)
+  contextMenu.value.visible = false
+}
 
 // 现代化调色板定义
 const darkAnsiTheme = {
@@ -240,7 +268,7 @@ function b64Decode(b64) {
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i)
   }
-  return new TextDecoder().decode(bytes)
+  return textDecoder.decode(bytes, { stream: true })
 }
 
 function sendJson(obj) {
@@ -315,7 +343,7 @@ function bindTerminalData() {
   if (!terminal || dataBound) return
   dataBound = true
   terminal.onData((data) => {
-    sendJson({ type: 'input', data: b64Encode(data) })
+    sendJson({ type: 'input', data: b64Encode(data), encoding: props.encoding })
   })
   sendResize()
 }
@@ -499,7 +527,7 @@ function focusTerminal() {
 // 供父组件调用的指令注入与清屏方法
 function sendInput(cmd) {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    sendJson({ type: 'input', data: b64Encode(cmd + '\n') })
+    sendJson({ type: 'input', data: b64Encode(cmd + '\n'), encoding: props.encoding })
   }
 }
 
@@ -550,6 +578,9 @@ watch(
 .terminal-context-menu button { display:flex; justify-content:space-between; width:100%; padding:7px 9px; border:0; background:transparent; color:var(--el-text-color-primary); cursor:pointer; text-align:left; }
 .terminal-context-menu button:hover { background:var(--el-fill-color-light); }
 .terminal-context-menu kbd { color:var(--el-text-color-secondary); font-size:11px; }
+.terminal-context-menu .menu-divider { height: 1px; background: var(--el-border-color-lighter); margin: 4px 0; }
+.terminal-context-menu .menu-label { padding: 4px 9px; font-size: 11px; color: var(--el-text-color-secondary); }
+.terminal-context-menu button.is-active-opt { color: var(--el-color-primary); font-weight: 600; }
 .terminal-search { position:absolute; right:12px; top:8px; z-index:7; display:flex; gap:4px; padding:5px; border:1px solid var(--el-border-color); border-radius:6px; background:var(--el-bg-color); box-shadow:var(--el-box-shadow); }
 .terminal-search input { width:210px; padding:4px 7px; border:1px solid var(--el-border-color); border-radius:4px; background:var(--el-bg-color); color:var(--el-text-color-primary); }
 .terminal-search button { border:0; background:transparent; color:var(--el-text-color-primary); cursor:pointer; }

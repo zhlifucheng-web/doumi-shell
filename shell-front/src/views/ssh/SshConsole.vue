@@ -179,6 +179,7 @@
                         :allow-split="terminalTabs.length > 1"
                         :font-size="terminalFontSize"
                         :terminal-tone="terminalLightTone"
+                        :encoding="activeTerminalTab?.encoding || terminalEncoding"
                         @clear="onClearActiveTerminal"
                         @toggle-snippets="snippetBarVisible = !snippetBarVisible"
                         @toggle-split="isSplit = !isSplit"
@@ -186,6 +187,7 @@
                         @toggle-tone="toggleTerminalTone"
                         @toggle-fullscreen="toggleTerminalFullscreen"
                         @open-theme="workspaceStore.terminalThemeOpen = true"
+                        @change-encoding="onChangeEncoding"
                       />
                     </div>
 
@@ -201,9 +203,11 @@
                             :ref="el => setTerminalRef(tab.tabId, el)"
                             :font-size="terminalFontSize"
                             :light-tone="terminalLightTone"
+                            :encoding="tab.encoding || terminalEncoding"
                             @ready="payload => onTerminalReady(tab.tabId, payload)"
                             @disconnected="() => onTerminalDisconnected(tab.tabId)"
                             @size-change="onTerminalSizeChange"
+                            @change-encoding="enc => onChangeEncoding(enc, tab.tabId)"
                             @ask-ai="handleTerminalAskAi" />
                         </div>
                       </div>
@@ -220,8 +224,10 @@
                             :ref="el => setTerminalRef(`split-${splitTerminalTab.tabId}`, el)"
                             :font-size="terminalFontSize"
                             :light-tone="terminalLightTone"
+                            :encoding="splitTerminalTab.encoding || terminalEncoding"
                             @ready="payload => onTerminalReady(splitTerminalTab.tabId, payload)"
-                            @disconnected="() => onTerminalDisconnected(splitTerminalTab.tabId)" />
+                            @disconnected="() => onTerminalDisconnected(splitTerminalTab.tabId)"
+                            @change-encoding="enc => onChangeEncoding(enc, splitTerminalTab.tabId)" />
                         </div>
                       </div>
                     </div>
@@ -521,9 +527,29 @@ try {
   if (savedTone) terminalLightTone.value = savedTone
 } catch { /* ignore */ }
 
+const terminalEncoding = ref('UTF-8')
+try {
+  const savedEnc = localStorage.getItem('doumi-term-encoding')
+  if (savedEnc) terminalEncoding.value = savedEnc
+} catch { /* ignore */ }
+
 function toggleTerminalTone() {
   terminalLightTone.value = terminalLightTone.value === 'paper' ? 'hybrid' : 'paper'
   try { localStorage.setItem('doumi-term-tone', terminalLightTone.value) } catch { /* ignore */ }
+}
+
+function onChangeEncoding(enc, targetTabId = null) {
+  terminalEncoding.value = enc
+  const tab = targetTabId
+    ? terminalTabs.value.find(t => t.tabId === targetTabId)
+    : activeTerminalTab.value
+  if (tab) {
+    tab.encoding = enc
+  }
+  try {
+    localStorage.setItem('doumi-term-encoding', enc)
+  } catch { /* ignore */ }
+  ElMessage.success(`终端编码已切换为: ${enc}`)
 }
 
 const splitTerminalTab = computed(() => {
@@ -911,7 +937,7 @@ function activateTerminalForAccount(account) {
   if (!account?.id) return
   let tab = terminalTabs.value.find(item => item.accountId === account.id)
   if (!tab) {
-    tab = { tabId: newTerminalId(), accountId: account.id, account, hostId: account.hostId, defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account), token: '' }
+    tab = { tabId: newTerminalId(), accountId: account.id, account, hostId: account.hostId, defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account), token: '', encoding: terminalEncoding.value }
     terminalTabs.value.push(tab)
   } else {
     tab.hostId = account.hostId
@@ -930,7 +956,7 @@ function newTerminalId() {
 function openAdditionalTerminalTab() {
   const current = activeTerminalTab.value
   if (!current) return
-  const tab = { ...current, tabId: newTerminalId(), token: '' }
+  const tab = { ...current, tabId: newTerminalId(), token: '', encoding: current.encoding || terminalEncoding.value }
   terminalTabs.value.push(tab)
   activeTerminalId.value = tab.tabId
   sessionToken.value = ''
@@ -1099,7 +1125,7 @@ async function openNewAccountTerminal(data) {
     const account = await getAccount(data.id)
     const host = await loadAccountHostMeta(account.hostId)
     const tab = { tabId: newTerminalId(), accountId: account.id, account, hostId: account.hostId,
-      defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account, host), token: '' }
+      defaultCwd: account.defaultCwd || '', label: terminalTabLabel(account, host), token: '', encoding: terminalEncoding.value }
     terminalTabs.value.push(tab)
     detail.value = { type: 'ACCOUNT', raw: account }
     activeTerminalId.value = tab.tabId
