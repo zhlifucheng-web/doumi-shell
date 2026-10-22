@@ -30,4 +30,25 @@
 
 配置键使用 `doumi.storage`、`doumi.ssh-console`。端口、数据目录等示例见 `shell-end/config/application.yml.example`。
 
-Linux 终端默认通过账户级 tmux 会话承载交互 shell。网页刷新或 WebSocket 短暂断开后重新连接，会重新 attach 到该账户的 tmux 会话并保留远端现场；不同账户使用不同会话。目标主机未安装 tmux 或配置 `doumi.ssh-console.tmux-enabled: false` 时，自动使用普通 SSH shell，此时断开连接会结束交互现场。
+Linux 终端默认使用由账户 ID 和终端 ID 确定的 tmux 会话。相同终端 ID 重连会重新附着并保留现场，不同标签使用独立会话。普通终端在目标主机未安装 tmux 或配置 `doumi.ssh-console.tmux-enabled: false` 时使用普通 SSH；此时断开连接会结束交互现场。
+
+## tmux 启动与故障处理
+
+启动分为 SSH 连接、检查、准备、附着四个阶段，通过 WebSocket `connecting` 帧显示进度。短命令在独立 SSH 通道执行：检查和创建命令有 3 秒远端看门狗；附着确认预算为 8 秒，使用客户端 PTY 标识与 `tmux list-clients` 的结果精确匹配后才发送 `ready`。远端看门狗使用 POSIX shell，不依赖 GNU `timeout`。健康的交互会话没有固定存活时限。
+
+兼容命令按 tmux 1.6 验证，不使用 `new-session -A`、`new-session -c`。启动过程不修改全局 `aggressive-resize`。在 192.168.78.140 的 tmux 1.6 上，旧启动链中的 `tmux setw -g aggressive-resize on` 曾阻塞且持续累积；旧实现提前发送 `ready`，导致页面接受输入但 shell 尚未进入 tmux。底层旧版本 tmux 的内部阻塞原因尚未进一步定位。
+
+启动失败会关闭本次 SSH 通道和注册会话。前端启动等待上限为 60 秒；就绪后每 30 秒发心跳，15 秒未收到回应会清理当前连接状态和监控 token。失效 token 停止轮询，切换会话时取消旧监控请求。普通终端失败后可点击“改用普通 SSH”；共享终端必须附着原 tmux，会话缺失时直接报错，避免进入无关 shell。
+
+共享链接携带创建时的编码，服务端也保存编码元数据，因此删除链接的 `encoding` 参数后仍能自动继承。编码是创建时的快照，后续切换不会实时同步。编码选择应与实际远端字节流一致；tmux 的 `-u` 使用 UTF-8，继承 GBK 设置不等同于将 UTF-8 tmux 转为 GBK。140 上中文输入输出按实际 UTF-8 环境验证，GBK 单独验证元数据和页面默认选择。
+
+回归验证：
+
+```bash
+mvn -o -f shell-end/pom.xml -Dtest=SshTerminalStartupTest,SshRemoteExecTimeoutTest,SshTmuxSessionTest,SshShareSessionServiceTest,HostMonitorTest,ScriptExecutionTest test
+cd shell-front
+node --test tests/*.test.js
+npm run build
+```
+
+2026-10-22 验收：后端相关测试 28 项、前端测试 60 项及生产构建通过；140 实机验证十次重连保留 shell 变量、五个并发独立会话、PTY 缩放、共享读写与只读权限、共享拒绝普通 SSH 回退、普通 SSH 显式连接，以及共享连接数归零。验收保留原有远端 tmux 会话和历史阻塞进程，临时共享链接已撤销。

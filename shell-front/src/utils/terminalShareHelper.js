@@ -2,10 +2,11 @@
  * 终端共享会话辅助工具函数
  */
 
-export function buildShareUrl(origin, pathname, token) {
+export function buildShareUrl(origin, pathname, token, encoding) {
   const base = (origin || '').replace(/\/+$/, '')
   const path = (pathname || '').replace(/\/+$/, '')
-  return `${base}${path}/#/share?token=${encodeURIComponent(token || '')}`
+  const encParam = encoding ? `&encoding=${encodeURIComponent(encoding)}` : ''
+  return `${base}${path}/#/share?token=${encodeURIComponent(token || '')}${encParam}`
 }
 
 export function formatExpireDuration(expireAt, now = Date.now()) {
@@ -29,12 +30,13 @@ export function formatSharePermission(permission) {
   }
 }
 
-export function buildTerminalWsQuery({ accountId, shareToken, terminalId, cols, rows } = {}) {
+export function buildTerminalWsQuery({ accountId, shareToken, terminalId, cols, rows, transport } = {}) {
   const params = new URLSearchParams()
   if (accountId != null) params.set('accountId', String(accountId))
   if (shareToken) params.set('shareToken', String(shareToken))
   if (terminalId) params.set('terminalId', String(terminalId))
   if (cols > 0) params.set('cols', String(cols))
   if (rows > 0) params.set('rows', String(rows))
+  if (!shareToken && transport === 'ssh') params.set('transport', 'ssh')
   return params.toString()
 }

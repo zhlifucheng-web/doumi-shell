@@ -7,6 +7,7 @@ import com.doumiot.sshconsole.config.SshConsoleProperties;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import net.schmizz.sshj.SSHClient;
+import net.schmizz.sshj.connection.channel.Channel;
 import net.schmizz.sshj.connection.channel.direct.Session;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
@@ -88,6 +89,7 @@ public class SshSessionRegistry {
         sessions.entrySet().removeIf(e -> {
             if (e.getValue().getAccountId() == accountId) {
                 sshHostMonitorService.clearState(e.getKey());
+                e.getValue().closeTerminalResources();
                 clientFactory.disconnectQuietly(e.getValue().getClient());
                 return true;
             }
@@ -140,7 +142,7 @@ public class SshSessionRegistry {
         private String defaultCwd;
         private SSHClient client;
         private Session sshSession;
-        private Session.Shell shell;
+        private Channel terminalChannel;
         private OutputStream shellStdin;
         private InputStream shellStdout;
         private int ptyCols;
@@ -158,9 +160,9 @@ public class SshSessionRegistry {
 
         void closeTerminalResources() {
             closeWebSocketQuietly();
-            if (shell != null) {
+            if (terminalChannel != null) {
                 try {
-                    shell.close();
+                    terminalChannel.close();
                 } catch (IOException e) {
                     log.debug("shell close: {}", e.getMessage());
                 }
@@ -172,7 +174,7 @@ public class SshSessionRegistry {
                     log.debug("ssh session close: {}", e.getMessage());
                 }
             }
-            shell = null;
+            terminalChannel = null;
             sshSession = null;
             shellStdin = null;
             shellStdout = null;

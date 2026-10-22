@@ -46,6 +46,7 @@ class SshShareSessionServiceTest {
         req.setTerminalId("default");
         req.setPermission("READ_WRITE");
         req.setExpireMinutes(60);
+        req.setEncoding("GBK");
 
         SshShareSessionService.ShareInfoVO info = shareService.createShare(req);
         assertNotNull(info.getToken());
@@ -53,6 +54,7 @@ class SshShareSessionServiceTest {
         assertEquals(101L, info.getAccountId());
         assertEquals("default", info.getTerminalId());
         assertEquals("READ_WRITE", info.getPermission());
+        assertEquals("GBK", info.getEncoding());
         assertFalse(info.isReadOnly());
         assertFalse(info.isExpired());
         assertNotNull(info.getExpireAt());
@@ -63,6 +65,7 @@ class SshShareSessionServiceTest {
         SshShareSessionService.ShareRecord record = shareService.getValidShare(info.getToken());
         assertNotNull(record);
         assertEquals(101L, record.getAccountId());
+        assertEquals("GBK", record.getEncoding());
     }
 
     @Test

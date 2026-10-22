@@ -128,6 +128,11 @@ public final class SshRemoteExec {
     private static void joinCommand(Session.Command cmd, int timeoutSec) throws IOException {
         if (timeoutSec > 0) {
             cmd.join(timeoutSec, TimeUnit.SECONDS);
+            if (cmd.getExitStatus() == null) {
+                try { cmd.signal(net.schmizz.sshj.connection.channel.direct.Signal.TERM); }
+                catch (IOException ignored) { /* Close the channel even if the server rejects signals. */ }
+                throw new java.net.SocketTimeoutException("SSH 命令执行超时 (" + timeoutSec + " 秒)");
+            }
         } else {
             cmd.join();
         }

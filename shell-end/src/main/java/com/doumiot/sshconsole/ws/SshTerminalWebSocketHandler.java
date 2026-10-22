@@ -71,6 +71,7 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
             shareRecord.getActiveConnections().incrementAndGet();
             session.getAttributes().put("shareToken", shareToken);
             session.getAttributes().put("readOnly", readOnly);
+            session.getAttributes().put("shareEncoding", shareRecord.getEncoding());
         } else if (accountId == null) {
             sendErrorAndClose(session, "BAD_REQUEST", "缺少或无效的 accountId");
             return;
@@ -81,17 +82,29 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
 
         SshTerminalService.TerminalSession terminalSession;
         try {
-            terminalSession = sshTerminalService.openTerminal(accountId, cols, rows, terminalId, readOnly);
+            terminalSession = sshTerminalService.openTerminal(accountId, cols, rows, terminalId, readOnly, shareRecord != null,
+                    "ssh".equals(parseStringQuery(session.getUri(), "transport")),
+                    stage -> {
+                        SshTerminalFrame progress = new SshTerminalFrame();
+                        progress.setType("connecting");
+                        progress.setMessage(stage);
+                        sendFrame(session, null, progress);
+                    });
         } catch (BusinessRuntimeException e) {
             sendErrorAndClose(session, "CONNECT_FAILED", e.getMessage());
             return;
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             log.warn("SSH terminal open failed accountId={}: {}", accountId, e.getMessage());
             sendErrorAndClose(session, "CONNECT_FAILED", e.getMessage());
             return;
         }
 
         SshSessionRegistry.SessionEntry entry = terminalSession.getEntry();
+        if (!session.isOpen()) {
+            sessionRegistry.close(entry.getSessionToken());
+            releaseShareConnection(session);
+            return;
+        }
         String token = entry.getSessionToken();
         session.getAttributes().put("sessionToken", token);
         sessionRegistry.bindWebSocket(token, session);
@@ -124,6 +137,9 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
                 if (StringUtils.hasText(frame.getData())) {
                     byte[] bytes = Base64.getDecoder().decode(frame.getData());
                     String enc = frame.getEncoding();
+                    if (!StringUtils.hasText(enc) && session.getAttributes().get("shareEncoding") != null) {
+                        enc = (String) session.getAttributes().get("shareEncoding");
+                    }
                     if (StringUtils.hasText(enc) && !"utf-8".equalsIgnoreCase(enc)) {
                         try {
                             String text = new String(bytes, StandardCharsets.UTF_8);
@@ -151,13 +167,7 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        String shareToken = (String) session.getAttributes().get("shareToken");
-        if (StringUtils.hasText(shareToken)) {
-            com.doumiot.sshconsole.service.SshShareSessionService.ShareRecord record = shareSessionService.getShare(shareToken);
-            if (record != null) {
-                record.getActiveConnections().decrementAndGet();
-            }
-        }
+        releaseShareConnection(session);
         String token = (String) session.getAttributes().get("sessionToken");
         if (StringUtils.hasText(token)) {
             cleanupSession(token);
@@ -167,16 +177,18 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
         log.debug("WebSocket transport error: {}", exception.getMessage());
-        String shareToken = (String) session.getAttributes().get("shareToken");
-        if (StringUtils.hasText(shareToken)) {
-            com.doumiot.sshconsole.service.SshShareSessionService.ShareRecord record = shareSessionService.getShare(shareToken);
-            if (record != null) {
-                record.getActiveConnections().decrementAndGet();
-            }
-        }
+        releaseShareConnection(session);
         String token = (String) session.getAttributes().get("sessionToken");
         if (StringUtils.hasText(token)) {
             cleanupSession(token);
+        }
+    }
+
+    private void releaseShareConnection(WebSocketSession session) {
+        String token = (String) session.getAttributes().remove("shareToken");
+        if (StringUtils.hasText(token)) {
+            com.doumiot.sshconsole.service.SshShareSessionService.ShareRecord record = shareSessionService.getShare(token);
+            if (record != null) record.getActiveConnections().decrementAndGet();
         }
     }
 

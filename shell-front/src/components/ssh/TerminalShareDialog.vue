@@ -23,6 +23,7 @@
         <span class="target-label">当前终端：</span>
         <span class="target-val">{{ terminalTab?.label || '默认主终端' }}</span>
         <span class="target-sub">(会话标识: {{ terminalTab?.terminalId || 'default' }})</span>
+        <span class="target-encoding font-mono-code">编码: {{ currentEncoding }}</span>
       </div>
 
       <!-- 创建分享设置 -->
@@ -60,12 +61,15 @@
           <span class="result-tag" :class="newShare.permission === 'READ_ONLY' ? 'is-ro' : 'is-rw'">
             {{ newShare.permission === 'READ_ONLY' ? '只读观看' : '读写协同' }}
           </span>
+          <span v-if="newShare.encoding" class="result-encoding font-mono-code">
+            {{ newShare.encoding }}
+          </span>
         </div>
 
         <div class="result-url-row">
-          <el-input :model-value="getShareFullUrl(newShare.token)" readonly>
+          <el-input :model-value="getShareFullUrl(newShare.token, newShare.encoding)" readonly>
             <template #append>
-              <el-button type="primary" @click="copyLink(getShareFullUrl(newShare.token))">
+              <el-button type="primary" @click="copyLink(getShareFullUrl(newShare.token, newShare.encoding))">
                 复制链接
               </el-button>
             </template>
@@ -75,7 +79,7 @@
         <div class="result-meta-row">
           <span v-if="newShare.expireAt">到期时间: {{ formatTime(newShare.expireAt) }}</span>
           <span v-else>有效期: 永久有效（可随时在下方作废）</span>
-          <el-link type="primary" :href="getShareFullUrl(newShare.token)" target="_blank">
+          <el-link type="primary" :href="getShareFullUrl(newShare.token, newShare.encoding)" target="_blank">
             在独立窗口中打开预览 ↗
           </el-link>
         </div>
@@ -94,6 +98,9 @@
               <span class="item-badge" :class="item.readOnly ? 'is-ro' : 'is-rw'">
                 {{ item.readOnly ? '只读' : '协同' }}
               </span>
+              <span v-if="item.encoding" class="item-encoding font-mono-code">
+                {{ item.encoding }}
+              </span>
               <span class="item-time">
                 {{ item.expireAt ? `到期: ${formatTime(item.expireAt)}` : '永久有效' }}
               </span>
@@ -103,7 +110,7 @@
             </div>
 
             <div class="share-item-right">
-              <el-button size="small" link type="primary" @click="copyLink(getShareFullUrl(item.token))">
+              <el-button size="small" link type="primary" @click="copyLink(getShareFullUrl(item.token, item.encoding))">
                 复制
               </el-button>
               <el-button size="small" link type="danger" @click="handleRevoke(item.token)">
@@ -124,7 +131,7 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { InfoFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { createShareSession, listShareSessions, revokeShareSession } from '@/api/sshConsole'
@@ -142,13 +149,16 @@ const creating = ref(false)
 const newShare = ref(null)
 const activeShares = ref([])
 
+const currentEncoding = computed(() => props.terminalTab?.encoding || 'UTF-8')
+
 const form = reactive({
   permission: 'READ_WRITE',
   expireMinutes: 120
 })
 
-function getShareFullUrl(token) {
-  return buildShareUrl(window.location.origin, window.location.pathname, token)
+function getShareFullUrl(token, enc) {
+  const finalEnc = enc || newShare.value?.encoding || currentEncoding.value
+  return buildShareUrl(window.location.origin, window.location.pathname, token, finalEnc)
 }
 
 function formatTime(ts) {
@@ -188,7 +198,8 @@ async function handleCreateShare() {
       accountId,
       terminalId: props.terminalTab?.terminalId || 'default',
       permission: form.permission,
-      expireMinutes: form.expireMinutes
+      expireMinutes: form.expireMinutes,
+      encoding: currentEncoding.value
     })
     newShare.value = res
     ElMessage.success('共享链接已生成！')
@@ -280,6 +291,15 @@ function onDialogOpen() {
   color: var(--el-text-color-placeholder, #6e7681);
 }
 
+.target-encoding {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--el-color-primary, #409eff);
+  background: var(--el-color-primary-light-9, rgba(64, 158, 255, 0.1));
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
 .share-form-section {
   display: flex;
   flex-direction: column;
@@ -345,6 +365,15 @@ function onDialogOpen() {
 .result-tag.is-ro {
   background: rgba(210, 153, 34, 0.2);
   color: #d29922;
+}
+
+.result-encoding {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--el-color-primary-light-9, rgba(64, 158, 255, 0.15));
+  color: var(--el-color-primary, #409eff);
+  margin-left: 6px;
 }
 
 .result-url-row {
@@ -413,6 +442,14 @@ function onDialogOpen() {
 .item-badge.is-ro {
   background: rgba(210, 153, 34, 0.15);
   color: #d29922;
+}
+
+.item-encoding {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--el-fill-color, rgba(255, 255, 255, 0.08));
+  color: var(--el-text-color-primary, #c9d1d9);
 }
 
 .item-time {

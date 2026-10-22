@@ -32,6 +32,7 @@ public class SshShareSessionService {
         private Long accountId;
         private String terminalId;
         private String permission; // "READ_WRITE" or "READ_ONLY"
+        private String encoding; // "UTF-8", "GBK", etc.
         private Instant createdAt;
         private Instant expireAt; // null = 永不过期
         private String label;
@@ -55,6 +56,7 @@ public class SshShareSessionService {
         private String terminalId;
         private String permission; // "READ_WRITE" or "READ_ONLY"
         private Integer expireMinutes; // 0 = 永不过期, 30, 60, 120, 1440 等
+        private String encoding; // 终端字符编码，如 "UTF-8", "GBK"
     }
 
     @Data
@@ -63,6 +65,7 @@ public class SshShareSessionService {
         private Long accountId;
         private String terminalId;
         private String permission;
+        private String encoding;
         private boolean readOnly;
         private boolean expired;
         private Long createdAt;
@@ -103,6 +106,7 @@ public class SshShareSessionService {
         record.setAccountId(account.getId());
         record.setTerminalId(termId);
         record.setPermission(perm);
+        record.setEncoding(StringUtils.hasText(req.getEncoding()) ? req.getEncoding().trim() : "UTF-8");
         record.setCreatedAt(now);
         record.setExpireAt(expireAt);
         record.setLabel(label);
@@ -165,6 +169,7 @@ public class SshShareSessionService {
         vo.setAccountId(record.getAccountId());
         vo.setTerminalId(record.getTerminalId());
         vo.setPermission(record.getPermission());
+        vo.setEncoding(StringUtils.hasText(record.getEncoding()) ? record.getEncoding() : "UTF-8");
         vo.setReadOnly(record.isReadOnly());
         vo.setExpired(record.isExpired());
         vo.setCreatedAt(record.getCreatedAt() != null ? record.getCreatedAt().toEpochMilli() : null);

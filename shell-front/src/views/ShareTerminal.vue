@@ -145,12 +145,13 @@ const { isDark, effectiveDark } = storeToRefs(workspaceStore)
 const { activeTheme } = useTerminalTheme()
 
 const shareToken = computed(() => String(route.query.token || '').trim())
+const queryEncoding = computed(() => String(route.query.encoding || '').trim())
 const loading = ref(true)
 const error = ref('')
 const shareInfo = ref(null)
 
 const fontSize = ref(14)
-const terminalEncoding = ref('UTF-8')
+const terminalEncoding = ref(String(route.query.encoding || '').trim() || 'UTF-8')
 const themeDialogVisible = ref(false)
 const isFullscreen = ref(false)
 const terminalComponent = ref(null)
@@ -201,6 +202,11 @@ async function loadShare() {
       shareInfo.value = null
     } else {
       shareInfo.value = res
+      // 优先采用 URL 中的编码参数，若未指定则采用创建分享时保存的编码
+      const sharedEnc = queryEncoding.value || res.encoding
+      if (sharedEnc) {
+        terminalEncoding.value = sharedEnc
+      }
       if (res.expired) {
         error.value = '共享会话链接已过期。'
       }

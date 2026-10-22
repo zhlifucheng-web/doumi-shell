@@ -116,8 +116,11 @@ import { useTheme } from '@/composables/useTheme'
 import { useBackground } from '@/composables/useBackground'
 import { readMonitorHistory, saveMonitorHistory } from '@/utils/monitorHistory'
 import { monitorSeries } from '@/utils/monitorSeries'
+import { isExpiredTerminalSession } from '@/utils/terminalConnectionGuard'
 
 const props=defineProps({sessionToken:{type:String,default:''},accountId:{type:Number,default:null},active:{type:Boolean,default:true}})
+const emit=defineEmits(['session-invalid'])
+const invalidSessionToken=ref('')
 const monitorConfigStore=useMonitorConfigStore()
 const {effectiveDark}=useTheme()
 const {style:backgroundStyle}=useBackground()
@@ -143,7 +146,7 @@ const detailVisible=ref(false),settingsVisible=ref(false),detailMetric=ref('cpu'
 const defaultWidth=380,width=ref(defaultWidth),maxWidth=ref(760)
 try{const stored=Number(localStorage.getItem('doumi-monitor-width-v2'));if(stored>=260&&stored<=760)width.value=stored}catch{/* 默认宽度 */}
 const effectiveInterval=computed(()=>Math.max(interval.value,serverInterval.value))
-const enabled=computed(()=>!!props.sessionToken&&props.active&&activated.value&&visible.value&&!paused.value&&latest.value?.status!=='DISABLED')
+const enabled=computed(()=>!!props.sessionToken&&invalidSessionToken.value!==props.sessionToken&&props.active&&activated.value&&visible.value&&!paused.value&&latest.value?.status!=='DISABLED')
 const historyKey=()=>props.accountId ? `account:${props.accountId}` : `session:${props.sessionToken}`
 const network=computed(()=>iface.value?latest.value?.network?.interfaces?.find(i=>i.name===iface.value):latest.value?.network)
 const defaultInterfaces=computed(()=>latest.value?.network?.interfaces?.filter(i=>i.includedByDefault).map(i=>i.name).join(', '))
@@ -409,7 +412,7 @@ function scheduleChartRender(){
 }
 
 async function poll(manual=false){
-  if(disposed||inFlight||!props.sessionToken||!props.active||!activated.value||!visible.value||(!manual&&!enabled.value))return
+  if(disposed||inFlight||!props.sessionToken||invalidSessionToken.value===props.sessionToken||!props.active||!activated.value||!visible.value||(!manual&&!enabled.value))return
   clearTimeout(timer)
   const version=generation,token=props.sessionToken,key=historyKey()
   inFlight=true;loading.value=true;controller=new AbortController()
@@ -430,7 +433,10 @@ async function poll(manual=false){
     render()
     await sampleCustomScripts(token,version)
     nextTick(renderCustomCharts)
-  }catch(e){if(!disposed&&version===generation&&e?.code!=='ERR_CANCELED'){error.value=e?.message||'采样失败';breakBefore=true}}
+  }catch(e){if(!disposed&&version===generation&&token===props.sessionToken&&e?.code!=='ERR_CANCELED'){
+    error.value=e?.message||'采样失败';breakBefore=true
+    if(isExpiredTerminalSession(e)){invalidSessionToken.value=token;emit('session-invalid',token)}
+  }}
   finally{
     inFlight=false;loading.value=false;controller=null
     if(!disposed&&enabled.value)timer=setTimeout(()=>poll(),effectiveInterval.value)
@@ -438,7 +444,7 @@ async function poll(manual=false){
 }
 function sync(){
   if(!enabled.value)breakBefore=true
-  generation++;clearTimeout(timer)
+  generation++;clearTimeout(timer);controller?.abort()
   if(mounted&&enabled.value&&!inFlight)poll()
   nextTick(scheduleChartRender)
 }
@@ -564,7 +570,7 @@ function onMonitorConfigChanged(event){
   void reloadAccountSettings()
 }
 watch(()=>props.accountId,(value,oldValue)=>{if(value!==oldValue)reloadAccountSettings()},{flush:'post'})
-watch(()=>props.sessionToken,()=>{restore();sync()},{flush:'post'})
+watch(()=>props.sessionToken,()=>{invalidSessionToken.value='';restore();sync()},{flush:'post'})
 watch([()=>props.active,paused,interval],sync,{flush:'post'})
 watch(minutes,pruneHistory)
 watch(minutes,()=>nextTick(renderCustomCharts))

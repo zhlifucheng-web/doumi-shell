@@ -57,11 +57,13 @@
     <div v-if="disconnected" class="reconnect-bar">
       <span>会话已断开</span>
       <el-button size="small" type="primary" @click="reconnect">重新连接</el-button>
+      <el-button v-if="!shareToken" size="small" @click="reconnectPlainSsh">改用普通 SSH</el-button>
     </div>
   </div>
 </template>
 
 <script setup>
+import { createTerminalConnectionGuard } from '@/utils/terminalConnectionGuard'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import EditorScrollbar from '@/components/EditorScrollbar.vue'
 import { Terminal } from 'xterm'
@@ -103,6 +105,7 @@ const scrollTarget = shallowRef(null)
 const statusMessage = ref('连接中…')
 const disconnected = ref(false)
 const connectionMode = ref('')
+const preferredTransport = ref('')
 const searchVisible = ref(false)
 const searchText = ref('')
 const searchInput = ref(null)
@@ -115,7 +118,7 @@ let terminal = null
 let fitAddon = null
 let ws = null
 let resizeObserver = null
-let pingTimer = null
+let connectionGuard = null
 let dataBound = false
 let connectGen = 0
 let searchAddon = null
@@ -349,18 +352,6 @@ function sendResize() {
   emit('size-change', { cols: terminal.cols, rows: terminal.rows })
 }
 
-function clearPing() {
-  if (pingTimer) {
-    clearInterval(pingTimer)
-    pingTimer = null
-  }
-}
-
-function startPing() {
-  clearPing()
-  pingTimer = setInterval(() => sendJson({ type: 'ping' }), 30_000)
-}
-
 function bindTerminalData() {
   if (!terminal || dataBound) return
   dataBound = true
@@ -376,7 +367,7 @@ function activateSession(frame) {
   bindTerminalData()
   if (frame?.type === 'ready') {
     emit('ready', { sessionToken: frame.sessionToken, label: frame.label, connectionMode: frame.connectionMode })
-    startPing()
+    connectionGuard?.ready()
   }
   nextTick(() => {
     terminal?.focus()
@@ -387,7 +378,8 @@ function disposeTerminal() {
   scrollTarget.value = null
   resizeObserver?.disconnect()
   resizeObserver = null
-  clearPing()
+  connectionGuard?.dispose()
+  connectionGuard = null
   dataBound = false
   if (ws) {
     ws.onopen = null
@@ -436,14 +428,15 @@ function handleWsMessage(ev) {
   } catch {
     return
   }
+  if (frame.type === 'connecting') {
+    statusMessage.value = frame.message || '正在连接终端…'
+    return
+  }
   if (frame.type === 'ready') {
     activateSession(frame)
     return
   }
   if (frame.type === 'output' && frame.data) {
-    if (!dataBound) {
-      activateSession(null)
-    }
     const decoded = b64Decode(frame.data)
     const formatted = enhanceTerminalOutput(decoded)
     terminal?.write(formatted)
@@ -451,13 +444,11 @@ function handleWsMessage(ev) {
     return
   }
   if (frame.type === 'pong') {
+    connectionGuard?.pong()
     return
   }
   if (frame.type === 'error') {
-    const msg = frame.message || '连接失败'
-    statusMessage.value = msg
-    emit('connection-error', { message: msg })
-    disconnected.value = true
+    connectionGuard?.fail(frame.message || '连接失败')
   }
 }
 
@@ -527,30 +518,39 @@ function connect() {
     cols: terminal.cols,
     rows: terminal.rows,
     terminalId: props.terminalId,
-    shareToken: props.shareToken
+    shareToken: props.shareToken,
+    transport: preferredTransport.value
   })
-  ws = new WebSocket(url)
-  ws.onmessage = handleWsMessage
-  ws.onerror = () => {
-    if (gen !== connectGen) return
-    statusMessage.value = 'WebSocket 连接失败'
-    emit('connection-error', { message: 'WebSocket 连接失败' })
-    disconnected.value = true
-  }
-  ws.onclose = () => {
-    if (gen !== connectGen) return
-    if (!disconnected.value) {
+  const socket = new WebSocket(url)
+  ws = socket
+  const isCurrent = () => gen === connectGen && ws === socket
+  connectionGuard = createTerminalConnectionGuard({
+    sendPing: () => { if (isCurrent()) sendJson({ type: 'ping' }) },
+    onFailure: message => {
+      if (!isCurrent()) return
+      statusMessage.value = message
       disconnected.value = true
-      statusMessage.value = '会话已断开'
+      dataBound = false
       emit('disconnected', {})
+      emit('connection-error', { message })
+      socket.close()
     }
-  }
+  })
+  const guard = connectionGuard
+  socket.onmessage = event => { if (isCurrent() && !disconnected.value) handleWsMessage(event) }
+  socket.onerror = () => { if (isCurrent()) guard.fail('WebSocket 连接失败') }
+  socket.onclose = () => { if (isCurrent()) guard.fail('会话已断开') }
 
   resizeObserver = new ResizeObserver(() => sendResize())
   resizeObserver.observe(termContainer.value)
 }
 
 function reconnect() {
+  connect()
+}
+
+function reconnectPlainSsh() {
+  preferredTransport.value = 'ssh'
   connect()
 }
 

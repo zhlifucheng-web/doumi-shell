@@ -157,7 +157,7 @@
               <TerminalFileLayout>
                 <template #monitor>
                   <SshMonitorPanel v-if="activeTerminalTab && terminalVisited"
-                    :account-id="activeTerminalTab.accountId" :session-token="sessionToken" :active="accountTab === 'terminal'" />
+                    :account-id="activeTerminalTab.accountId" :session-token="sessionToken" :active="accountTab === 'terminal'" @session-invalid="onMonitorSessionInvalid" />
                 </template>
                 <template #terminal>
                   <div v-if="terminalTabs.length" class="terminal-tabs">
@@ -1066,8 +1066,15 @@ function onTerminalReady(tabId, payload) {
 
 function onTerminalDisconnected(tabId) {
   const tab = terminalTabs.value.find(item => item.tabId === tabId)
-  if (tab) tab.token = ''
+  if (tab) { tab.token = ''; tab.connectionMode = '' }
   if (activeTerminalId.value === tabId) sessionToken.value = ''
+}
+
+function onMonitorSessionInvalid(token) {
+  for (const tab of terminalTabs.value) {
+    if (tab.token === token) { tab.token = ''; tab.connectionMode = '' }
+  }
+  if (sessionToken.value === token) sessionToken.value = ''
 }
 
 function onFileSessionInvalid() {

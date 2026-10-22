@@ -23,6 +23,14 @@ test('buildShareUrl: handles trailing slashes gracefully', () => {
   assert.equal(url, 'http://localhost:3100/#/share?token=sh_xyz789')
 })
 
+test('buildShareUrl: appends encoding query param when specified', () => {
+  const origin = 'http://localhost:3100'
+  const pathname = ''
+  const token = 'sh_gbk123'
+  const url = buildShareUrl(origin, pathname, token, 'GBK')
+  assert.equal(url, 'http://localhost:3100/#/share?token=sh_gbk123&encoding=GBK')
+})
+
 test('formatExpireDuration: handles permanent, valid, and expired states', () => {
   const now = 1700000000000
   // Permanent
@@ -77,4 +85,9 @@ test('buildTerminalWsQuery: builds query string for normal terminal session', ()
   assert.equal(params.get('terminalId'), 'term-2')
   assert.equal(params.get('cols'), '120')
   assert.equal(params.get('rows'), '36')
+})
+
+test('plain SSH retry is explicit and cannot be requested by a shared terminal', () => {
+  assert.equal(new URLSearchParams(buildTerminalWsQuery({ accountId: 1, transport: 'ssh' })).get('transport'), 'ssh')
+  assert.equal(new URLSearchParams(buildTerminalWsQuery({ shareToken: 'shared', transport: 'ssh' })).has('transport'), false)
 })
