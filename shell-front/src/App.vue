@@ -12,7 +12,6 @@
             </svg>
           </div>
           <span class="brand-title">Doumi Shell</span>
-          <span class="brand-tag">2.0 Pro</span>
         </div>
 
         <div class="header-divider"></div>

@@ -1,5 +1,10 @@
 <template>
-  <div class="ssh-terminal-wrap">
+  <div
+    class="ssh-terminal-wrap"
+    tabindex="-1"
+    @keydown.ctrl.f.prevent.stop="openSearch"
+    @keydown.meta.f.prevent.stop="openSearch"
+  >
     <div v-if="statusMessage" class="status-overlay">{{ statusMessage }}</div>
     <div v-if="contextMenu.visible" class="terminal-context-menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @mousedown.stop>
       <button type="button" @click="copyTerminalSelection(); closeContextMenu()">复制 <kbd>Ctrl+C</kbd></button>
@@ -13,7 +18,15 @@
       <button type="button" :class="{ 'is-active-opt': encoding === 'Big5' }" @click="onSwitchEncoding('Big5')">Big5 (繁体)</button>
     </div>
     <div v-if="searchVisible" class="terminal-search" @mousedown.stop>
-      <input ref="searchInput" v-model="searchText" placeholder="搜索终端内容" @keydown.enter.prevent="findNext" @keydown.esc="closeSearch" />
+      <input
+        ref="searchInput"
+        v-model="searchText"
+        placeholder="搜索终端内容"
+        @keydown.enter.prevent="findNext"
+        @keydown.esc="closeSearch"
+        @keydown.ctrl.f.prevent.stop="findNext"
+        @keydown.meta.f.prevent.stop="findNext"
+      />
       <button type="button" @click="findPrevious">↑</button><button type="button" @click="findNext">↓</button><button type="button" @click="closeSearch">关闭</button>
     </div>
     <div ref="termContainer" class="term-container" :class="[termContainerClass]" :style="termContainerStyle" @click="focusTerminal" @contextmenu.prevent="showContextMenu" />
@@ -314,7 +327,13 @@ async function pasteTerminalClipboard() {
 
 function showContextMenu(event) { contextMenu.value = { visible: true, x: event.offsetX, y: event.offsetY } }
 function closeContextMenu() { contextMenu.value.visible = false }
-function openSearch() { searchVisible.value = true; nextTick(() => searchInput.value?.focus()) }
+function openSearch() {
+  searchVisible.value = true
+  nextTick(() => {
+    searchInput.value?.focus()
+    searchInput.value?.select()
+  })
+}
 function closeSearch() { searchVisible.value = false; searchAddon?.clearDecorations(); terminal?.focus() }
 function findNext() { if (searchText.value) searchAddon?.findNext(searchText.value) }
 function findPrevious() { if (searchText.value) searchAddon?.findPrevious(searchText.value) }
@@ -457,18 +476,22 @@ function connect() {
     convertEol: true
   })
   terminal.attachCustomKeyEventHandler((event) => {
-    if (event.type !== 'keydown') return true
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
-      openSearch()
+    if ((event.ctrlKey || event.metaKey) && (event.key?.toLowerCase() === 'f' || event.code === 'KeyF')) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.type === 'keydown') {
+        openSearch()
+      }
       return false
     }
+    if (event.type !== 'keydown') return true
     if (event.key === 'Insert' && event.shiftKey) {
       void pasteTerminalClipboard()
       return false
     }
     const modifier = event.ctrlKey || event.metaKey
     if (!modifier) return true
-    if (event.key.toLowerCase() === 'c' && terminal.hasSelection()) {
+    if (event.key?.toLowerCase() === 'c' && terminal.hasSelection()) {
       void copyTerminalSelection()
       return false
     }
@@ -476,7 +499,7 @@ function connect() {
       void copyTerminalSelection()
       return false
     }
-    if (event.key.toLowerCase() === 'v' && event.shiftKey) {
+    if (event.key?.toLowerCase() === 'v' && event.shiftKey) {
       void pasteTerminalClipboard()
       return false
     }
@@ -575,6 +598,7 @@ watch(
   min-height: 0;
   position: relative;
   overflow: hidden;
+  outline: none;
 }
 .terminal-context-menu { position:absolute; z-index:8; min-width:170px; padding:4px; border:1px solid var(--el-border-color); border-radius:6px; background:var(--el-bg-color); box-shadow:var(--el-box-shadow); }
 .terminal-context-menu button { display:flex; justify-content:space-between; width:100%; padding:7px 9px; border:0; background:transparent; color:var(--el-text-color-primary); cursor:pointer; text-align:left; }
