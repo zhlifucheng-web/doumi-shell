@@ -1,7 +1,7 @@
 <template>
   <div class="ssh-console">
     <el-container class="layout">
-      <el-aside :width="sidebarCollapsed ? '52px' : `${sidebarWidth}px`" class="aside" :class="{'aside-collapsed':sidebarCollapsed}">
+      <el-aside :width="sidebarCollapsed ? '52px' : `${sidebarWidth}px`" class="aside" :class="{'aside-collapsed':sidebarCollapsed, 'is-resizing': isSidebarResizing}">
         <div class="sidebar-header">
           <button type="button" class="sidebar-toggle" :title="sidebarCollapsed ? '展开侧栏' : '收起侧栏'" @click="sidebarCollapsed=!sidebarCollapsed">
             <el-icon><Expand v-if="sidebarCollapsed" /><Fold v-else /></el-icon>
@@ -65,6 +65,7 @@
                 :key="`pin-${tab.tabId}`"
                 class="quick-pin-item"
                 :class="{ 'is-active': activeTerminalId === tab.tabId }"
+                :title="tab.label"
                 @click="activateTerminalTab(tab.tabId)"
               >
                 <div class="pin-left">
@@ -107,18 +108,97 @@
                 :class="{ 'is-account': data.nodeType === 'ACCOUNT', 'is-host': data.nodeType === 'HOST' }"
                 @dblclick.stop="onNodeDblClick(data)"
               >
-                <el-icon class="node-ico" :class="{ 'ico-acc': data.nodeType === 'ACCOUNT', 'ico-host': data.nodeType === 'HOST', 'ico-group': data.nodeType === 'GROUP' }">
-                  <User v-if="data.nodeType === 'ACCOUNT'" />
-                  <Monitor v-else-if="data.nodeType === 'HOST'" />
-                  <Folder v-else />
-                </el-icon>
-                <div class="node-text">
-                  <div class="node-title-row">
-                    <span class="node-label" :title="nodeTitle(data)">{{ data.label }}</span>
-                    <span v-if="data.nodeType === 'ACCOUNT'" class="node-status-pill" :class="{ 'is-open': terminalTabs.some(t => t.accountId === data.id) }"></span>
+                <el-tooltip
+                  effect="light"
+                  :show-after="350"
+                  placement="right"
+                  :offset="12"
+                  popper-class="tree-node-tooltip"
+                  :enterable="true"
+                >
+                  <template #content>
+                    <div class="tree-tip-card">
+                      <div class="tree-tip-header">
+                        <el-tag size="small" :type="nodeTagType(data)" effect="plain" class="tree-tip-tag">
+                          {{ nodeTypeName(data) }}
+                        </el-tag>
+                        <span class="tree-tip-title">{{ getNodeMainTitle(data) }}</span>
+                      </div>
+                      <div v-if="data.nodeType === 'HOST'" class="tree-tip-body">
+                        <div v-if="hasCustomHostName(data)" class="tree-tip-row">
+                          <span class="tree-tip-label">主机名称:</span>
+                          <span class="tree-tip-value">{{ data.label }}</span>
+                        </div>
+                        <div v-if="data.extra?.host" class="tree-tip-row">
+                          <span class="tree-tip-label">IP 地址:</span>
+                          <span class="tree-tip-value font-mono-code">{{ data.extra.host }}</span>
+                          <el-button
+                            link
+                            type="primary"
+                            size="small"
+                            class="tree-tip-copy-btn"
+                            title="复制 IP"
+                            @click.stop="copyText(data.extra.host, '已复制 IP 地址')"
+                          >
+                            <el-icon><CopyDocument /></el-icon>
+                          </el-button>
+                        </div>
+                        <div v-if="data.extra?.port" class="tree-tip-row">
+                          <span class="tree-tip-label">SSH 端口:</span>
+                          <span class="tree-tip-value font-mono-code">{{ data.extra.port }}</span>
+                        </div>
+                        <div v-if="data.remark" class="tree-tip-row">
+                          <span class="tree-tip-label">备注说明:</span>
+                          <span class="tree-tip-value">{{ data.remark }}</span>
+                        </div>
+                      </div>
+                      <div v-else-if="data.nodeType === 'ACCOUNT'" class="tree-tip-body">
+                        <div class="tree-tip-row">
+                          <span class="tree-tip-label">账户名:</span>
+                          <span class="tree-tip-value font-mono-code">{{ data.label }}</span>
+                        </div>
+                        <div v-if="data.extra?.authType" class="tree-tip-row">
+                          <span class="tree-tip-label">认证方式:</span>
+                          <span class="tree-tip-value">{{ data.extra.authType === 'KEY' ? '密钥认证' : '密码认证' }}</span>
+                        </div>
+                        <div v-if="data.remark" class="tree-tip-row">
+                          <span class="tree-tip-label">备注:</span>
+                          <span class="tree-tip-value">{{ data.remark }}</span>
+                        </div>
+                      </div>
+                      <div v-else-if="data.nodeType === 'GROUP'" class="tree-tip-body">
+                        <div v-if="data.remark" class="tree-tip-row">
+                          <span class="tree-tip-label">分组备注:</span>
+                          <span class="tree-tip-value">{{ data.remark }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+
+                  <div class="node-main-area">
+                    <el-icon class="node-ico" :class="{ 'ico-acc': data.nodeType === 'ACCOUNT', 'ico-host': data.nodeType === 'HOST', 'ico-group': data.nodeType === 'GROUP' }">
+                      <User v-if="data.nodeType === 'ACCOUNT'" />
+                      <Monitor v-else-if="data.nodeType === 'HOST'" />
+                      <Folder v-else />
+                    </el-icon>
+                    <div class="node-text">
+                      <div class="node-title-row">
+                        <span class="node-label" :class="{ 'is-ip-font': data.nodeType === 'HOST' && !hasCustomHostName(data) }">
+                          {{ getNodeMainTitle(data) }}
+                        </span>
+                        <span v-if="data.nodeType === 'ACCOUNT'" class="node-status-pill" :class="{ 'is-open': terminalTabs.some(t => t.accountId === data.id) }"></span>
+                      </div>
+                      <span
+                        v-if="getNodeSubTitle(data)"
+                        class="node-sub"
+                        :class="{ 'is-ip-badge': data.nodeType === 'HOST' && hasCustomHostName(data) }"
+                      >
+                        {{ getNodeSubTitle(data) }}
+                      </span>
+                    </div>
                   </div>
-                  <span v-if="nodeSubtitle(data)" class="node-sub">{{ nodeSubtitle(data) }}</span>
-                </div>
+                </el-tooltip>
+
                 <el-dropdown class="node-actions" trigger="click" @command="(command) => onNodeAction(command, data)" @click.stop>
                   <el-button text circle size="small" title="更多操作" @click.stop><el-icon><MoreFilled /></el-icon></el-button>
                   <template #dropdown>
@@ -146,7 +226,28 @@
             </button>
           </div>
         </div>
-        <div v-if="!sidebarCollapsed" class="sidebar-resize-handle" role="separator" aria-label="调整主机与分组侧栏宽度" aria-orientation="vertical" :aria-valuenow="sidebarWidth" :aria-valuemin="SIDEBAR_MIN_WIDTH" :aria-valuemax="SIDEBAR_MAX_WIDTH" tabindex="0" title="拖动调整宽度；使用左右方向键微调" @pointerdown.prevent="startSidebarResize" @keydown="resizeSidebarByKeyboard"></div>
+
+        <!-- 侧栏拖拽调整宽度的把手 -->
+        <div
+          v-show="!sidebarCollapsed"
+          class="sidebar-resizer"
+          role="separator"
+          aria-label="调整主机树侧栏宽度"
+          aria-orientation="vertical"
+          :aria-valuenow="sidebarWidth"
+          :aria-valuemin="MIN_SIDEBAR_WIDTH"
+          :aria-valuemax="MAX_SIDEBAR_WIDTH"
+          tabindex="0"
+          title="拖动调整宽度，方向键微调，双击恢复默认"
+          @pointerdown="onSidebarResizeStart"
+          @pointermove="onSidebarResizeMove"
+          @pointerup="onSidebarResizeEnd"
+          @pointercancel="onSidebarResizeEnd"
+          @keydown="resizeSidebarByKeyboard"
+          @dblclick="resetSidebarWidth"
+        >
+          <div class="sidebar-resizer-handle"></div>
+        </div>
       </el-aside>
 
       <el-main class="main">
@@ -158,7 +259,7 @@
               <TerminalFileLayout>
                 <template #monitor>
                   <SshMonitorPanel v-if="activeTerminalTab && terminalVisited"
-                    :account-id="activeTerminalTab.accountId" :session-token="sessionToken" :active="accountTab === 'terminal'" />
+                    :account-id="activeTerminalTab.accountId" :session-token="sessionToken" :active="accountTab === 'terminal'" @session-invalid="onMonitorSessionInvalid" />
                 </template>
                 <template #terminal>
                   <div v-if="terminalTabs.length" class="terminal-tabs">
@@ -166,7 +267,7 @@
                       <div class="terminal-tab-scroll">
                         <button v-for="(tab, idx) in terminalTabs" :key="tab.tabId" type="button" role="tab"
                           class="terminal-tab" :class="{ 'is-active': activeTerminalId === tab.tabId }"
-                          :aria-selected="activeTerminalId === tab.tabId" @click="activateTerminalTab(tab.tabId)">
+                          :aria-selected="activeTerminalId === tab.tabId" :title="tab.label" @click="activateTerminalTab(tab.tabId)">
                           <span class="tab-status-dot" :class="{ 'is-connected': !!tab.token }"></span>
                           <span class="tab-label">{{ tab.label }}</span>
                           <span class="tab-index">#{{ idx + 1 }}</span>
@@ -448,7 +549,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Close, Expand, Fold, Folder, Monitor, MoreFilled, Plus, Refresh, Search, User } from '@element-plus/icons-vue'
+import { Close, CopyDocument, Expand, Fold, Folder, Monitor, MoreFilled, Plus, Refresh, Search, User } from '@element-plus/icons-vue'
 import { useWorkspaceStore } from '@/stores/workspace'
 import SshTerminal from '@/components/ssh/SshTerminal.vue'
 import TerminalToolbar from '@/components/ssh/TerminalToolbar.vue'
@@ -491,48 +592,94 @@ import {
 const savedAccount = readSavedSshAccount()
 const { managedServer } = storeToRefs(useWorkspaceStore())
 const sidebarCollapsed = ref(false)
-const SIDEBAR_WIDTH_KEY = 'doumi-sidebar-width'
-const SIDEBAR_MIN_WIDTH = 220
-const SIDEBAR_MAX_WIDTH = 420
-const DEFAULT_SIDEBAR_WIDTH = 260
-const sidebarWidth = ref(DEFAULT_SIDEBAR_WIDTH)
-function clampSidebarWidth(value) {
-  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.round(value)))
-}
 try { sidebarCollapsed.value=localStorage.getItem('doumi-sidebar-collapsed')==='true' } catch { /* Default expanded. */ }
 watch(sidebarCollapsed, value=>{try{localStorage.setItem('doumi-sidebar-collapsed',String(value))}catch{/* Preference only. */}})
-try {
-  const savedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
-  if (Number.isFinite(savedWidth)) sidebarWidth.value = clampSidebarWidth(savedWidth)
-} catch { /* Use the default width when browser storage is unavailable. */ }
 
-let sidebarResizePointer = null
-function startSidebarResize(event) {
-  if (event.button !== 0) return
-  sidebarResizePointer = { pointerId: event.pointerId, startX: event.clientX, startWidth: sidebarWidth.value }
-  event.currentTarget.setPointerCapture(event.pointerId)
-  document.body.classList.add('sidebar-resizing')
-  event.currentTarget.addEventListener('pointermove', moveSidebarResize)
-  event.currentTarget.addEventListener('pointerup', stopSidebarResize, { once: true })
-  event.currentTarget.addEventListener('pointercancel', stopSidebarResize, { once: true })
+const DEFAULT_SIDEBAR_WIDTH = 280
+const MIN_SIDEBAR_WIDTH = 220
+const MAX_SIDEBAR_WIDTH = 640
+const sidebarWidth = ref(DEFAULT_SIDEBAR_WIDTH)
+const isSidebarResizing = ref(false)
+let sidebarResizeOrigin = null
+
+try {
+  const savedWidth = Number(localStorage.getItem('doumi-sidebar-width'))
+  if (savedWidth >= MIN_SIDEBAR_WIDTH && savedWidth <= MAX_SIDEBAR_WIDTH) {
+    sidebarWidth.value = savedWidth
+  }
+} catch {
+  // Use default
 }
-function moveSidebarResize(event) {
-  if (!sidebarResizePointer || event.pointerId !== sidebarResizePointer.pointerId) return
-  sidebarWidth.value = clampSidebarWidth(sidebarResizePointer.startWidth + event.clientX - sidebarResizePointer.startX)
-}
-function stopSidebarResize(event) {
-  if (!sidebarResizePointer || (event?.pointerId != null && event.pointerId !== sidebarResizePointer.pointerId)) return
-  sidebarResizePointer = null
-  document.body.classList.remove('sidebar-resizing')
-  try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth.value)) } catch { /* Preference only. */ }
-}
-function resizeSidebarByKeyboard(event) {
-  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+
+function onSidebarResizeStart(event) {
+  if (event.button !== 0 || sidebarCollapsed.value) return
+  sidebarResizeOrigin = {
+    startX: event.clientX,
+    startWidth: sidebarWidth.value
+  }
+  isSidebarResizing.value = true
+  try {
+    event.currentTarget.setPointerCapture(event.pointerId)
+  } catch {}
   event.preventDefault()
-  if (event.key === 'Home') sidebarWidth.value = SIDEBAR_MIN_WIDTH
-  else if (event.key === 'End') sidebarWidth.value = SIDEBAR_MAX_WIDTH
-  else sidebarWidth.value = clampSidebarWidth(sidebarWidth.value + (event.key === 'ArrowRight' ? 10 : -10))
-  try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth.value)) } catch { /* Preference only. */ }
+}
+
+function onSidebarResizeMove(event) {
+  if (!sidebarResizeOrigin) return
+  const deltaX = event.clientX - sidebarResizeOrigin.startX
+  const newWidth = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, sidebarResizeOrigin.startWidth + deltaX))
+  sidebarWidth.value = Math.round(newWidth)
+}
+
+function onSidebarResizeEnd(event) {
+  if (!sidebarResizeOrigin) return
+  sidebarResizeOrigin = null
+  isSidebarResizing.value = false
+  try {
+    event.currentTarget.releasePointerCapture(event.pointerId)
+  } catch {}
+  try {
+    localStorage.setItem('doumi-sidebar-width', String(sidebarWidth.value))
+  } catch {}
+}
+
+function resizeSidebarByKeyboard(event) {
+  if (sidebarCollapsed.value || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  if (event.key === 'Home') sidebarWidth.value = MIN_SIDEBAR_WIDTH
+  else if (event.key === 'End') sidebarWidth.value = MAX_SIDEBAR_WIDTH
+  else sidebarWidth.value = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH,
+    sidebarWidth.value + (event.key === 'ArrowRight' ? 10 : -10)))
+  try {
+    localStorage.setItem('doumi-sidebar-width', String(sidebarWidth.value))
+  } catch { /* Preference only. */ }
+}
+
+function resetSidebarWidth() {
+  if (sidebarCollapsed.value) return
+  sidebarWidth.value = DEFAULT_SIDEBAR_WIDTH
+  try {
+    localStorage.setItem('doumi-sidebar-width', String(DEFAULT_SIDEBAR_WIDTH))
+  } catch {}
+}
+
+async function copyText(text, successMsg = '已复制到剪贴板') {
+  if (!text) return
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const input = document.createElement('input')
+      input.value = text
+      document.body.appendChild(input)
+      input.select()
+      document.execCommand('copy')
+      document.body.removeChild(input)
+    }
+    ElMessage.success(successMsg)
+  } catch {
+    ElMessage.error('复制失败，请手动复制')
+  }
 }
 
 const treeRef = ref(null)
@@ -706,7 +853,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   window.removeEventListener('doumi-configuration-imported', refreshTree)
-  stopSidebarResize()
+  onSidebarResizeEnd()
 })
 
 async function persistAccountSelection(node, hostGroupId) {
@@ -775,23 +922,75 @@ async function restoreSavedAccount() {
   treeRef.value?.setCurrentKey?.(node.key)
 }
 
-function nodeTitle(data) {
-  if (data.remark) return `${data.label}\n${data.remark}`
-  return data.label
+function hasCustomHostName(data) {
+  if (data?.nodeType !== 'HOST') return false
+  const label = (data.label || '').trim()
+  const host = (data.extra?.host || '').trim()
+  const endpoint = (data.extra?.endpoint || '').trim()
+  if (!label) return false
+  if (label === host || label === endpoint || label === `${host}:22`) return false
+  return true
 }
 
-function nodeSubtitle(data) {
-  if (data.nodeType === 'HOST' && data.extra?.endpoint) return data.extra.endpoint
+function getNodeMainTitle(data) {
+  if (data.nodeType === 'HOST') {
+    const host = (data.extra?.host || '').trim()
+    const port = data.extra?.port
+    const endpoint = data.extra?.endpoint || ''
+    const label = (data.label || '').trim()
+
+    // 若无自定义别名或别名就是 IP，直接显示完整 IP，独占可用宽度
+    if (!hasCustomHostName(data)) {
+      if (port && port !== 22) {
+        return endpoint || `${host}:${port}` || label || '未命名主机'
+      }
+      return host || label || endpoint || '未命名主机'
+    }
+    // 有自定义别名场景：显示别名
+    return label
+  }
+  return data.label || ''
+}
+
+function getNodeSubTitle(data) {
+  if (data.nodeType === 'HOST') {
+    const host = (data.extra?.host || '').trim()
+    const port = data.extra?.port
+    const endpoint = data.extra?.endpoint || ''
+
+    // 若有自定义别名，副文本显示 IP（非 22 端口显示 endpoint）
+    if (hasCustomHostName(data)) {
+      if (port && port !== 22) {
+        return endpoint || `${host}:${port}`
+      }
+      return host || endpoint
+    }
+    // 无自定义别名时，主标题已展示完整 IP，副文本只展示备注，避免重复 IP 占用空间导致截断
+    return data.remark || ''
+  }
   if (data.remark) return data.remark
   return ''
+}
+
+function nodeTagType(data) {
+  if (data.nodeType === 'ACCOUNT') return 'success'
+  if (data.nodeType === 'HOST') return 'primary'
+  return 'warning'
+}
+
+function nodeTypeName(data) {
+  if (data.nodeType === 'ACCOUNT') return '账户'
+  if (data.nodeType === 'HOST') return '主机'
+  return '分组'
 }
 
 function filterNode(value, data) {
   if (!value) return true
   const v = String(value).trim().toLocaleLowerCase()
   if (!v) return true
+  const host = data.nodeType === 'HOST' ? data.extra?.host || '' : ''
   const endpoint = data.nodeType === 'HOST' ? data.extra?.endpoint || '' : ''
-  return [data.label, data.remark, endpoint]
+  return [data.label, data.remark, host, endpoint]
     .some(field => String(field || '').toLocaleLowerCase().includes(v))
 }
 
@@ -1040,8 +1239,15 @@ function persistTerminalTabs() {
 }
 
 function terminalTabLabel(account, host = accountHostMeta.value) {
-  const hostLabel = `${host.name || account.host || `主机#${account.hostId}`} (${host.host || account.host || ''})`
-  return `${hostLabel} · ${account.username || '账户'}`
+  const hostName = (host?.name || account.host || `主机#${account.hostId}`).trim()
+  const hostAddress = (host?.host || account.host || '').trim()
+
+  let hostPart = hostName
+  if (hostAddress && hostAddress !== hostName) {
+    hostPart = `${hostName} (${hostAddress})`
+  }
+
+  return `${hostPart} · ${account.username || '账户'}`
 }
 
 function activateTerminalForAccount(account) {
@@ -1134,8 +1340,15 @@ function onTerminalReady(tabId, payload) {
 
 function onTerminalDisconnected(tabId) {
   const tab = terminalTabs.value.find(item => item.tabId === tabId)
-  if (tab) tab.token = ''
+  if (tab) { tab.token = ''; tab.connectionMode = '' }
   if (activeTerminalId.value === tabId) sessionToken.value = ''
+}
+
+function onMonitorSessionInvalid(token) {
+  for (const tab of terminalTabs.value) {
+    if (tab.token === token) { tab.token = ''; tab.connectionMode = '' }
+  }
+  if (sessionToken.value === token) sessionToken.value = ''
 }
 
 function onFileSessionInvalid() {
@@ -1679,31 +1892,43 @@ async function isHostInsideGroup(hostId, groupId) {
   overflow: hidden;
   transition: width var(--ws-transition-fast), background-color var(--ws-transition-normal);
 }
-.sidebar-resize-handle {
+.aside.is-resizing {
+  transition: none !important;
+  user-select: none;
+}
+.sidebar-resizer {
   position: absolute;
-  z-index: 12;
   top: 0;
-  right: -3px;
-  bottom: 0;
-  width: 7px;
+  right: 0;
+  width: 6px;
+  height: 100%;
   cursor: col-resize;
+  z-index: 20;
   touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color var(--ws-transition-fast);
 }
-.sidebar-resize-handle::after {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 3px;
-  width: 1px;
-  background: transparent;
-  content: '';
+.sidebar-resizer:hover,
+.sidebar-resizer:active,
+.sidebar-resizer:focus-visible {
+  background-color: var(--el-color-primary-light-8);
 }
-.sidebar-resize-handle:hover::after,
-.sidebar-resize-handle:focus-visible::after {
+.sidebar-resizer-handle {
   width: 2px;
-  background: var(--ws-accent);
+  height: 24px;
+  border-radius: 1px;
+  background-color: var(--ws-border);
+  opacity: 0;
+  transition: opacity var(--ws-transition-fast), background-color var(--ws-transition-fast);
 }
-.sidebar-resize-handle:focus-visible { outline: none; }
+.sidebar-resizer:hover .sidebar-resizer-handle,
+.sidebar-resizer:active .sidebar-resizer-handle,
+.sidebar-resizer:focus-visible .sidebar-resizer-handle {
+  opacity: 1;
+  background-color: var(--ws-accent);
+}
 @media (max-width: 700px) {
   .aside:not(.aside-collapsed) { max-width: min(420px, 65vw); }
 }
@@ -1873,6 +2098,7 @@ async function isHostInsideGroup(hostId, groupId) {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  flex: 1;
 }
 .pin-name {
   font-weight: 500;
@@ -1924,6 +2150,14 @@ async function isHostInsideGroup(hostId, groupId) {
   min-width: 0;
   padding-right: 4px;
 }
+.node-main-area {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
 .node-ico {
   font-size: 14px;
   flex-shrink: 0;
@@ -1937,13 +2171,14 @@ async function isHostInsideGroup(hostId, groupId) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
+  gap: 6px;
 }
 .node-title-row {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+  flex: 1 1 auto;
 }
 .node-label {
   display: block;
@@ -1952,6 +2187,11 @@ async function isHostInsideGroup(hostId, groupId) {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--ws-text-primary);
+  line-height: 1.4;
+}
+.node-label.is-ip-font {
+  font-family: var(--font-mono);
+  letter-spacing: -0.2px;
 }
 .node-sub {
   font-size: 11px;
@@ -1960,6 +2200,20 @@ async function isHostInsideGroup(hostId, groupId) {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
+  flex-shrink: 0;
+  max-width: 55%;
+  line-height: 1.4;
+}
+.node-sub.is-ip-badge {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--ws-text-muted);
+  background: var(--ws-bg-card);
+  border: 1px solid var(--ws-border);
+  padding: 0 4px;
+  border-radius: var(--ws-radius-xs);
+  line-height: 16px;
+  letter-spacing: -0.2px;
 }
 .node-status-pill {
   width: 6px;
@@ -2361,13 +2615,6 @@ async function isHostInsideGroup(hostId, groupId) {
 </style>
 
 <style>
-body.sidebar-resizing {
-  cursor: col-resize !important;
-  user-select: none !important;
-}
-</style>
-
-<style>
 .ssh-group-tree-popper .el-select-dropdown__wrap {
   max-height: min(60vh, 420px);
 }
@@ -2380,5 +2627,65 @@ body.sidebar-resizing {
   height: auto;
   padding-top: 4px;
   padding-bottom: 4px;
+}
+
+/* 树节点富文本提示悬浮卡片 */
+.tree-node-tooltip {
+  max-width: 320px !important;
+  padding: 8px 12px !important;
+  border-radius: var(--ws-radius-md, 8px) !important;
+  color: var(--el-text-color-primary);
+  box-shadow: var(--el-box-shadow) !important;
+}
+.tree-tip-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.tree-tip-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  padding-bottom: 6px;
+  margin-bottom: 2px;
+}
+.tree-tip-tag {
+  flex-shrink: 0;
+}
+.tree-tip-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-tip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tree-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 20px;
+}
+.tree-tip-label {
+  color: var(--el-text-color-secondary);
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.tree-tip-value {
+  color: var(--el-text-color-primary);
+  word-break: break-all;
+  font-size: 12px;
+}
+.tree-tip-copy-btn {
+  padding: 2px 4px !important;
+  height: 20px !important;
+  margin-left: 2px;
 }
 </style>

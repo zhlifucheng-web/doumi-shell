@@ -9,6 +9,9 @@ import com.doumiot.sshconsole.entity.SshHost;
 import com.doumiot.sshconsole.ssh.SshClientFactory;
 import com.doumiot.sshconsole.ssh.SshSessionRegistry;
 import com.doumiot.sshconsole.ssh.SshRemoteExec;
+import com.doumiot.sshconsole.ssh.SshTmuxSession;
+import net.schmizz.sshj.connection.channel.Channel;
+import java.util.function.Consumer;
 import com.doumiot.sshconsole.config.SshConsoleProperties;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -48,6 +51,17 @@ public class SshTerminalService {
     }
 
     public TerminalSession openTerminal(long accountId, int cols, int rows, String terminalId, boolean readOnly) throws IOException {
+        return openTerminal(accountId, cols, rows, terminalId, readOnly, readOnly, false, stage -> {});
+    }
+
+    public TerminalSession openTerminal(long accountId, int cols, int rows, String terminalId,
+            boolean readOnly, boolean shared, boolean plainSsh, Consumer<String> progress) throws IOException {
+        return openTerminal(accountId, cols, rows, terminalId, readOnly, shared, plainSsh, "UTF-8", progress);
+    }
+
+    public TerminalSession openTerminal(long accountId, int cols, int rows, String terminalId,
+            boolean readOnly, boolean shared, boolean plainSsh, String encoding, Consumer<String> progress) throws IOException {
+        progress.accept("正在建立 SSH 连接…");
         SshAccount account = sshAccountService.requireAccount(accountId);
         if (account.getEnabled() != null && account.getEnabled() == 0) {
             throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "账户已禁用");
@@ -64,10 +78,15 @@ public class SshTerminalService {
 
         int c = cols > 0 ? cols : DEFAULT_COLS;
         int r = rows > 0 ? rows : DEFAULT_ROWS;
-        boolean tmux = properties.isTmuxEnabled() && hasTmux(client, entry.getExecLock());
+        boolean tmux;
         try {
-            attachShell(entry, c, r, account.getDefaultCwd(), accountId, terminalId, tmux, readOnly);
-        } catch (IOException e) {
+            if (shared && (!properties.isTmuxEnabled() || plainSsh))
+                throw new IOException("共享终端需要 tmux，不能切换为普通 SSH");
+            progress.accept("正在检查终端会话…");
+            tmux = !plainSsh && properties.isTmuxEnabled() && hasTmux(client, entry.getExecLock());
+            if (shared && !tmux) throw new IOException("远端未安装 tmux，无法连接共享终端");
+            attachShell(entry, c, r, account.getDefaultCwd(), accountId, terminalId, tmux, readOnly, shared, encoding, progress);
+        } catch (IOException | RuntimeException e) {
             sessionRegistry.close(entry.getSessionToken());
             throw e;
         }
@@ -88,7 +107,8 @@ public class SshTerminalService {
 
     public void resize(String sessionToken, int cols, int rows) throws IOException {
         SshSessionRegistry.SessionEntry entry = sessionRegistry.get(sessionToken);
-        Session.Shell shell = entry.getShell();
+        Channel channel = entry.getTerminalChannel();
+        Session.Shell shell = channel instanceof Session.Shell ? (Session.Shell) channel : null;
         if (shell == null || cols <= 0 || rows <= 0) {
             return;
         }
@@ -110,54 +130,55 @@ public class SshTerminalService {
         if (stdin == null) {
             throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "终端未就绪");
         }
+        if (entry.getTmuxSession() != null) bytes = entry.getTmuxSession().filterWheelInput(bytes);
         stdin.write(bytes);
         stdin.flush();
     }
 
     private void attachShell(SshSessionRegistry.SessionEntry entry, int cols, int rows, String defaultCwd,
-                             long accountId, String terminalId, boolean tmux, boolean readOnly)
-            throws IOException {
+            long accountId, String terminalId, boolean tmux, boolean readOnly, boolean shared,
+            String encoding, Consumer<String> progress) throws IOException {
         SSHClient client = entry.getClient();
+        // Mouse state queries use independent SSH channels, so a monitor scan cannot block input.
+        Object tmuxLock = new Object();
+        SshTmuxSession tmuxSession = new SshTmuxSession((command, timeout) ->
+                SshRemoteExec.exec(client, tmuxLock, command, timeout));
+        String name = tmux ? tmuxSessionName(accountId, terminalId) : null;
+        if (tmux) {
+            progress.accept("正在准备 tmux 会话…");
+            tmuxSession.prepare(name, defaultCwd, cols, rows, shared);
+            entry.setTmuxSession(tmuxSession);
+        }
         Session sshSession = client.startSession();
-        sshSession.allocatePTY("xterm-256color", cols, rows, 0, 0, Collections.emptyMap());
-        Session.Shell shell = sshSession.startShell();
         entry.setSshSession(sshSession);
-        entry.setShell(shell);
-        entry.setShellStdin(shell.getOutputStream());
-        entry.setShellStdout(shell.getInputStream());
+        sshSession.allocatePTY("xterm-256color", cols, rows, 0, 0, Collections.emptyMap());
+        Channel channel;
+        if (tmux) {
+            progress.accept("正在附着 tmux 会话…");
+            channel = sshSession.exec(SshTmuxSession.attachCommand(name, readOnly, encoding));
+            entry.setTerminalChannel(channel);
+            entry.setShellStdout(tmuxSession.awaitAttached(channel, name, 8000));
+        } else {
+            channel = sshSession.startShell();
+            entry.setTerminalChannel(channel);
+            entry.setShellStdout(channel.getInputStream());
+            if (StringUtils.hasText(defaultCwd)) {
+                channel.getOutputStream().write((shellCd(defaultCwd.trim()) + "\n").getBytes(StandardCharsets.UTF_8));
+                channel.getOutputStream().flush();
+            }
+        }
+        entry.setShellStdin(channel.getOutputStream());
         entry.setPtyCols(cols);
         entry.setPtyRows(rows);
         entry.setTerminalAttached(true);
         sessionRegistry.touchSession(entry.getSessionToken());
-
-        // tmux keeps the interactive process alive after the browser/WebSocket disconnects.
-        // -2 forces 256 colors, -u forces UTF-8 support.
-        // The command is conditional so hosts without tmux retain the existing shell behavior.
-        if (tmux) {
-            String cwdArg = StringUtils.hasText(defaultCwd) ? " -c " + shellQuote(defaultCwd.trim()) : "";
-            String sessName = tmuxSessionName(accountId, terminalId);
-            String attachArgs = readOnly ? "attach-session -r -t " : "attach-session -t ";
-            String tmuxCommand = "if command -v tmux >/dev/null 2>&1; then tmux set-option -g aggressive-resize on 2>/dev/null; "
-                    + "if tmux has-session -t " + sessName + " 2>/dev/null; then "
-                    + "exec tmux -2 -u " + attachArgs + sessName + "; else "
-                    + "exec tmux -2 -u new-session -s " + sessName + cwdArg + "; fi; fi\n";
-            shell.getOutputStream().write(tmuxCommand.getBytes(StandardCharsets.UTF_8));
-            shell.getOutputStream().flush();
-        } else if (StringUtils.hasText(defaultCwd)) {
-            String cmd = shellCd(defaultCwd.trim()) + "\n";
-            shell.getOutputStream().write(cmd.getBytes(StandardCharsets.UTF_8));
-            shell.getOutputStream().flush();
-        }
     }
 
-    private static boolean hasTmux(SSHClient client, Object lock) {
-        try {
-            SshRemoteExec.ExecResult result = SshRemoteExec.exec(client, lock, "command -v tmux 2>/dev/null", 5);
-            return result.getExitStatus() == 0 && result.getStdout() != null
-                    && !result.getStdout().trim().isEmpty();
-        } catch (Exception e) {
-            return false;
-        }
+    private static boolean hasTmux(SSHClient client, Object lock) throws IOException {
+        SshRemoteExec.ExecResult result = SshRemoteExec.exec(client, lock, "command -v tmux 2>/dev/null", 3);
+        if (result.getExitStatus() != 0 && result.getExitStatus() != 1 && result.getExitStatus() != 127)
+            throw new IOException("检测 tmux 失败 (exit=" + result.getExitStatus() + ")");
+        return result.getExitStatus() == 0 && StringUtils.hasText(result.getStdout());
     }
 
     private static String shellQuote(String s) {
@@ -174,7 +195,7 @@ public class SshTerminalService {
             suffix = "s_" + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
         }
         if (suffix.length() > 48) suffix = suffix.substring(0, 48);
-        return "'doumi-shell-" + accountId + "-" + suffix + "'";
+        return "doumi-shell-" + accountId + "-" + suffix;
     }
 
     private static void assertHostEnabled(SshHost host) {

@@ -30,4 +30,33 @@
 
 配置键使用 `doumi.storage`、`doumi.ssh-console`。端口、数据目录等示例见 `shell-end/config/application.yml.example`。
 
-Linux 终端默认通过账户级 tmux 会话承载交互 shell。网页刷新或 WebSocket 短暂断开后重新连接，会重新 attach 到该账户的 tmux 会话并保留远端现场；不同账户使用不同会话。目标主机未安装 tmux 或配置 `doumi.ssh-console.tmux-enabled: false` 时，自动使用普通 SSH shell，此时断开连接会结束交互现场。
+Linux 终端默认使用由账户 ID 和终端 ID 确定的 tmux 会话。相同终端 ID 重连会重新附着并保留现场，不同标签使用独立会话。普通终端在目标主机未安装 tmux 或配置 `doumi.ssh-console.tmux-enabled: false` 时使用普通 SSH；此时断开连接会结束交互现场。
+
+## tmux 启动与故障处理
+
+终端滚轮使用 tmux 自身的历史缓冲区。准备新会话和重连已有会话时，按会话设置 `mouse on`，旧版回退到当前窗口的 `mode-mouse on`，不修改全局选项。前端同时转发 xterm 的 `onData` 与 `onBinary`，鼠标协议字节绕过 GBK 等正文编码转换。
+
+tmux 兼容探测须保留 SSH stderr 管道，不可把 tmux 的错误输出重定向到 `/dev/null`：实机 tmux 1.6 在此场景下会挂住，导致旧版选项回退无法执行并最终启动超时。
+
+新版 tmux 按 `alternate_on`、`mouse_any_flag` 与 `pane_in_mode` 区分历史滚动和编辑器输入：编辑器未开启鼠标时将滚轮转为方向键，原生鼠标和历史复制模式保留鼠标事件。tmux 1.6 缺少这些字段，Linux 下通过前台进程组识别 vim、nano、emacs、less 等常见全屏工具；普通前台命令仍滚动历史。未知工具或状态查询失败时保留鼠标事件。状态查询使用独立 SSH 通道和短命令超时，连续滚动缓存 250ms，键盘输入立即使缓存失效。该旧版识别不保证覆盖自定义名称的编辑器。
+
+启动分为 SSH 连接、检查、准备、附着四个阶段，通过 WebSocket `connecting` 帧显示进度。短命令在独立 SSH 通道执行：检查和创建命令有 3 秒远端看门狗；附着确认预算为 8 秒，使用客户端 PTY 标识与 `tmux list-clients` 的结果精确匹配后才发送 `ready`。远端看门狗使用 POSIX shell，不依赖 GNU `timeout`。健康的交互会话没有固定存活时限。
+
+兼容命令按 tmux 1.6 验证，不使用 `new-session -A`、`new-session -c`。启动过程不修改全局 `aggressive-resize`。在 192.168.78.140 的 tmux 1.6 上，旧启动链中的 `tmux setw -g aggressive-resize on` 曾阻塞且持续累积；旧实现提前发送 `ready`，导致页面接受输入但 shell 尚未进入 tmux。底层旧版本 tmux 的内部阻塞原因尚未进一步定位。
+
+启动失败会关闭本次 SSH 通道和注册会话。前端启动等待上限为 60 秒；就绪后每 30 秒发心跳，15 秒未收到回应会清理当前连接状态和监控 token。失效 token 停止轮询，切换会话时取消旧监控请求。普通终端失败后可点击“改用普通 SSH”；共享终端必须附着原 tmux，会话缺失时直接报错，避免进入无关 shell。
+
+共享链接携带创建时的编码，服务端也保存编码元数据，因此删除链接的 `encoding` 参数后仍能自动继承。编码是创建时的快照，后续切换不会实时同步。连接握手会携带观看者当前选择的编码；没有传入时采用共享记录中的编码。
+
+GBK 等传统编码的正文可能与 tmux 自己绘制的 UTF-8 边框、空白填充混用。此时不能把整条输出改为 UTF-8，也不能对正文做字符替换。UTF-8 客户端继续使用 `tmux -u`；其他编码只对本次 attach 客户端设置 `LC_ALL=C LANG=C` 并移除 `-u`，让 tmux 使用兼容的装饰绘制方式。已有 pane 的字节、locale 和全局配置保持不变，浏览器仍按选择的 GBK 等编码解码。切换编码会重新附着原 tmux 会话，使客户端绘制模式同步更新；普通 SSH 不会因此重建 shell。
+
+回归验证：
+
+```bash
+mvn -o -f shell-end/pom.xml -Dtest=SshTerminalStartupTest,SshRemoteExecTimeoutTest,SshTmuxSessionTest,SshShareSessionServiceTest,HostMonitorTest,ScriptExecutionTest test
+cd shell-front
+node --test tests/*.test.js
+npm run build
+```
+
+2026-10-22 验收：后端相关测试 28 项、前端测试 60 项及生产构建通过；140 实机验证十次重连保留 shell 变量、五个并发独立会话、PTY 缩放、共享读写与只读权限、共享拒绝普通 SSH 回退、普通 SSH 显式连接，以及共享连接数归零。验收保留原有远端 tmux 会话和历史阻塞进程，临时共享链接已撤销。
