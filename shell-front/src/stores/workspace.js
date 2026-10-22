@@ -13,12 +13,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const background = ref(defaultBackground())
   const aiOpen = ref(false)
   const aiInitialPrompt = ref('')
-  const commandPaletteOpen = ref(false)
   const terminalThemeOpen = ref(false)
   const terminalCols = ref(120)
   const terminalRows = ref(34)
   const terminalConnected = ref(false)
-  const allAccounts = ref([])
   let initialized = false
   let mediaQuery
 
@@ -102,12 +100,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     backgroundStyle,
     aiOpen,
     aiInitialPrompt,
-    commandPaletteOpen,
     terminalThemeOpen,
     terminalCols,
     terminalRows,
     terminalConnected,
-    allAccounts,
     openAi,
     initialize,
     setPreference,

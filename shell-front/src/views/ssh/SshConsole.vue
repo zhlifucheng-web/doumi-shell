@@ -28,7 +28,7 @@
           <div class="aside-toolbar">
             <el-input
               v-model="filterText"
-              placeholder="筛选分组/主机/IP/账户..."
+              placeholder="筛选分组/主机名/IP/账户..."
               clearable
               class="aside-filter"
             >
@@ -965,12 +965,12 @@ function nodeTypeName(data) {
 
 function filterNode(value, data) {
   if (!value) return true
-  const v = String(value).trim().toLowerCase()
-  const labelMatch = data.label && String(data.label).toLowerCase().includes(v)
-  const remarkMatch = data.remark && String(data.remark).toLowerCase().includes(v)
-  const hostMatch = data.extra?.host && String(data.extra.host).toLowerCase().includes(v)
-  const endpointMatch = data.extra?.endpoint && String(data.extra.endpoint).toLowerCase().includes(v)
-  return Boolean(labelMatch || remarkMatch || hostMatch || endpointMatch)
+  const v = String(value).trim().toLocaleLowerCase()
+  if (!v) return true
+  const host = data.nodeType === 'HOST' ? data.extra?.host || '' : ''
+  const endpoint = data.nodeType === 'HOST' ? data.extra?.endpoint || '' : ''
+  return [data.label, data.remark, host, endpoint]
+    .some(field => String(field || '').toLocaleLowerCase().includes(v))
 }
 
 async function loadNode(node, resolve) {
