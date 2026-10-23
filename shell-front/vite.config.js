@@ -40,11 +40,13 @@ export default defineConfig(({ mode }) => {
       }
     },
     server: {
+      host: '0.0.0.0',
       port: 3100,
       open: true,
       proxy: proxyConfig
     },
     preview: {
+      host: '0.0.0.0',
       port: 3101,
       proxy: proxyConfig
     }

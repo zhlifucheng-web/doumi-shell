@@ -20,6 +20,46 @@ public final class SshTmuxSession {
     private static final Pattern SGR_WHEEL = Pattern.compile("\033\\[<(\\d{1,3});\\d+;\\d+M");
     public SshTmuxSession(CommandRunner runner) { this.runner = runner; }
 
+    public static final class VersionInfo {
+        private final String version;
+        private final String source;
+        VersionInfo(String version, String source) { this.version = version; this.source = source; }
+        public String getVersion() { return version; }
+        public String getSource() { return source; }
+    }
+
+    /** Version probing is advisory: an old server or failed probe must not end a live terminal. */
+    public VersionInfo detectVersion() {
+        if (sessionName != null) {
+            try {
+                SshRemoteExec.ExecResult server = run("exec tmux display-message -p -t "
+                        + quote(sessionName + ":") + " " + quote("#{version}"), 2);
+                String version = server.getExitStatus() == 0 ? parseVersion(server.getStdout()) : "";
+                if (!version.isEmpty()) return new VersionInfo(version, "server");
+            } catch (IOException | RuntimeException ignored) { /* Try the installed executable next. */ }
+        }
+        try {
+            SshRemoteExec.ExecResult executable = run("exec tmux -V", 2);
+            String version = executable.getExitStatus() == 0 ? parseVersion(executable.getStdout()) : "";
+            if (!version.isEmpty()) return new VersionInfo(version, "executable");
+        } catch (IOException | RuntimeException ignored) { /* Keep the established session usable. */ }
+        return new VersionInfo("", "unknown");
+    }
+
+    private static String parseVersion(String output) {
+        if (output == null || output.length() > 128) return "";
+        Matcher match = Pattern.compile("^(?:tmux\\s+)?((?:next-)?[0-9]+\\.[0-9]+(?:[a-z]|-rc[0-9]+)?)(?:[ \\t].*)?$")
+                .matcher(output.trim());
+        return match.matches() ? match.group(1) : "";
+    }
+
+    /** Read the active pane in this session, without changing copy mode or paste buffers. */
+    public String historyCommand() throws IOException {
+        if (sessionName == null) throw new IOException("tmux 会话未就绪");
+        // -p requires tmux 1.8+. Older versions keep their existing connection support.
+        return boundedCommand("exec tmux capture-pane -p -S -50000 -t " + quote(sessionName + ":"), 8);
+    }
+
     public void prepare(String name, String cwd, int cols, int rows, boolean shared) throws IOException {
         SshRemoteExec.ExecResult exists = run("exec tmux has-session -t " + quote(name), 3);
         if (exists.getExitStatus() != 0) {

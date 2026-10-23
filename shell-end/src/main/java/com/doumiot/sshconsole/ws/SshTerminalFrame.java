@@ -16,9 +16,13 @@ public class SshTerminalFrame {
     private String label;
     private String remark;
     private String connectionMode;
+    private String tmuxVersion;
+    private String tmuxVersionSource;
     private String code;
     private String message;
     private String encoding;
+    private Long requestId;
+    private Boolean truncated;
 
     public static SshTerminalFrame ready(String sessionToken, String label, String remark, String connectionMode) {
         SshTerminalFrame f = new SshTerminalFrame();

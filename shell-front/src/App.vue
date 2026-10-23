@@ -96,6 +96,8 @@
           </template>
         </el-dropdown>
 
+        <PwaInstall />
+
         <!-- 帮助文档 -->
         <router-link to="/help" class="about-btn" title="帮助与使用教程">
           <el-icon><QuestionFilled /></el-icon>
@@ -144,6 +146,7 @@ import ThemeBackground from '@/components/ThemeBackground.vue'
 import TerminalThemeDialog from '@/components/ssh/TerminalThemeDialog.vue'
 import AiAssistant from '@/components/AiAssistant.vue'
 import AppStatusBar from '@/components/AppStatusBar.vue'
+import PwaInstall from '@/components/PwaInstall.vue'
 import { useReleaseStore } from '@/stores/release'
 
 const router = useRouter()

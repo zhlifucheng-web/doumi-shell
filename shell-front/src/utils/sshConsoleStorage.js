@@ -106,6 +106,8 @@ export function saveTerminalTabs(tabs, activeTabId, storage = (typeof sessionSto
       hostId: t.hostId,
       defaultCwd: t.defaultCwd || '',
       label: t.label || '',
+      customTitle: t.customTitle || '',
+      subIndex: t.subIndex != null ? Number(t.subIndex) : 1,
       encoding: t.encoding || 'UTF-8',
       account: t.account || null
     }))
@@ -140,6 +142,8 @@ export function readSavedTerminalTabs(storage = (typeof sessionStorage !== 'unde
           hostId: t.hostId != null ? Number(t.hostId) : null,
           defaultCwd: t.defaultCwd || '',
           label: t.label || '',
+          customTitle: t.customTitle || '',
+          subIndex: t.subIndex != null ? Number(t.subIndex) : 1,
           encoding: t.encoding || 'UTF-8',
           account: t.account || null,
           token: '',
@@ -254,4 +258,83 @@ export async function resolveSshExpandedKeys(selection, { getGroup, getHost }) {
     }
   }
   return [...groupKeys, ...keys]
+}
+
+/**
+ * 格式化终端标签页紧凑显示标题：
+ * - 用户自定义别名优先（支持双击/右键重命名）
+ * - 去除多余冗长的 (IP:端口) 嵌套后缀（IP 保留在 Tooltip 中查看）
+ * - 智能拼接简洁的主机名与账户名
+ * - 支持子终端编号 (#2, #3...)
+ */
+export function formatTerminalTabDisplayLabel(tab, hostMeta = null) {
+  if (!tab) return '终端'
+  if (tab.customTitle && tab.customTitle.trim()) {
+    return tab.customTitle.trim()
+  }
+  let hostName = (tab.account?.name || (hostMeta?.id === tab.hostId ? hostMeta?.name : '') || tab.account?.host || tab.label?.split(' · ')[0] || '终端').trim()
+  hostName = hostName.replace(/\s*\([^)]*\)\s*$/, '').trim() || hostName
+
+  const username = tab.account?.username || ''
+  const sub = (tab.subIndex && tab.subIndex > 1) ? ` #${tab.subIndex}` : ''
+
+  if (hostName && username && hostName !== username) {
+    return `${hostName} · ${username}${sub}`
+  }
+  return `${hostName || username || 'SSH'}${sub}`
+}
+
+/**
+ * 提取终端会话的登录账户名
+ */
+export function getTabUsername(tab) {
+  if (!tab) return 'user'
+  return (tab.account?.username || 'user').trim()
+}
+
+/**
+ * 提取侧边栏收起 (Mini-Dock) 时极简主机标识 (2-4字符)：
+ * - 自定义别名优先
+ * - IP 地址提取末段 (如 192.168.1.105 -> .105)
+ * - 英文单词取前 4 字符 (如 Web1, Redis)
+ * - 中文字符取前 2-3 字符 (如 网关, 核心)
+ */
+export function getTabMiniHost(tab, hostMeta = null) {
+  if (!tab) return 'SSH'
+  if (tab.customTitle && tab.customTitle.trim()) {
+    const title = tab.customTitle.trim()
+    return title.length <= 3 ? title : title.slice(0, 3)
+  }
+  const rawHost = (tab.account?.name || (hostMeta?.id === tab.hostId ? hostMeta?.name : '') || tab.account?.host || tab.label?.split(' · ')[0] || '').trim()
+  const clean = rawHost.replace(/\s*\([^)]*\)\s*$/, '').trim()
+  if (!clean) return 'SSH'
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(clean)) {
+    const parts = clean.split('.')
+    return `.${parts[parts.length - 1]}`
+  }
+  if (/^[a-zA-Z0-9_\-]+$/.test(clean)) {
+    return clean.length <= 4 ? clean : clean.slice(0, 4)
+  }
+  return clean.length <= 3 ? clean : clean.slice(0, 2)
+}
+
+export const MINI_DOCK_PALETTES = [
+  { color: '#8b5cf6', border: 'rgba(139, 92, 246, 0.45)', bg: 'rgba(139, 92, 246, 0.12)' }, // Purple
+  { color: '#06b6d4', border: 'rgba(6, 182, 212, 0.45)', bg: 'rgba(6, 182, 212, 0.12)' },  // Cyan
+  { color: '#3b82f6', border: 'rgba(59, 130, 246, 0.45)', bg: 'rgba(59, 130, 246, 0.12)' },  // Blue
+  { color: '#f59e0b', border: 'rgba(245, 158, 11, 0.45)', bg: 'rgba(245, 158, 11, 0.12)' },  // Amber
+  { color: '#10b981', border: 'rgba(16, 185, 129, 0.45)', bg: 'rgba(16, 185, 129, 0.12)' }, // Emerald
+  { color: '#f43f5e', border: 'rgba(244, 63, 94, 0.45)', bg: 'rgba(244, 63, 94, 0.12)' },   // Rose
+  { color: '#14b8a6', border: 'rgba(20, 184, 166, 0.45)', bg: 'rgba(20, 184, 166, 0.12)' }   // Teal
+]
+
+export function getTabThemeStyle(tab) {
+  if (!tab) return {}
+  const seed = Number(tab.hostId) || (tab.tabId ? String(tab.tabId).split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) : 0)
+  const theme = MINI_DOCK_PALETTES[Math.abs(seed) % MINI_DOCK_PALETTES.length]
+  return {
+    '--node-theme-color': theme.color,
+    '--node-theme-border': theme.border,
+    '--node-theme-bg': theme.bg
+  }
 }

@@ -11,6 +11,7 @@ import App from './App.vue'
 import router from './router'
 import { initTheme, useTheme } from './composables/useTheme'
 import { installVersionRefresh } from './utils/versionRefresh'
+import { registerPwa } from './utils/pwa'
 
 const app = createApp(App)
 const pinia = createPinia()
@@ -35,3 +36,4 @@ app.use(router)
 app.use(ElementPlus)
 app.mount('#app')
 installVersionRefresh()
+void registerPwa()

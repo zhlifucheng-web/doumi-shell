@@ -18,17 +18,25 @@
       <button type="button" :class="{ 'is-active-opt': encoding === 'Big5' }" @click="onSwitchEncoding('Big5')">Big5 (繁体)</button>
     </div>
     <div v-if="searchVisible" class="terminal-search" @mousedown.stop>
+      <select v-model="searchScope" aria-label="搜索范围" :title="tmuxStatus.historyNote || '选择搜索范围'" @change="changeSearchScope">
+        <option value="connection">本次连接</option>
+        <option v-if="tmuxStatus.tmux" value="history" :disabled="tmuxStatus.historySupported === false">{{ tmuxStatus.historySupported === false ? 'tmux 历史（需 1.8+）' : 'tmux 历史' }}</option>
+      </select>
       <input
         ref="searchInput"
         v-model="searchText"
-        placeholder="搜索终端内容"
-        @keydown.enter.prevent="findNext"
+        :placeholder="searchScope === 'history' ? '搜索 tmux 历史内容' : '搜索本次连接内容'"
+        aria-label="搜索终端内容"
+        @keydown.enter.prevent="onSearchEnter"
         @keydown.esc="closeSearch"
         @keydown.ctrl.f.prevent.stop="findNext"
         @keydown.meta.f.prevent.stop="findNext"
       />
-      <button type="button" @click="findPrevious">↑</button><button type="button" @click="findNext">↓</button><button type="button" @click="closeSearch">关闭</button>
+      <button type="button" aria-label="上一个匹配" @click="findPrevious">↑</button><button type="button" aria-label="下一个匹配" @click="findNext">↓</button>
+      <button v-if="searchScope === 'history'" type="button" :disabled="historyLoading || disconnected" @click="loadHistory">刷新历史</button>
+      <button type="button" @click="closeSearch">关闭</button>
     </div>
+    <TerminalHistory v-if="searchVisible && searchScope === 'history'" ref="historyView" :text="historyText" :query="searchText" :loading="historyLoading" :error="historyError" :truncated="historyTruncated" @close="closeSearch" />
     <div ref="termContainer" class="term-container" :class="[termContainerClass]" :style="termContainerStyle" @click="focusTerminal" @contextmenu.prevent="showContextMenu" />
     <EditorScrollbar :target="scrollTarget" />
 
@@ -67,6 +75,9 @@ import { createTerminalConnectionGuard } from '@/utils/terminalConnectionGuard'
 import { bindTerminalInput, encodeTerminalText } from '@/utils/terminalInput'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import EditorScrollbar from '@/components/EditorScrollbar.vue'
+import TerminalHistory from './TerminalHistory.vue'
+import { createHistoryRequest, TERMINAL_SCROLLBACK } from '@/utils/terminalHistory'
+import { tmuxCompatibility } from '@/utils/tmuxCompatibility'
 import { Terminal } from 'xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -106,10 +117,21 @@ const scrollTarget = shallowRef(null)
 const statusMessage = ref('连接中…')
 const disconnected = ref(false)
 const connectionMode = ref('')
+const tmuxVersion = ref('')
+const tmuxVersionSource = ref('unknown')
+const tmuxStatus = computed(() => tmuxCompatibility(connectionMode.value, tmuxVersion.value, tmuxVersionSource.value))
 const preferredTransport = ref('')
 const searchVisible = ref(false)
 const searchText = ref('')
 const searchInput = ref(null)
+const searchScope = ref('connection')
+const historyView = ref(null)
+const historyText = ref('')
+const historyLoading = ref(false)
+const historyError = ref('')
+const historyTruncated = ref(false)
+const historyRequest = createHistoryRequest()
+let historyTimer
 const contextMenu = ref({ visible: false, x: 0, y: 0 })
 
 const detectedError = ref('')
@@ -337,9 +359,58 @@ function openSearch() {
     searchInput.value?.select()
   })
 }
-function closeSearch() { searchVisible.value = false; searchAddon?.clearDecorations(); terminal?.focus() }
-function findNext() { if (searchText.value) searchAddon?.findNext(searchText.value) }
-function findPrevious() { if (searchText.value) searchAddon?.findPrevious(searchText.value) }
+function cancelHistory() {
+  historyRequest.cancel()
+  clearTimeout(historyTimer)
+  historyLoading.value = false
+}
+function closeSearch() {
+  searchVisible.value = false
+  cancelHistory()
+  historyText.value = ''
+  searchScope.value = 'connection'
+  searchAddon?.clearDecorations()
+  terminal?.focus()
+}
+function changeSearchScope() {
+  searchAddon?.clearDecorations()
+  if (searchScope.value === 'history') loadHistory()
+  else { cancelHistory(); historyText.value = '' }
+  nextTick(() => searchInput.value?.focus())
+}
+function loadHistory() {
+  if (historyLoading.value) return
+  historyText.value = ''
+  historyError.value = ''
+  historyTruncated.value = false
+  if (tmuxStatus.value.historySupported === false) {
+    historyError.value = tmuxStatus.value.historyNote
+    return
+  }
+  if (!ws || ws.readyState !== WebSocket.OPEN || disconnected.value) {
+    historyError.value = '终端未连接，请重新连接后读取历史'
+    return
+  }
+  const requestId = historyRequest.start()
+  historyLoading.value = true
+  sendJson({ type: 'history', requestId, encoding: props.encoding })
+  historyTimer = setTimeout(() => {
+    if (!historyRequest.accept(requestId)) return
+    historyLoading.value = false
+    historyError.value = '历史读取超时，请重试并确认后端已更新'
+  }, 20_000)
+}
+function findNext() {
+  if (!searchText.value) return
+  if (searchScope.value === 'history') historyView.value?.find(1)
+  else searchAddon?.findNext(searchText.value)
+}
+function findPrevious() {
+  if (!searchText.value) return
+  if (searchScope.value === 'history') historyView.value?.find(-1)
+  else searchAddon?.findPrevious(searchText.value)
+}
+function onSearchEnter(event) { if (event.shiftKey) findPrevious(); else findNext() }
 
 function sendResize() {
   if (!terminal || !fitAddon || !ws || ws.readyState !== WebSocket.OPEN || !dataBound) {
@@ -360,9 +431,11 @@ function bindTerminalData() {
 function activateSession(frame) {
   statusMessage.value = ''
   connectionMode.value = frame?.connectionMode || ''
+  tmuxVersion.value = frame?.tmuxVersion || ''
+  tmuxVersionSource.value = frame?.tmuxVersionSource || 'unknown'
   bindTerminalData()
   if (frame?.type === 'ready') {
-    emit('ready', { sessionToken: frame.sessionToken, label: frame.label, connectionMode: frame.connectionMode })
+    emit('ready', { sessionToken: frame.sessionToken, label: frame.label, connectionMode: frame.connectionMode, tmuxVersion: tmuxVersion.value, tmuxVersionSource: tmuxVersionSource.value })
     connectionGuard?.ready()
   }
   nextTick(() => {
@@ -371,6 +444,9 @@ function activateSession(frame) {
 }
 
 function disposeTerminal() {
+  cancelHistory()
+  historyText.value = ''
+  searchScope.value = 'connection'
   scrollTarget.value = null
   resizeObserver?.disconnect()
   resizeObserver = null
@@ -432,6 +508,15 @@ function handleWsMessage(ev) {
     activateSession(frame)
     return
   }
+  if (frame.type === 'history') {
+    if (!historyRequest.accept(frame.requestId)) return
+    clearTimeout(historyTimer)
+    historyLoading.value = false
+    historyError.value = frame.message || ''
+    historyTruncated.value = Boolean(frame.truncated)
+    historyText.value = frame.message ? '' : (frame.data || '')
+    return
+  }
   if (frame.type === 'output' && frame.data) {
     const decoded = b64Decode(frame.data)
     const formatted = enhanceTerminalOutput(decoded)
@@ -453,6 +538,8 @@ function connect() {
   disposeTerminal()
   disconnected.value = false
   connectionMode.value = ''
+  tmuxVersion.value = ''
+  tmuxVersionSource.value = 'unknown'
   statusMessage.value = '连接中…'
   dataBound = false
 
@@ -463,7 +550,8 @@ function connect() {
     fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
     allowTransparency: true,
     theme: terminalTheme(),
-    convertEol: true
+    convertEol: true,
+    scrollback: TERMINAL_SCROLLBACK
   })
   terminal.attachCustomKeyEventHandler((event) => {
     if ((event.ctrlKey || event.metaKey) && (event.key?.toLowerCase() === 'f' || event.code === 'KeyF')) {
@@ -615,9 +703,12 @@ watch(
 .terminal-context-menu .menu-divider { height: 1px; background: var(--el-border-color-lighter); margin: 4px 0; }
 .terminal-context-menu .menu-label { padding: 4px 9px; font-size: 11px; color: var(--el-text-color-secondary); }
 .terminal-context-menu button.is-active-opt { color: var(--el-color-primary); font-weight: 600; }
-.terminal-search { position:absolute; right:12px; top:8px; z-index:7; display:flex; gap:4px; padding:5px; border:1px solid var(--el-border-color); border-radius:6px; background:var(--el-bg-color); box-shadow:var(--el-box-shadow); }
-.terminal-search input { width:210px; padding:4px 7px; border:1px solid var(--el-border-color); border-radius:4px; background:var(--el-bg-color); color:var(--el-text-color-primary); }
-.terminal-search button { border:0; background:transparent; color:var(--el-text-color-primary); cursor:pointer; }
+.terminal-search { position:absolute; right:12px; left:12px; top:8px; z-index:7; display:flex; gap:4px; padding:5px; border:1px solid var(--el-border-color); border-radius:6px; background:var(--el-bg-color); box-shadow:var(--el-box-shadow); }
+.terminal-search input { flex:1; width:0; min-width:50px; padding:4px 7px; border:1px solid var(--el-border-color); border-radius:4px; background:var(--el-bg-color); color:var(--el-text-color-primary); }
+.terminal-search select { max-width:110px; border:1px solid var(--el-border-color); border-radius:4px; background:var(--el-bg-color); color:var(--el-text-color-primary); }
+.terminal-search button { min-width:28px; min-height:30px; flex-shrink:0; border:0; background:transparent; color:var(--el-text-color-primary); cursor:pointer; }
+.terminal-search button:disabled { opacity:.5; cursor:default; }
+.terminal-search :focus-visible { outline:2px solid var(--el-color-primary); outline-offset:1px; }
 .term-container {
   flex: 1;
   min-height: 0;
