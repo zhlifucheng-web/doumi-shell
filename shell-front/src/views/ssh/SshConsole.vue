@@ -32,7 +32,7 @@
                 <div class="tab-tooltip-row">
                   <span class="tab-tooltip-k">用户:</span>
                   <span class="tab-tooltip-v font-mono-code" :class="{ 'text-danger': getTabUsername(tab) === 'root' }">
-                    {{ getTabUsername(tab) }} {{ getTabUsername(tab) === 'root' ? '(特权管理员)' : '' }}
+                    {{ getTabUsername(tab) }}
                   </span>
                 </div>
                 <div class="tab-tooltip-row">
