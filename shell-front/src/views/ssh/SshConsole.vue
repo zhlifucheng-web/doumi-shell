@@ -449,8 +449,14 @@
                       />
                     </div>
 
-                    <!-- 常用快捷命令架 -->
-                    <SnippetBar v-if="snippetBarVisible" @run="onRunSnippet" />
+                    <!-- 常用快捷命令架 (浮于终端上方，不挤压终端视口) -->
+                    <transition name="snippet-slide">
+                      <SnippetBar
+                        v-if="snippetBarVisible"
+                        @run="onRunSnippet"
+                        @close="snippetBarVisible = false"
+                      />
+                    </transition>
 
                     <!-- 终端显示区域 (支持左右分屏对比) -->
                     <div class="terminal-view-split" :class="{ 'is-split-active': isSplit && splitTerminalTab }">
@@ -2793,6 +2799,16 @@ async function isHostInsideGroup(hostId, groupId) {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  position: relative;
+}
+.snippet-slide-enter-active,
+.snippet-slide-leave-active {
+  transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.snippet-slide-enter-from,
+.snippet-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 .terminal-tab-bar {
   display: flex;

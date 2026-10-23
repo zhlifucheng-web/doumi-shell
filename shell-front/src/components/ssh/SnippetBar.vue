@@ -55,14 +55,24 @@
         </div>
       </el-popover>
     </div>
+
+    <!-- 关闭按钮 -->
+    <button
+      type="button"
+      class="snippet-close-btn"
+      title="收起快捷命令架 (ESC)"
+      @click="$emit('close')"
+    >
+      <el-icon><Close /></el-icon>
+    </button>
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import { Lightning, Plus } from '@element-plus/icons-vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Close, Lightning, Plus } from '@element-plus/icons-vue'
 
-defineEmits(['run'])
+const emit = defineEmits(['run', 'close'])
 
 const STORAGE_KEY = 'doumi-custom-snippets'
 
@@ -109,17 +119,40 @@ function addCustomSnippet() {
   newSnippetCmd.value = ''
   addPopoverVisible.value = false
 }
+
+function onKeydown(e) {
+  if (e.key === 'Escape' && !addPopoverVisible.value) {
+    emit('close')
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <style scoped>
 .snippet-bar {
+  position: absolute;
+  top: 36px;
+  left: 0;
+  right: 0;
+  z-index: 25;
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 32px;
+  height: 34px;
   padding: 0 10px;
   background: var(--ws-bg-card);
+  background: color-mix(in srgb, var(--ws-bg-card) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--ws-border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
   flex-shrink: 0;
   overflow: hidden;
   font-size: 11px;
@@ -188,6 +221,26 @@ function addCustomSnippet() {
 .snippet-add-btn:hover {
   border-color: var(--ws-accent);
   color: var(--ws-accent);
+}
+
+.snippet-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: var(--ws-radius-xs);
+  background: transparent;
+  border: none;
+  color: var(--ws-text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--ws-transition-fast);
+}
+.snippet-close-btn:hover {
+  background: var(--ws-bg-hover);
+  color: var(--ws-color-danger, #ef4444);
 }
 
 .snippet-form {
