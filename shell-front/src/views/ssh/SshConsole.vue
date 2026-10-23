@@ -11,17 +11,59 @@
         
         <!-- Mini-Dock 模式 (侧栏收起时展示，保持轻快切换会话) -->
         <div v-show="sidebarCollapsed" class="aside-mini-dock">
-          <div
+          <el-tooltip
             v-for="tab in terminalTabs"
             :key="`mini-${tab.tabId}`"
-            class="mini-dock-item"
-            :class="{ 'is-active': activeTerminalId === tab.tabId }"
-            :title="`${getTabDisplayLabel(tab)} (点击切换)`"
-            @click="activateTerminalTab(tab.tabId)"
+            placement="right"
+            :show-after="50"
+            effect="dark"
+            popper-class="terminal-tab-popper"
           >
-            <el-icon><Monitor /></el-icon>
-            <span class="mini-status-dot" :class="{ 'is-connected': !!tab.token }"></span>
-          </div>
+            <template #content>
+              <div class="tab-tooltip-card">
+                <div class="tab-tooltip-title">
+                  <span class="user-badge" :class="{ 'is-root': getTabUsername(tab) === 'root' }">{{ getTabUsername(tab) }}</span>
+                  <span>@ {{ tab.customTitle || getTabDisplayLabel(tab) }}</span>
+                </div>
+                <div v-if="getTabHostAddress(tab)" class="tab-tooltip-row">
+                  <span class="tab-tooltip-k">地址:</span>
+                  <span class="tab-tooltip-v font-mono-code">{{ getTabHostAddress(tab) }}</span>
+                </div>
+                <div class="tab-tooltip-row">
+                  <span class="tab-tooltip-k">用户:</span>
+                  <span class="tab-tooltip-v font-mono-code" :class="{ 'text-danger': getTabUsername(tab) === 'root' }">
+                    {{ getTabUsername(tab) }} {{ getTabUsername(tab) === 'root' ? '(特权管理员)' : '' }}
+                  </span>
+                </div>
+                <div class="tab-tooltip-row">
+                  <span class="tab-tooltip-k">状态:</span>
+                  <span class="tab-tooltip-v" :class="tab.token ? 'is-online' : 'is-offline'">
+                    {{ tab.token ? '● 已连接' : '○ 未连接' }}
+                  </span>
+                </div>
+                <div class="tab-tooltip-hint">点击切换 · 右键更多操作</div>
+              </div>
+            </template>
+
+            <button
+              type="button"
+              class="mini-dock-item"
+              :class="{
+                'is-active': activeTerminalId === tab.tabId,
+                'is-root-user': getTabUsername(tab) === 'root'
+              }"
+              :style="getTabThemeStyle(tab)"
+              @click="activateTerminalTab(tab.tabId)"
+              @contextmenu.prevent="openTabContextMenu($event, tab)"
+            >
+              <span class="mini-host-label">{{ getTabMiniHost(tab, accountHostMeta) }}</span>
+              <span class="mini-user-badge" :class="{ 'is-root': getTabUsername(tab) === 'root' }">
+                {{ getTabUsername(tab) }}
+              </span>
+              <span v-if="tab.subIndex && tab.subIndex > 1" class="mini-sub-badge">#{{ tab.subIndex }}</span>
+              <span class="mini-status-dot" :class="{ 'is-connected': !!tab.token }"></span>
+            </button>
+          </el-tooltip>
         </div>
 
         <div v-show="!sidebarCollapsed" class="aside-content">
@@ -754,7 +796,10 @@ import {
   allocateTerminalId,
   saveTerminalTabs,
   readSavedTerminalTabs,
-  formatTerminalTabDisplayLabel
+  formatTerminalTabDisplayLabel,
+  getTabUsername,
+  getTabMiniHost,
+  getTabThemeStyle
 } from '@/utils/sshConsoleStorage'
 
 const savedAccount = readSavedSshAccount()
@@ -2353,33 +2398,88 @@ async function isHostInsideGroup(hostId, groupId) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 10px 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 100%;
 }
 .mini-dock-item {
-  width: 36px;
-  height: 36px;
+  width: 42px;
+  height: 46px;
   border-radius: var(--ws-radius-md);
-  background: var(--ws-bg-card);
-  border: 1px solid var(--ws-border);
+  background: var(--node-theme-bg, var(--ws-bg-card));
+  border: 1.5px solid var(--node-theme-border, var(--ws-border));
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  padding: 4px 2px;
   position: relative;
   cursor: pointer;
-  color: var(--ws-text-muted);
-  font-size: 15px;
   transition: all var(--ws-transition-fast);
+  user-select: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-sizing: border-box;
 }
-.mini-dock-item:hover, .mini-dock-item.is-active {
-  background: var(--ws-bg-active);
-  border-color: var(--ws-accent);
-  color: var(--ws-accent);
+.mini-dock-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
+  border-color: var(--node-theme-color, var(--ws-accent));
+}
+.mini-dock-item.is-active {
+  border-color: var(--node-theme-color, var(--ws-accent));
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25), 0 2px 8px rgba(0, 0, 0, 0.1);
+  background: var(--ws-bg-active, rgba(99, 102, 241, 0.1));
+}
+.mini-host-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--node-theme-color, var(--ws-text-primary));
+  line-height: 1.2;
+  max-width: 38px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mini-user-badge {
+  font-size: 9px;
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+  padding: 1px 3px;
+  border-radius: 4px;
+  background: var(--ws-bg-input, rgba(0, 0, 0, 0.06));
+  color: var(--ws-text-regular);
+  line-height: 1;
+  max-width: 38px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--ws-border);
+}
+.mini-user-badge.is-root {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--ws-color-danger, #ef4444);
+  border-color: rgba(239, 68, 68, 0.35);
+  font-weight: 700;
+}
+.mini-sub-badge {
+  position: absolute;
+  bottom: -3px;
+  right: -3px;
+  font-size: 8px;
+  font-family: var(--font-mono, monospace);
+  font-weight: 700;
+  color: #fff;
+  background: var(--ws-accent, #6366f1);
+  border-radius: 3px;
+  padding: 0 2px;
+  line-height: 1.2;
 }
 .mini-status-dot {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  top: 3px;
+  right: 3px;
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -2862,6 +2962,27 @@ async function isHostInsideGroup(hostId, groupId) {
   color: #fff;
   border-bottom: 1px solid rgba(255, 255, 255, 0.15);
   padding-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.user-badge {
+  font-size: 10px;
+  font-family: var(--font-mono, monospace);
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  line-height: 1.2;
+  display: inline-block;
+}
+.user-badge.is-root {
+  background: #ef4444;
+  color: #fff;
+}
+.text-danger {
+  color: #ef4444 !important;
 }
 .tab-tooltip-row {
   display: flex;

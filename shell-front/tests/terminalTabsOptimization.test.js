@@ -3,7 +3,10 @@ import assert from 'node:assert/strict'
 import {
   formatTerminalTabDisplayLabel,
   saveTerminalTabs,
-  readSavedTerminalTabs
+  readSavedTerminalTabs,
+  getTabUsername,
+  getTabMiniHost,
+  getTabThemeStyle
 } from '../src/utils/sshConsoleStorage.js'
 
 function createMockStorage(initial = {}) {
@@ -104,4 +107,40 @@ test('saveTerminalTabs and readSavedTerminalTabs: retains customTitle and subInd
   assert.equal(restored.tabs[0].subIndex, 1)
   assert.equal(restored.tabs[1].customTitle, '')
   assert.equal(restored.tabs[1].subIndex, 2)
+})
+
+test('getTabUsername: extracts logged-in account username cleanly', () => {
+  assert.equal(getTabUsername({ account: { username: 'root' } }), 'root')
+  assert.equal(getTabUsername({ account: { username: 'nginx' } }), 'nginx')
+  assert.equal(getTabUsername({ account: null }), 'user')
+})
+
+test('getTabMiniHost: produces concise 2-4 char host identifier for collapsed mini dock', () => {
+  // Custom title takes priority
+  assert.equal(getTabMiniHost({ customTitle: '生产网关' }), '生产网')
+  assert.equal(getTabMiniHost({ customTitle: 'GW' }), 'GW')
+
+  // IP addresses take the last octet
+  assert.equal(getTabMiniHost({ account: { name: '192.168.10.150' } }), '.150')
+  assert.equal(getTabMiniHost({ account: { name: '10.0.0.8' } }), '.8')
+
+  // English words take up to 4 characters
+  assert.equal(getTabMiniHost({ account: { name: 'Web1' } }), 'Web1')
+  assert.equal(getTabMiniHost({ account: { name: 'Redis-Master' } }), 'Redi')
+
+  // Chinese names take 2-3 characters
+  assert.equal(getTabMiniHost({ account: { name: '核心网关' } }), '核心')
+  assert.equal(getTabMiniHost({ account: { name: '测试机' } }), '测试机')
+})
+
+test('getTabThemeStyle: returns deterministic color, border and background variables', () => {
+  const style1 = getTabThemeStyle({ hostId: 101 })
+  const style2 = getTabThemeStyle({ hostId: 101 })
+  const style3 = getTabThemeStyle({ hostId: 102 })
+
+  assert.ok(style1['--node-theme-color'])
+  assert.ok(style1['--node-theme-border'])
+  assert.ok(style1['--node-theme-bg'])
+  // Deterministic for same host
+  assert.equal(style1['--node-theme-color'], style2['--node-theme-color'])
 })
