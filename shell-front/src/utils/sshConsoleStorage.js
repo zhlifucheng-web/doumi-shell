@@ -106,6 +106,8 @@ export function saveTerminalTabs(tabs, activeTabId, storage = (typeof sessionSto
       hostId: t.hostId,
       defaultCwd: t.defaultCwd || '',
       label: t.label || '',
+      customTitle: t.customTitle || '',
+      subIndex: t.subIndex != null ? Number(t.subIndex) : 1,
       encoding: t.encoding || 'UTF-8',
       account: t.account || null
     }))
@@ -140,6 +142,8 @@ export function readSavedTerminalTabs(storage = (typeof sessionStorage !== 'unde
           hostId: t.hostId != null ? Number(t.hostId) : null,
           defaultCwd: t.defaultCwd || '',
           label: t.label || '',
+          customTitle: t.customTitle || '',
+          subIndex: t.subIndex != null ? Number(t.subIndex) : 1,
           encoding: t.encoding || 'UTF-8',
           account: t.account || null,
           token: '',
@@ -254,4 +258,28 @@ export async function resolveSshExpandedKeys(selection, { getGroup, getHost }) {
     }
   }
   return [...groupKeys, ...keys]
+}
+
+/**
+ * 格式化终端标签页紧凑显示标题：
+ * - 用户自定义别名优先（支持双击/右键重命名）
+ * - 去除多余冗长的 (IP:端口) 嵌套后缀（IP 保留在 Tooltip 中查看）
+ * - 智能拼接简洁的主机名与账户名
+ * - 支持子终端编号 (#2, #3...)
+ */
+export function formatTerminalTabDisplayLabel(tab, hostMeta = null) {
+  if (!tab) return '终端'
+  if (tab.customTitle && tab.customTitle.trim()) {
+    return tab.customTitle.trim()
+  }
+  let hostName = (tab.account?.name || (hostMeta?.id === tab.hostId ? hostMeta?.name : '') || tab.account?.host || tab.label?.split(' · ')[0] || '终端').trim()
+  hostName = hostName.replace(/\s*\([^)]*\)\s*$/, '').trim() || hostName
+
+  const username = tab.account?.username || ''
+  const sub = (tab.subIndex && tab.subIndex > 1) ? ` #${tab.subIndex}` : ''
+
+  if (hostName && username && hostName !== username) {
+    return `${hostName} · ${username}${sub}`
+  }
+  return `${hostName || username || 'SSH'}${sub}`
 }

@@ -13,11 +13,11 @@
         <div v-show="sidebarCollapsed" class="aside-mini-dock">
           <div
             v-for="tab in terminalTabs"
-            :key="`mini-${tab.accountId}`"
+            :key="`mini-${tab.tabId}`"
             class="mini-dock-item"
-            :class="{ 'is-active': activeTerminalId === tab.accountId }"
-            :title="`${tab.label} (点击切换)`"
-            @click="activateTerminalTab(tab.accountId)"
+            :class="{ 'is-active': activeTerminalId === tab.tabId }"
+            :title="`${getTabDisplayLabel(tab)} (点击切换)`"
+            @click="activateTerminalTab(tab.tabId)"
           >
             <el-icon><Monitor /></el-icon>
             <span class="mini-status-dot" :class="{ 'is-connected': !!tab.token }"></span>
@@ -65,12 +65,12 @@
                 :key="`pin-${tab.tabId}`"
                 class="quick-pin-item"
                 :class="{ 'is-active': activeTerminalId === tab.tabId }"
-                :title="tab.label"
+                :title="tab.customTitle || tab.label"
                 @click="activateTerminalTab(tab.tabId)"
               >
                 <div class="pin-left">
-                  <span class="online-pulse-dot"></span>
-                  <span class="pin-name">{{ tab.label }}</span>
+                  <span class="online-pulse-dot" :class="{ 'is-offline': !tab.token }"></span>
+                  <span class="pin-name">{{ getTabDisplayLabel(tab) }}</span>
                 </div>
                 <div class="pin-right font-mono-code">
                   <span class="pin-latency">12ms</span>
@@ -264,18 +264,130 @@
                 <template #terminal>
                   <div v-if="terminalTabs.length" class="terminal-tabs">
                     <div class="terminal-tab-bar" role="tablist" aria-label="已打开的终端">
-                      <div class="terminal-tab-scroll">
-                        <button v-for="(tab, idx) in terminalTabs" :key="tab.tabId" type="button" role="tab"
-                          class="terminal-tab" :class="{ 'is-active': activeTerminalId === tab.tabId }"
-                          :aria-selected="activeTerminalId === tab.tabId" :title="tab.label" @click="activateTerminalTab(tab.tabId)">
-                          <span class="tab-status-dot" :class="{ 'is-connected': !!tab.token }"></span>
-                          <span class="tab-label">{{ tab.label }}</span>
-                          <span class="tab-index">#{{ idx + 1 }}</span>
+                      <!-- 标签左滑动箭头 -->
+                      <button
+                        v-show="showLeftScroll"
+                        type="button"
+                        class="tab-scroll-arrow left"
+                        title="向左滚动标签"
+                        @click="scrollTabs('left')"
+                      >
+                        <el-icon><ArrowLeft /></el-icon>
+                      </button>
+
+                      <div
+                        ref="tabScrollRef"
+                        class="terminal-tab-scroll"
+                        @wheel="onTabWheel"
+                      >
+                        <button
+                          v-for="(tab, idx) in terminalTabs"
+                          :key="tab.tabId"
+                          type="button"
+                          role="tab"
+                          class="terminal-tab"
+                          :class="{ 'is-active': activeTerminalId === tab.tabId }"
+                          :aria-selected="activeTerminalId === tab.tabId"
+                          @click="activateTerminalTab(tab.tabId)"
+                          @contextmenu.prevent="openTabContextMenu($event, tab)"
+                        >
+                          <el-tooltip
+                            placement="bottom"
+                            :show-after="400"
+                            effect="dark"
+                            popper-class="terminal-tab-popper"
+                          >
+                            <template #content>
+                              <div class="tab-tooltip-card">
+                                <div class="tab-tooltip-title">{{ tab.customTitle || getTabDisplayLabel(tab) }}</div>
+                                <div v-if="getTabHostAddress(tab)" class="tab-tooltip-row">
+                                  <span class="tab-tooltip-k">地址:</span>
+                                  <span class="tab-tooltip-v font-mono-code">{{ getTabHostAddress(tab) }}</span>
+                                </div>
+                                <div v-if="tab.account?.username" class="tab-tooltip-row">
+                                  <span class="tab-tooltip-k">账户:</span>
+                                  <span class="tab-tooltip-v">{{ tab.account.username }}</span>
+                                </div>
+                                <div class="tab-tooltip-row">
+                                  <span class="tab-tooltip-k">状态:</span>
+                                  <span class="tab-tooltip-v" :class="tab.token ? 'is-online' : 'is-offline'">
+                                    {{ tab.token ? '● 已连接' : '○ 未连接' }}
+                                  </span>
+                                </div>
+                                <div class="tab-tooltip-hint">滚轮滑动 · 右键更多操作</div>
+                              </div>
+                            </template>
+                            <span class="tab-inner">
+                              <span class="tab-status-dot" :class="{ 'is-connected': !!tab.token }"></span>
+                              <span class="tab-label">{{ getTabDisplayLabel(tab) }}</span>
+                              <span v-if="tab.subIndex && tab.subIndex > 1" class="tab-index">#{{ tab.subIndex }}</span>
+                            </span>
+                          </el-tooltip>
                           <el-icon class="terminal-tab-close" title="关闭终端" @click.stop="closeTerminalTab(tab.tabId)"><Close /></el-icon>
                         </button>
                         <button class="terminal-tab-add" type="button" title="打开同一账户的新终端" @click="openAdditionalTerminalTab">+</button>
                         <span v-if="activeTerminalTab?.connectionMode" class="terminal-connection-mode" :title="activeTerminalTab.connectionMode">{{ activeTerminalTab.connectionMode }}</span>
                       </div>
+
+                      <!-- 标签右滑动箭头 -->
+                      <button
+                        v-show="showRightScroll"
+                        type="button"
+                        class="tab-scroll-arrow right"
+                        title="向右滚动标签"
+                        @click="scrollTabs('right')"
+                      >
+                        <el-icon><ArrowRight /></el-icon>
+                      </button>
+
+                      <!-- 全部终端下拉菜单 (More Tabs ∨) -->
+                      <el-dropdown trigger="click" class="terminal-tab-dropdown" @command="handleTabDropdownCommand">
+                        <button type="button" class="tab-dropdown-btn" :title="`全部终端清单 (${terminalTabs.length})`">
+                          <el-icon><Grid /></el-icon>
+                          <span class="tab-count-badge font-mono-code">{{ terminalTabs.length }}</span>
+                        </button>
+                        <template #dropdown>
+                          <el-dropdown-menu class="terminal-tabs-dropdown-menu">
+                            <div class="dropdown-header">
+                              <span>已打开的终端 ({{ terminalTabs.length }})</span>
+                            </div>
+                            <div class="dropdown-tabs-list">
+                              <el-dropdown-item
+                                v-for="tab in terminalTabs"
+                                :key="`menu-${tab.tabId}`"
+                                :command="{ action: 'activate', tabId: tab.tabId }"
+                                :class="{ 'is-active': activeTerminalId === tab.tabId }"
+                                class="dropdown-tab-item"
+                              >
+                                <div class="dropdown-item-left">
+                                  <span class="dropdown-status-dot" :class="{ 'is-connected': !!tab.token }"></span>
+                                  <span class="dropdown-tab-label">{{ getTabDisplayLabel(tab) }}</span>
+                                  <span v-if="getTabHostAddress(tab)" class="dropdown-tab-ip font-mono-code">{{ getTabHostAddress(tab) }}</span>
+                                </div>
+                                <div class="dropdown-item-right">
+                                  <el-icon v-if="activeTerminalId === tab.tabId" class="active-check"><Check /></el-icon>
+                                  <button
+                                    type="button"
+                                    class="dropdown-close-btn"
+                                    title="关闭"
+                                    @click.stop="closeTerminalTab(tab.tabId)"
+                                  >
+                                    <el-icon><Close /></el-icon>
+                                  </button>
+                                </div>
+                              </el-dropdown-item>
+                            </div>
+                            <div class="dropdown-footer-actions">
+                              <button type="button" class="footer-btn" :disabled="terminalTabs.length <= 1" @click.stop="closeOtherTerminalTabs(activeTerminalId)">
+                                关闭其他
+                              </button>
+                              <button type="button" class="footer-btn danger" @click.stop="closeAllTerminalTabs">
+                                全部关闭
+                              </button>
+                            </div>
+                          </el-dropdown-menu>
+                        </template>
+                      </el-dropdown>
                       <TerminalToolbar
                         :snippet-visible="snippetBarVisible"
                         :is-split="isSplit"
@@ -541,15 +653,70 @@
       :account="detail?.raw"
       :terminal-tab="activeTerminalTab"
     />
+
+    <!-- 终端标签页右键菜单 -->
+    <div
+      v-if="contextMenu.visible"
+      class="tab-context-menu"
+      :style="{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }"
+      @click.stop
+    >
+      <div class="context-menu-item" @click="handleContextMenuRename">
+        <el-icon><EditPen /></el-icon>
+        <span>重命名标签</span>
+      </div>
+      <div class="context-menu-item" @click="handleContextMenuNewTab">
+        <el-icon><Plus /></el-icon>
+        <span>新建会话终端</span>
+      </div>
+      <div class="context-menu-divider"></div>
+      <div class="context-menu-item" @click="handleContextMenuClose">
+        <el-icon><Close /></el-icon>
+        <span>关闭当前标签</span>
+      </div>
+      <div class="context-menu-item" :class="{ 'is-disabled': terminalTabs.length <= 1 }" @click="handleContextMenuCloseOthers">
+        <el-icon><FolderRemove /></el-icon>
+        <span>关闭其他标签</span>
+      </div>
+      <div class="context-menu-item" :class="{ 'is-disabled': isContextMenuLastTab }" @click="handleContextMenuCloseRight">
+        <el-icon><Right /></el-icon>
+        <span>关闭右侧标签</span>
+      </div>
+      <div class="context-menu-divider"></div>
+      <div class="context-menu-item danger" @click="handleContextMenuCloseAll">
+        <el-icon><Delete /></el-icon>
+        <span>关闭全部终端</span>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Close, CopyDocument, Expand, Fold, Folder, Monitor, MoreFilled, Plus, Refresh, Search, User } from '@element-plus/icons-vue'
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Close,
+  CopyDocument,
+  Delete,
+  EditPen,
+  Expand,
+  Fold,
+  Folder,
+  FolderRemove,
+  Grid,
+  Monitor,
+  MoreFilled,
+  Plus,
+  Refresh,
+  Right,
+  Search,
+  User
+} from '@element-plus/icons-vue'
 import { useWorkspaceStore } from '@/stores/workspace'
 import SshTerminal from '@/components/ssh/SshTerminal.vue'
 import TerminalToolbar from '@/components/ssh/TerminalToolbar.vue'
@@ -586,7 +753,8 @@ import {
   writeSavedSshAccount,
   allocateTerminalId,
   saveTerminalTabs,
-  readSavedTerminalTabs
+  readSavedTerminalTabs,
+  formatTerminalTabDisplayLabel
 } from '@/utils/sshConsoleStorage'
 
 const savedAccount = readSavedSshAccount()
@@ -730,6 +898,15 @@ const sessionToken = ref('')
 const terminalTabs = ref([])
 const activeTerminalId = ref(null)
 const activeTerminalTab = computed(() => terminalTabs.value.find(item => item.tabId === activeTerminalId.value) || null)
+const tabScrollRef = ref(null)
+const showLeftScroll = ref(false)
+const showRightScroll = ref(false)
+const contextMenu = reactive({
+  visible: false,
+  x: 0,
+  y: 0,
+  tab: null
+})
 const openingFileSession = ref(false)
 
 const snippetBarVisible = ref(false)
@@ -850,9 +1027,19 @@ watch(filterText, (val) => {
 onMounted(() => {
   restoreSavedAccount()
   window.addEventListener('doumi-configuration-imported', refreshTree)
+  window.addEventListener('click', closeContextMenu)
+  window.addEventListener('blur', closeContextMenu)
+  window.addEventListener('resize', checkScrollOverflow)
+  nextTick(() => {
+    checkScrollOverflow()
+    scrollToActiveTab()
+  })
 })
 onBeforeUnmount(() => {
   window.removeEventListener('doumi-configuration-imported', refreshTree)
+  window.removeEventListener('click', closeContextMenu)
+  window.removeEventListener('blur', closeContextMenu)
+  window.removeEventListener('resize', checkScrollOverflow)
   onSidebarResizeEnd()
 })
 
@@ -1250,11 +1437,201 @@ function terminalTabLabel(account, host = accountHostMeta.value) {
   return `${hostPart} · ${account.username || '账户'}`
 }
 
+function getTabDisplayLabel(tab) {
+  return formatTerminalTabDisplayLabel(tab, accountHostMeta.value)
+}
+
+function getTabHostAddress(tab) {
+  if (!tab) return ''
+  const host = tab.account?.host || (tab.hostId === accountHostMeta.value?.id ? accountHostMeta.value?.host : '')
+  const port = tab.account?.port || (tab.hostId === accountHostMeta.value?.id ? accountHostMeta.value?.port : 22)
+  if (!host) return ''
+  return port && Number(port) !== 22 ? `${host}:${port}` : host
+}
+
+function checkScrollOverflow() {
+  const el = tabScrollRef.value
+  if (!el) {
+    showLeftScroll.value = false
+    showRightScroll.value = false
+    return
+  }
+  showLeftScroll.value = el.scrollLeft > 4
+  showRightScroll.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 4
+}
+
+function onTabWheel(event) {
+  const el = tabScrollRef.value
+  if (!el) return
+  if (event.deltaY !== 0 && event.deltaX === 0) {
+    event.preventDefault()
+    el.scrollLeft += event.deltaY
+    checkScrollOverflow()
+  }
+}
+
+function scrollTabs(direction) {
+  const el = tabScrollRef.value
+  if (!el) return
+  const amount = 200
+  el.scrollBy({ left: direction === 'left' ? -amount : amount, behavior: 'smooth' })
+  setTimeout(checkScrollOverflow, 300)
+}
+
+function scrollToActiveTab() {
+  const el = tabScrollRef.value?.querySelector('.terminal-tab.is-active')
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+  }
+  checkScrollOverflow()
+}
+
+watch(activeTerminalId, () => {
+  nextTick(scrollToActiveTab)
+})
+
+watch(() => terminalTabs.value.length, () => {
+  nextTick(checkScrollOverflow)
+})
+
+const isContextMenuLastTab = computed(() => {
+  if (!contextMenu.tab || !terminalTabs.value.length) return true
+  const idx = terminalTabs.value.findIndex(t => t.tabId === contextMenu.tab.tabId)
+  return idx === -1 || idx === terminalTabs.value.length - 1
+})
+
+function openTabContextMenu(event, tab) {
+  const menuWidth = 160
+  const menuHeight = 220
+  const x = Math.min(event.clientX, window.innerWidth - menuWidth - 10)
+  const y = Math.min(event.clientY, window.innerHeight - menuHeight - 10)
+  contextMenu.visible = true
+  contextMenu.x = x
+  contextMenu.y = y
+  contextMenu.tab = tab
+}
+
+function closeContextMenu() {
+  if (contextMenu.visible) {
+    contextMenu.visible = false
+    contextMenu.tab = null
+  }
+}
+
+async function handleContextMenuRename() {
+  const tab = contextMenu.tab
+  closeContextMenu()
+  if (!tab) return
+  try {
+    const currentName = tab.customTitle || getTabDisplayLabel(tab)
+    const { value } = await ElMessageBox.prompt('请输入新的终端标签名称（留空恢复默认）：', '重命名终端标签', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputValue: currentName,
+      inputPlaceholder: '例如：Nginx反代 / Redis排障'
+    })
+    tab.customTitle = (value || '').trim()
+    persistTerminalTabs()
+  } catch {
+    /* user cancelled */
+  }
+}
+
+function handleContextMenuNewTab() {
+  const tab = contextMenu.tab
+  closeContextMenu()
+  if (!tab) return
+  openTabForAccount(tab)
+}
+
+function handleContextMenuClose() {
+  const tabId = contextMenu.tab?.tabId
+  closeContextMenu()
+  if (tabId) closeTerminalTab(tabId)
+}
+
+function handleContextMenuCloseOthers() {
+  const tabId = contextMenu.tab?.tabId
+  closeContextMenu()
+  if (tabId) closeOtherTerminalTabs(tabId)
+}
+
+function handleContextMenuCloseRight() {
+  const tabId = contextMenu.tab?.tabId
+  closeContextMenu()
+  if (tabId) closeRightTerminalTabs(tabId)
+}
+
+function handleContextMenuCloseAll() {
+  closeContextMenu()
+  closeAllTerminalTabs()
+}
+
+function openTabForAccount(tab) {
+  if (!tab?.accountId) return
+  const { tabId, terminalId, subIndex } = allocateTerminalId(tab.accountId, terminalTabs.value, { forceNew: true })
+  const baseLabel = tab.account ? terminalTabLabel(tab.account) : (tab.label || '终端')
+  const newTab = {
+    ...tab,
+    tabId,
+    terminalId,
+    label: `${baseLabel} #${subIndex}`,
+    customTitle: '',
+    subIndex,
+    token: '',
+    encoding: tab.encoding || terminalEncoding.value
+  }
+  terminalTabs.value.push(newTab)
+  activeTerminalId.value = newTab.tabId
+  sessionToken.value = ''
+  persistTerminalTabs()
+  nextTick(scrollToActiveTab)
+}
+
+function closeOtherTerminalTabs(tabId) {
+  const keep = terminalTabs.value.find(t => t.tabId === tabId)
+  if (!keep) return
+  terminalTabs.value = [keep]
+  if (activeTerminalId.value !== keep.tabId) {
+    activateTerminalTab(keep.tabId)
+  } else {
+    persistTerminalTabs()
+  }
+  nextTick(checkScrollOverflow)
+}
+
+function closeRightTerminalTabs(tabId) {
+  const index = terminalTabs.value.findIndex(t => t.tabId === tabId)
+  if (index < 0) return
+  terminalTabs.value = terminalTabs.value.slice(0, index + 1)
+  if (!terminalTabs.value.some(t => t.tabId === activeTerminalId.value)) {
+    const target = terminalTabs.value[index]
+    if (target) activateTerminalTab(target.tabId)
+  } else {
+    persistTerminalTabs()
+  }
+  nextTick(checkScrollOverflow)
+}
+
+function closeAllTerminalTabs() {
+  terminalTabs.value = []
+  activeTerminalId.value = null
+  sessionToken.value = ''
+  persistTerminalTabs()
+  nextTick(checkScrollOverflow)
+}
+
+function handleTabDropdownCommand(cmd) {
+  if (cmd?.action === 'activate' && cmd.tabId) {
+    activateTerminalTab(cmd.tabId)
+  }
+}
+
 function activateTerminalForAccount(account) {
   if (!account?.id) return
   let tab = terminalTabs.value.find(item => item.accountId === account.id)
   if (!tab) {
-    const { tabId, terminalId } = allocateTerminalId(account.id, terminalTabs.value)
+    const { tabId, terminalId, subIndex } = allocateTerminalId(account.id, terminalTabs.value)
     tab = {
       tabId,
       terminalId,
@@ -1263,6 +1640,8 @@ function activateTerminalForAccount(account) {
       hostId: account.hostId,
       defaultCwd: account.defaultCwd || '',
       label: terminalTabLabel(account),
+      customTitle: '',
+      subIndex: subIndex || 1,
       token: '',
       encoding: terminalEncoding.value
     }
@@ -1276,6 +1655,7 @@ function activateTerminalForAccount(account) {
   activeTerminalId.value = tab.tabId
   sessionToken.value = tab.token
   persistTerminalTabs()
+  nextTick(scrollToActiveTab)
 }
 
 function openAdditionalTerminalTab() {
@@ -1289,6 +1669,8 @@ function openAdditionalTerminalTab() {
     tabId,
     terminalId,
     label,
+    subIndex,
+    customTitle: '',
     token: '',
     encoding: current.encoding || terminalEncoding.value
   }
@@ -1296,6 +1678,7 @@ function openAdditionalTerminalTab() {
   activeTerminalId.value = tab.tabId
   sessionToken.value = ''
   persistTerminalTabs()
+  nextTick(scrollToActiveTab)
 }
 
 async function activateTerminalTab(tabId) {
@@ -1311,6 +1694,7 @@ async function activateTerminalTab(tabId) {
     await persistAccountSelection(node)
   }
   persistTerminalTabs()
+  nextTick(scrollToActiveTab)
 }
 
 function closeTerminalTab(tabId) {
@@ -1482,6 +1866,8 @@ async function openNewAccountTerminal(data) {
       hostId: account.hostId,
       defaultCwd: account.defaultCwd || '',
       label,
+      customTitle: '',
+      subIndex,
       token: '',
       encoding: terminalEncoding.value
     }
@@ -1491,6 +1877,7 @@ async function openNewAccountTerminal(data) {
     sessionToken.value = ''
     terminalVisited.value = true
     persistTerminalTabs()
+    nextTick(scrollToActiveTab)
     await router.push('/terminal')
     await persistAccountSelection(data)
   } catch (error) {
@@ -2312,8 +2699,59 @@ async function isHostInsideGroup(hostId, groupId) {
   padding: 0 8px;
   border-bottom: 1px solid var(--ws-border);
   background: var(--ws-bg-tab-bar);
-  gap: 8px;
+  gap: 6px;
   transition: background-color var(--ws-transition-normal), border-color var(--ws-transition-normal);
+}
+.tab-scroll-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--ws-border);
+  background: var(--ws-bg-input);
+  color: var(--ws-text-muted);
+  border-radius: var(--ws-radius-xs);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--ws-transition-fast);
+}
+.tab-scroll-arrow:hover {
+  background: var(--ws-bg-hover);
+  color: var(--ws-text-primary);
+  border-color: var(--ws-border-hover);
+}
+.terminal-tab-dropdown {
+  flex-shrink: 0;
+}
+.tab-dropdown-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: var(--ws-radius-xs);
+  background: var(--ws-bg-input);
+  border: 1px solid var(--ws-border);
+  color: var(--ws-text-regular);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--ws-transition-fast);
+}
+.tab-dropdown-btn:hover {
+  background: var(--ws-bg-hover);
+  color: var(--ws-text-primary);
+  border-color: var(--ws-border-hover);
+}
+.tab-count-badge {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--ws-bg-card);
+  color: var(--ws-text-muted);
+  border: 1px solid var(--ws-border);
+  line-height: 1.2;
 }
 .terminal-tab-scroll {
   display: flex;
@@ -2332,10 +2770,11 @@ async function isHostInsideGroup(hostId, groupId) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 220px;
-  min-width: 110px;
+  max-width: 180px;
+  min-width: 70px;
+  flex-shrink: 1;
   height: 30px;
-  padding: 0 10px;
+  padding: 0 8px;
   border-radius: var(--ws-radius-sm) var(--ws-radius-sm) 0 0;
   border: 1px solid transparent;
   border-bottom: 2px solid transparent;
@@ -2354,11 +2793,21 @@ async function isHostInsideGroup(hostId, groupId) {
   color: var(--ws-text-regular);
 }
 .terminal-tab.is-active {
+  min-width: 100px;
+  flex-shrink: 0;
   background: var(--ws-bg-active-tab);
   color: var(--ws-text-primary);
   border-bottom: 2px solid var(--ws-accent);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   font-weight: 600;
+}
+.tab-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
 }
 .tab-status-dot {
   width: 6px;
@@ -2398,6 +2847,198 @@ async function isHostInsideGroup(hostId, groupId) {
 .terminal-tab-close:hover {
   color: var(--ws-color-danger);
   background: var(--ws-bg-hover);
+}
+
+/* Tooltip 卡片 */
+.tab-tooltip-card {
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 2px;
+  min-width: 160px;
+}
+.tab-tooltip-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #fff;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  padding-bottom: 4px;
+}
+.tab-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  margin-bottom: 3px;
+}
+.tab-tooltip-k {
+  color: rgba(255, 255, 255, 0.65);
+}
+.tab-tooltip-v {
+  color: #fff;
+}
+.tab-tooltip-v.is-online {
+  color: #10b981;
+}
+.tab-tooltip-v.is-offline {
+  color: #94a3b8;
+}
+.tab-tooltip-hint {
+  margin-top: 6px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+  text-align: right;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  padding-top: 3px;
+}
+
+/* 下拉终端列表 */
+.terminal-tabs-dropdown-menu {
+  min-width: 260px;
+  max-width: 380px;
+  padding: 4px 0;
+}
+.dropdown-header {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ws-text-subtle);
+  border-bottom: 1px solid var(--ws-border);
+}
+.dropdown-tabs-list {
+  max-height: 280px;
+  overflow-y: auto;
+}
+.dropdown-tab-item {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px;
+  padding: 6px 12px !important;
+}
+.dropdown-tab-item.is-active {
+  background: var(--ws-accent-bg);
+  color: var(--ws-accent);
+}
+.dropdown-item-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  flex: 1;
+}
+.dropdown-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ws-text-muted);
+  flex-shrink: 0;
+}
+.dropdown-status-dot.is-connected {
+  background: var(--ws-color-online);
+}
+.dropdown-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.dropdown-tab-ip {
+  font-size: 10px;
+  color: var(--ws-text-muted);
+  margin-left: 4px;
+}
+.dropdown-item-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.active-check {
+  color: var(--ws-accent);
+  font-size: 12px;
+}
+.dropdown-close-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  color: var(--ws-text-muted);
+  display: inline-flex;
+  align-items: center;
+  border-radius: 3px;
+}
+.dropdown-close-btn:hover {
+  background: var(--ws-bg-hover);
+  color: var(--ws-color-danger);
+}
+.dropdown-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--ws-border);
+}
+.footer-btn {
+  background: transparent;
+  border: 1px solid var(--ws-border);
+  color: var(--ws-text-regular);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--ws-radius-xs);
+  cursor: pointer;
+}
+.footer-btn:hover:not(:disabled) {
+  background: var(--ws-bg-hover);
+  color: var(--ws-text-primary);
+}
+.footer-btn.danger:hover {
+  background: var(--ws-bg-hover);
+  color: var(--ws-color-danger);
+  border-color: var(--ws-color-danger);
+}
+.footer-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 右键上下文菜单 */
+.tab-context-menu {
+  position: fixed;
+  z-index: 3000;
+  min-width: 150px;
+  padding: 4px 0;
+  background: var(--ws-bg-card);
+  border: 1px solid var(--ws-border);
+  border-radius: var(--ws-radius-sm);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(10px);
+}
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--ws-text-regular);
+  cursor: pointer;
+  transition: all var(--ws-transition-fast);
+  user-select: none;
+}
+.context-menu-item:hover:not(.is-disabled) {
+  background: var(--ws-bg-hover);
+  color: var(--ws-text-primary);
+}
+.context-menu-item.danger:hover {
+  color: var(--ws-color-danger);
+}
+.context-menu-item.is-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.context-menu-divider {
+  height: 1px;
+  background: var(--ws-border);
+  margin: 4px 0;
 }
 
 /* 分屏显示 */
