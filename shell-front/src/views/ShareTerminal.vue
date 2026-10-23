@@ -17,7 +17,7 @@
           >
             {{ shareInfo.readOnly ? '👁️ 只读观看' : '✍️ 实时协同' }}
           </span>
-          <span class="mode-badge">tmux</span>
+          <TerminalConnectionStatus v-if="terminalStatus.connectionMode" :connection-mode="terminalStatus.connectionMode" :tmux-version="terminalStatus.tmuxVersion" :tmux-version-source="terminalStatus.tmuxVersionSource" />
           <span v-if="timeRemainingText" class="expire-badge" :title="`到期时间: ${formatTime(shareInfo.expireAt)}`">
             ⏱️ {{ timeRemainingText }}
           </span>
@@ -116,6 +116,8 @@
             :read-only="shareInfo.readOnly"
             :font-size="fontSize"
             :encoding="terminalEncoding"
+            @ready="payload => terminalStatus = payload"
+            @disconnected="terminalStatus = {}"
           />
         </div>
       </div>
@@ -132,6 +134,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Loading } from '@element-plus/icons-vue'
 import SshTerminal from '@/components/ssh/SshTerminal.vue'
 import TerminalThemeDialog from '@/components/ssh/TerminalThemeDialog.vue'
+import TerminalConnectionStatus from '@/components/ssh/TerminalConnectionStatus.vue'
 import { getShareSessionInfo } from '@/api/sshConsole'
 import { formatExpireDuration } from '@/utils/terminalShareHelper'
 import { useTerminalTheme } from '@/composables/useTerminalTheme'
@@ -155,6 +158,7 @@ const terminalEncoding = ref(String(route.query.encoding || '').trim() || 'UTF-8
 const themeDialogVisible = ref(false)
 const isFullscreen = ref(false)
 const terminalComponent = ref(null)
+const terminalStatus = ref({})
 
 let countdownTimer = null
 const nowTimestamp = ref(Date.now())

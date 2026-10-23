@@ -116,7 +116,7 @@
                 </div>
                 <div class="pin-right font-mono-code">
                   <span class="pin-latency">12ms</span>
-                  <span class="pin-badge">{{ tab.connectionMode || 'SSH' }}</span>
+                  <span class="pin-badge">{{ tmuxCompatibility(tab.connectionMode, tab.tmuxVersion, tab.tmuxVersionSource).label }}</span>
                 </div>
               </div>
             </div>
@@ -368,7 +368,7 @@
                           <el-icon class="terminal-tab-close" title="关闭终端" @click.stop="closeTerminalTab(tab.tabId)"><Close /></el-icon>
                         </button>
                         <button class="terminal-tab-add" type="button" title="打开同一账户的新终端" @click="openAdditionalTerminalTab">+</button>
-                        <span v-if="activeTerminalTab?.connectionMode" class="terminal-connection-mode" :title="activeTerminalTab.connectionMode">{{ activeTerminalTab.connectionMode }}</span>
+                        <TerminalConnectionStatus v-if="activeTerminalTab?.connectionMode" :connection-mode="activeTerminalTab.connectionMode" :tmux-version="activeTerminalTab.tmuxVersion" :tmux-version-source="activeTerminalTab.tmuxVersionSource" />
                       </div>
 
                       <!-- 标签右滑动箭头 -->
@@ -762,6 +762,8 @@ import {
 import { useWorkspaceStore } from '@/stores/workspace'
 import SshTerminal from '@/components/ssh/SshTerminal.vue'
 import TerminalToolbar from '@/components/ssh/TerminalToolbar.vue'
+import TerminalConnectionStatus from '@/components/ssh/TerminalConnectionStatus.vue'
+import { tmuxCompatibility } from '@/utils/tmuxCompatibility'
 import TerminalShareDialog from '@/components/ssh/TerminalShareDialog.vue'
 import SnippetBar from '@/components/ssh/SnippetBar.vue'
 import TerminalFileLayout from '@/components/ssh/TerminalFileLayout.vue'
@@ -1764,18 +1766,20 @@ function onTerminalReady(tabId, payload) {
   if (!tab) return
   tab.token = payload?.sessionToken || ''
   tab.connectionMode = payload?.connectionMode || ''
+  tab.tmuxVersion = payload?.tmuxVersion || ''
+  tab.tmuxVersionSource = payload?.tmuxVersionSource || 'unknown'
   if (activeTerminalId.value === tabId) sessionToken.value = tab.token
 }
 
 function onTerminalDisconnected(tabId) {
   const tab = terminalTabs.value.find(item => item.tabId === tabId)
-  if (tab) { tab.token = ''; tab.connectionMode = '' }
+  if (tab) { tab.token = ''; tab.connectionMode = ''; tab.tmuxVersion = ''; tab.tmuxVersionSource = 'unknown' }
   if (activeTerminalId.value === tabId) sessionToken.value = ''
 }
 
 function onMonitorSessionInvalid(token) {
   for (const tab of terminalTabs.value) {
-    if (tab.token === token) { tab.token = ''; tab.connectionMode = '' }
+    if (tab.token === token) { tab.token = ''; tab.connectionMode = ''; tab.tmuxVersion = ''; tab.tmuxVersionSource = 'unknown' }
   }
   if (sessionToken.value === token) sessionToken.value = ''
 }
