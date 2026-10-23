@@ -17,7 +17,7 @@
 
 ## 本地开发
 
-前端在 `shell-front` 中执行 `npm ci`、`npm run dev`，端口为 3100，接口代理到 `http://127.0.0.1:80`，可通过 `DOUMI_BACKEND` 修改代理地址。
+前端在 `shell-front` 中执行 `npm ci`、`npm run dev`，端口为 3100，API 与 WebSocket 默认代理到远端 `http://10.20.42.116:9081`，可通过 `DOUMI_BACKEND` 修改代理地址。连接本地后端时可运行 `DOUMI_BACKEND=http://127.0.0.1:8080 npm run dev`。
 
 后端在 `shell-end` 中执行 `mvn verify`，使用 Java 17 运行生成的 JAR。首次启动初始化完整表结构，不迁移开发阶段的旧数据库。
 

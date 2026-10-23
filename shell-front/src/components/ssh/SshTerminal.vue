@@ -73,6 +73,7 @@
 <script setup>
 import { createTerminalConnectionGuard } from '@/utils/terminalConnectionGuard'
 import { bindTerminalInput, encodeTerminalText } from '@/utils/terminalInput'
+import { bindTerminalSelection } from '@/utils/terminalSelection'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import EditorScrollbar from '@/components/EditorScrollbar.vue'
 import TerminalHistory from './TerminalHistory.vue'
@@ -132,6 +133,7 @@ const historyError = ref('')
 const historyTruncated = ref(false)
 const historyRequest = createHistoryRequest()
 let historyTimer
+let terminalSelection
 const contextMenu = ref({ visible: false, x: 0, y: 0 })
 
 const detectedError = ref('')
@@ -444,6 +446,8 @@ function activateSession(frame) {
 }
 
 function disposeTerminal() {
+  terminalSelection?.dispose()
+  terminalSelection = null
   cancelHistory()
   historyText.value = ''
   searchScope.value = 'connection'
@@ -596,6 +600,7 @@ function connect() {
   searchAddon = new SearchAddon()
   terminal.loadAddon(searchAddon)
   terminal.open(termContainer.value)
+  terminalSelection = bindTerminalSelection(terminal)
   scrollTarget.value = termContainer.value.querySelector('.xterm-viewport')
   fitAddon.fit()
 
