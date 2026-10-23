@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.Charset;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 
@@ -52,6 +53,79 @@ public final class SshRemoteExec {
             } finally {
                 session.close();
             }
+        }
+    }
+
+    /** Bounded history snapshot; keep the newest bytes when the output exceeds the limit. */
+    public static ExecResult execTail(SSHClient client, Object lock, String command, int timeoutSec,
+            int maxBytes, Charset charset) throws IOException {
+        if (maxBytes <= 0 || maxBytes > 8 * 1024 * 1024) throw new IllegalArgumentException("invalid output limit");
+        if (client == null || !client.isConnected()) throw new IOException("SSH 未连接");
+        synchronized (lock) {
+            Session session = client.startSession();
+            try {
+                Session.Command cmd = session.exec(command);
+                // One extra byte tells us whether the retained tail starts at a line boundary.
+                TailOutput stdout = new TailOutput(maxBytes + 1);
+                ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+                InputStream input = cmd.getInputStream();
+                Thread outThread = new Thread(() -> {
+                    try {
+                        byte[] bytes = new byte[8192]; int n;
+                        while ((n = input.read(bytes)) >= 0) stdout.write(bytes, 0, n);
+                    } catch (IOException e) { stdout.failure = e; }
+                }, "ssh-history-pump");
+                outThread.setDaemon(true); outThread.start();
+                Thread errThread = pump(cmd.getErrorStream(), stderr);
+                joinCommand(cmd, timeoutSec);
+                joinQuietly(outThread, 2000); joinQuietly(errThread, 500);
+                if (outThread.isAlive()) throw new IOException("历史输出读取超时");
+                if (stdout.failure != null) throw stdout.failure;
+                ExecResult result = new ExecResult();
+                result.setExitStatus(cmd.getExitStatus() == null ? -1 : cmd.getExitStatus());
+                byte[] tail = stdout.bytes();
+                int start = 0;
+                if (stdout.total > maxBytes) {
+                    start = tail.length - maxBytes;
+                    if (tail[start - 1] != '\n') {
+                        // Drop a partial first line instead of decoding half a UTF-8/GBK character.
+                        while (start < tail.length && tail[start++] != '\n') { /* skip fragment */ }
+                    }
+                }
+                result.setStdout(new String(tail, start, tail.length - start, charset));
+                result.setStderr(truncate(stderr.toByteArray()));
+                result.setTruncated(stdout.total > maxBytes);
+                return result;
+            } finally { session.close(); }
+        }
+    }
+
+    private static final class TailOutput {
+        private final byte[] buffer;
+        private int cursor;
+        private long total;
+        private IOException failure;
+        TailOutput(int limit) { buffer = new byte[limit]; }
+        void write(byte[] bytes, int offset, int length) {
+            total += length;
+            if (length >= buffer.length) {
+                System.arraycopy(bytes, offset + length - buffer.length, buffer, 0, buffer.length);
+                cursor = 0;
+            } else {
+                int first = Math.min(length, buffer.length - cursor);
+                System.arraycopy(bytes, offset, buffer, cursor, first);
+                System.arraycopy(bytes, offset + first, buffer, 0, length - first);
+                cursor = (cursor + length) % buffer.length;
+            }
+        }
+        byte[] bytes() {
+            int size = (int)Math.min(total, buffer.length);
+            byte[] result = new byte[size];
+            int start = total >= buffer.length ? cursor : 0;
+            int first = Math.min(size, buffer.length - start);
+            System.arraycopy(buffer, start, result, 0, first);
+            System.arraycopy(buffer, 0, result, first, size - first);
+            return result;
         }
     }
 
@@ -214,5 +288,6 @@ public final class SshRemoteExec {
         private int exitStatus;
         private String stdout;
         private String stderr;
+        private boolean truncated;
     }
 }

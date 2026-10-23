@@ -24,6 +24,7 @@ import javax.annotation.Resource;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.Charset;
 import java.util.Collections;
 import java.util.UUID;
 
@@ -102,6 +103,12 @@ public class SshTerminalService {
             mode = "SSH";
         }
         ts.setConnectionMode(mode);
+        if (tmux) {
+            progress.accept("正在识别 tmux 版本…");
+            SshTmuxSession.VersionInfo version = entry.getTmuxSession().detectVersion();
+            ts.setTmuxVersion(version.getVersion());
+            ts.setTmuxVersionSource(version.getSource());
+        }
         return ts;
     }
 
@@ -133,6 +140,25 @@ public class SshTerminalService {
         if (entry.getTmuxSession() != null) bytes = entry.getTmuxSession().filterWheelInput(bytes);
         stdin.write(bytes);
         stdin.flush();
+    }
+
+    public SshRemoteExec.ExecResult readHistory(String sessionToken, String encoding) throws IOException {
+        SshSessionRegistry.SessionEntry entry = sessionRegistry.get(sessionToken);
+        SshTmuxSession tmux = entry.getTmuxSession();
+        if (tmux == null) throw new IOException("普通 SSH 没有远端历史，请搜索本次连接内容");
+        Charset charset;
+        try { charset = Charset.forName(encoding == null ? "UTF-8" : encoding); }
+        catch (IllegalArgumentException e) { charset = StandardCharsets.UTF_8; }
+        // A separate SSH channel keeps the interactive input and mouse probes responsive.
+        SshRemoteExec.ExecResult result = SshRemoteExec.execTail(entry.getClient(), new Object(),
+                tmux.historyCommand(), 10, 8 * 1024 * 1024, charset);
+        if (result.getExitStatus() != 0) {
+            String detail = result.getStderr() == null ? "" : result.getStderr().trim();
+            if (detail.contains("unknown option") || detail.contains("illegal option") || detail.contains("usage:"))
+                throw new IOException("当前 tmux 不支持直接读取历史（需要 1.8+）；可用 tmux 复制模式搜索，或升级 tmux");
+            throw new IOException("读取 tmux 历史失败，请确认原会话仍存在后重试");
+        }
+        return result;
     }
 
     private void attachShell(SshSessionRegistry.SessionEntry entry, int cols, int rows, String defaultCwd,
@@ -224,5 +250,7 @@ public class SshTerminalService {
         private String label;
         private String readyRemark;
         private String connectionMode;
+        private String tmuxVersion;
+        private String tmuxVersionSource;
     }
 }

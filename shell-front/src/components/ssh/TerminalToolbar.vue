@@ -1,16 +1,5 @@
 <template>
   <div class="terminal-toolbar" role="toolbar" aria-label="终端工具栏">
-    <!-- 日间模式下的终端纸白/双拼底色切换 -->
-    <button
-      v-if="!isDark"
-      type="button"
-      class="tool-btn"
-      :title="`当前底色: ${terminalTone === 'paper' ? '纸白高对比' : '双拼暗黑'} (点击切换)`"
-      @click="$emit('toggle-tone')"
-    >
-      <span>{{ terminalTone === 'paper' ? '📄 纸白' : '⬛ 双拼' }}</span>
-    </button>
-
     <!-- 清屏 -->
     <button
       type="button"
@@ -48,7 +37,7 @@
     </button>
 
     <!-- 字号缩放 -->
-    <div class="tool-group">
+    <div class="tool-group" title="调整终端字体大小">
       <button
         type="button"
         class="tool-btn tool-btn-compact"
@@ -70,38 +59,6 @@
       </button>
     </div>
 
-    <!-- 全屏 -->
-    <button
-      type="button"
-      class="tool-btn"
-      title="全屏终端"
-      @click="$emit('toggle-fullscreen')"
-    >
-      <el-icon><FullScreen /></el-icon>
-    </button>
-
-    <!-- 终端与 Zsh 配色方案 -->
-    <button
-      type="button"
-      class="tool-btn"
-      title="终端配色与导入 Zsh 主题 (Catppuccin / Tokyo Night / iTerm2)"
-      @click="$emit('open-theme')"
-    >
-      <span>🎨</span>
-      <span class="tool-btn-text">配色</span>
-    </button>
-
-    <!-- 共享终端协同 -->
-    <button
-      type="button"
-      class="tool-btn"
-      title="生成分享链接，共享当前 tmux 会话 (实时协同或只读观看)"
-      @click="$emit('open-share')"
-    >
-      <el-icon><Share /></el-icon>
-      <span class="tool-btn-text">分享</span>
-    </button>
-
     <!-- 字符编码切换 -->
     <el-dropdown trigger="click" @command="enc => $emit('change-encoding', enc)">
       <button
@@ -109,7 +66,7 @@
         class="tool-btn"
         :title="`当前字符编码: ${encoding || 'UTF-8'} (点击切换)`"
       >
-        <span class="tool-btn-text font-mono-code">{{ encoding || 'UTF-8' }}</span>
+        <span class="font-mono-code">{{ encoding || 'UTF-8' }}</span>
         <el-icon class="tool-btn-caret"><ArrowDown /></el-icon>
       </button>
       <template #dropdown>
@@ -135,12 +92,48 @@
         </el-dropdown-menu>
       </template>
     </el-dropdown>
+
+    <!-- 全屏 -->
+    <button
+      type="button"
+      class="tool-btn"
+      title="全屏终端"
+      @click="$emit('toggle-fullscreen')"
+    >
+      <el-icon><FullScreen /></el-icon>
+    </button>
+
+    <!-- 更多选项下拉 (整合配色、分享、纸白/双拼底色) -->
+    <el-dropdown trigger="click" @command="handleMoreCommand">
+      <button
+        type="button"
+        class="tool-btn"
+        title="更多终端设置 (主题配色、协同分享、底色切换)"
+      >
+        <el-icon><MoreFilled /></el-icon>
+      </button>
+      <template #dropdown>
+        <el-dropdown-menu class="terminal-more-dropdown-menu">
+          <el-dropdown-item command="theme">
+            <span>🎨 终端配色与主题</span>
+          </el-dropdown-item>
+          <el-dropdown-item command="share">
+            <span class="dropdown-item-share">
+              <el-icon><Share /></el-icon>
+              <span>共享终端协同 (tmux)</span>
+            </span>
+          </el-dropdown-item>
+          <el-dropdown-item v-if="!isDark" command="tone" divided>
+            <span>{{ terminalTone === 'paper' ? '⬛ 切换双拼暗黑底色' : '📄 切换纸白高对比底色' }}</span>
+          </el-dropdown-item>
+        </el-dropdown-menu>
+      </template>
+    </el-dropdown>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { ArrowDown, Delete, Document, FullScreen, Rank, Share } from '@element-plus/icons-vue'
+import { ArrowDown, Delete, Document, FullScreen, MoreFilled, Rank, Share } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 
 const { effectiveDark: isDark } = useTheme()
@@ -154,7 +147,7 @@ defineProps({
   encoding: { type: String, default: 'UTF-8' }
 })
 
-defineEmits([
+const emit = defineEmits([
   'clear',
   'toggle-snippets',
   'toggle-split',
@@ -165,6 +158,16 @@ defineEmits([
   'open-share',
   'change-encoding'
 ])
+
+function handleMoreCommand(cmd) {
+  if (cmd === 'theme') {
+    emit('open-theme')
+  } else if (cmd === 'share') {
+    emit('open-share')
+  } else if (cmd === 'tone') {
+    emit('toggle-tone')
+  }
+}
 </script>
 
 <style scoped>
@@ -177,8 +180,11 @@ defineEmits([
 .tool-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 3px;
-  padding: 3px 8px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
   border-radius: var(--ws-radius-xs);
   background: var(--ws-bg-input);
   border: 1px solid var(--ws-border);
@@ -188,7 +194,7 @@ defineEmits([
   cursor: pointer;
   transition: all var(--ws-transition-fast);
   user-select: none;
-  line-height: 1.4;
+  line-height: 1;
 }
 .tool-btn:hover {
   background: var(--ws-bg-hover);
@@ -207,7 +213,7 @@ defineEmits([
 }
 .tool-btn-caret {
   font-size: 10px;
-  margin-left: 1px;
+  margin-left: 2px;
 }
 :deep(.is-active-enc) {
   color: var(--el-color-primary) !important;
@@ -216,13 +222,15 @@ defineEmits([
 .tool-group {
   display: inline-flex;
   align-items: center;
+  height: 26px;
   border: 1px solid var(--ws-border);
   border-radius: var(--ws-radius-xs);
-  padding: 1px;
+  padding: 0 2px;
   background: var(--ws-bg-input);
 }
 .tool-btn-compact {
-  padding: 1px 4px;
+  height: 22px;
+  padding: 0 4px;
   border: none;
   background: transparent;
   font-size: 10px;
@@ -236,11 +244,19 @@ defineEmits([
 .font-size-label {
   font-size: 10px;
   color: var(--ws-text-subtle);
-  padding: 0 4px;
+  padding: 0 3px;
 }
-@media (max-width: 600px) {
+.tool-btn-text {
+  display: none;
+}
+@media (min-width: 1400px) {
   .tool-btn-text {
-    display: none;
+    display: inline;
   }
+}
+.dropdown-item-share {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 </style>

@@ -84,4 +84,25 @@ class SshTerminalStartupTest {
         service.writeInput(entry.getSessionToken(), wheel);
         assertArrayEquals(wheel, input.toByteArray());
     }
+
+    @Test void historyCannotOpenAnUnrelatedShellForPlainSshOrAnExpiredToken() throws Exception {
+        SshSessionRegistry.SessionEntry entry = registry.register(client, 1L, "test", null, null, null);
+        assertThrows(IOException.class, () -> service.readHistory(entry.getSessionToken(), "UTF-8"));
+        assertThrows(RuntimeException.class, () -> service.readHistory("expired-token", "UTF-8"));
+        verify(client, never()).startSession();
+    }
+
+    @Test void unsupportedTmuxHistoryDoesNotCloseTheLiveSession() throws Exception {
+        SshRemoteExec.ExecResult ok = new SshRemoteExec.ExecResult(); ok.setExitStatus(0);
+        SshTmuxSession tmux = new SshTmuxSession((command, timeout) -> ok);
+        tmux.prepare("bound-to-token", null, 120, 40, false);
+        SshSessionRegistry.SessionEntry entry = registry.register(client, 1L, "test", null, null, null);
+        entry.setTmuxSession(tmux);
+        when(probe.getExitStatus()).thenReturn(1);
+        when(probe.getErrorStream()).thenReturn(new ByteArrayInputStream("usage: capture-pane [-b buffer-index]".getBytes("UTF-8")));
+        IOException error = assertThrows(IOException.class, () -> service.readHistory(entry.getSessionToken(), "UTF-8"));
+        assertTrue(error.getMessage().contains("1.8+"));
+        assertEquals(entry, registry.get(entry.getSessionToken()));
+        verify(client, never()).disconnect();
+    }
 }

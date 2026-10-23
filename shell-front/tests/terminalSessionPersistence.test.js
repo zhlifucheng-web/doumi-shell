@@ -99,6 +99,8 @@ test('saveTerminalTabs and readSavedTerminalTabs: serialize, restore, and migrat
       hostId: 11,
       defaultCwd: '/var/www',
       label: 'app-prod-01 · root',
+      customTitle: '生产网关',
+      subIndex: 1,
       encoding: 'UTF-8',
       account: { id: 101, username: 'root' },
       token: 'ephemeral-token'
@@ -125,6 +127,8 @@ test('saveTerminalTabs and readSavedTerminalTabs: serialize, restore, and migrat
   // First tab preserved
   assert.equal(restored.tabs[0].tabId, 'term-101-s_abc123')
   assert.equal(restored.tabs[0].terminalId, 's_abc123')
+  assert.equal(restored.tabs[0].customTitle, '生产网关')
+  assert.equal(restored.tabs[0].subIndex, 1)
   assert.equal(restored.tabs[0].token, '')
 
   // Legacy tab was upgraded to random key instead of default

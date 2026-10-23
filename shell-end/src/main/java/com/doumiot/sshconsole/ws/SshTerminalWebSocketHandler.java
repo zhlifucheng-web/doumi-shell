@@ -22,6 +22,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -43,6 +44,7 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
 
     private final Map<String, Future<?>> pumpTasks = new ConcurrentHashMap<>();
     private final Map<String, Object> sendLocks = new ConcurrentHashMap<>();
+    private final Set<String> historyRequests = ConcurrentHashMap.newKeySet();
 
     @Resource
     private SshTerminalService sshTerminalService;
@@ -114,6 +116,8 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
 
         SshTerminalFrame ready = SshTerminalFrame.ready(
                 token, terminalSession.getLabel(), terminalSession.getReadyRemark(), terminalSession.getConnectionMode());
+        ready.setTmuxVersion(terminalSession.getTmuxVersion());
+        ready.setTmuxVersionSource(terminalSession.getTmuxVersionSource());
         sendFrame(session, token, ready);
 
         Future<?> pump = pumpExecutor.submit(() -> pumpOutput(session, token, entry.getShellStdout()));
@@ -131,6 +135,25 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
             return;
         }
         switch (frame.getType()) {
+            case "history":
+                if (frame.getRequestId() == null) break;
+                if (!historyRequests.add(token)) {
+                    sendHistoryError(session, token, frame.getRequestId(), "正在读取历史，请稍后重试");
+                    break;
+                }
+                pumpExecutor.submit(() -> {
+                    try {
+                        com.doumiot.sshconsole.ssh.SshRemoteExec.ExecResult history =
+                                sshTerminalService.readHistory(token, frame.getEncoding());
+                        SshTerminalFrame snapshot = new SshTerminalFrame();
+                        snapshot.setType("history"); snapshot.setRequestId(frame.getRequestId());
+                        snapshot.setData(history.getStdout()); snapshot.setTruncated(history.isTruncated());
+                        sendFrame(session, token, snapshot);
+                    } catch (IOException | RuntimeException e) {
+                        sendHistoryError(session, token, frame.getRequestId(), e.getMessage());
+                    } finally { historyRequests.remove(token); }
+                });
+                break;
             case "input":
                 if (Boolean.TRUE.equals(session.getAttributes().get("readOnly"))) {
                     // 只读共享会话：丢弃输入
@@ -228,6 +251,13 @@ public class SshTerminalWebSocketHandler extends TextWebSocketHandler {
         sendLocks.remove(token);
         sessionRegistry.unbindWebSocket(token);
         sessionRegistry.close(token);
+    }
+
+    private void sendHistoryError(WebSocketSession session, String token, Long requestId, String message) {
+        SshTerminalFrame error = new SshTerminalFrame();
+        error.setType("history"); error.setRequestId(requestId);
+        error.setMessage(message == null ? "历史读取失败，请重试" : message);
+        sendFrame(session, token, error);
     }
 
     private void sendErrorAndClose(WebSocketSession session, String code, String message) {
