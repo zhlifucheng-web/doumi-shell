@@ -94,6 +94,16 @@ public class SshSftpController {
         return sshSftpService.streamDownload(sessionToken, path);
     }
 
+    @GetMapping("/read-chunk")
+    public SshSftpService.ChunkResult readChunk(
+            @RequestParam @NotBlank String sessionToken,
+            @RequestParam @NotBlank String path,
+            @RequestParam(defaultValue = "0") long offset,
+            @RequestParam(defaultValue = "262144") int length,
+            @RequestParam(defaultValue = "false") boolean fromEnd) throws IOException {
+        return sshSftpService.readChunk(sessionToken, path, offset, length, fromEnd);
+    }
+
     @PostMapping("/upload/start")
     public String startUpload(@RequestParam @NotBlank String sessionToken,
             @RequestParam(required=false) String path, @RequestParam @NotBlank String name,

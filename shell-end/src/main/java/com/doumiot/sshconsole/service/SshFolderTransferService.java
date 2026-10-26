@@ -26,7 +26,7 @@ public class SshFolderTransferService {
         validateRelative(relative);
         SshSessionRegistry.SessionEntry session=sessions.get(token);
         try(SFTPClient sftp=session.getClient().newSFTPClient()) {
-            String base=sftp.canonicalize(SshSftpPathResolver.resolveForList(path,session.getDefaultCwd()));
+            String base=sftp.canonicalize(SshSftpPathResolver.resolveForList(path,session.getDefaultCwd(),session.getHomeDir()));
             prepareTarget(sftp,base,relative,true);
         }
     }
@@ -34,7 +34,7 @@ public class SshFolderTransferService {
     public Tree tree(String token,String path) throws IOException {
         SshSessionRegistry.SessionEntry session=sessions.get(token);
         try(SFTPClient sftp=session.getClient().newSFTPClient()) {
-            return tree(sftp,SshSftpPathResolver.resolve(path,session.getDefaultCwd()));
+            return tree(sftp,SshSftpPathResolver.resolve(path,session.getDefaultCwd(),session.getHomeDir()));
         }
     }
     private Tree tree(SFTPClient sftp,String path) throws IOException {
@@ -68,7 +68,7 @@ public class SshFolderTransferService {
         boolean success=false;
         try {
           try(SFTPClient sftp=session.getClient().newSFTPClient();ZipOutputStream out=new ZipOutputStream(Files.newOutputStream(zip))) {
-            Tree tree=tree(sftp,SshSftpPathResolver.resolve(path,session.getDefaultCwd()));
+            Tree tree=tree(sftp,SshSftpPathResolver.resolve(path,session.getDefaultCwd(),session.getHomeDir()));
             out.setLevel(compress?6:0);
             out.putNextEntry(new ZipEntry(tree.getName()+"/"));out.closeEntry();
             long total=0;
@@ -95,7 +95,7 @@ public class SshFolderTransferService {
         SshSessionRegistry.SessionEntry session=sessions.get(token);
         Path tmp=Files.createTempFile("doumi-folder-file-", ".tmp");
         try(SFTPClient sftp=session.getClient().newSFTPClient()) {
-            String base=sftp.canonicalize(SshSftpPathResolver.resolveForList(path,session.getDefaultCwd()));
+            String base=sftp.canonicalize(SshSftpPathResolver.resolveForList(path,session.getDefaultCwd(),session.getHomeDir()));
             prepareTarget(sftp,base,relative,false);
             file.transferTo(tmp);SftpStreams.put(sftp,tmp,base+"/"+relative);
         }finally{Files.deleteIfExists(tmp);}
@@ -107,7 +107,7 @@ public class SshFolderTransferService {
             List<String> entries=extract(file.getInputStream(),temp,limit());
             SshSessionRegistry.SessionEntry session=sessions.get(token);
             try(SFTPClient sftp=session.getClient().newSFTPClient()) {
-                String base=sftp.canonicalize(SshSftpPathResolver.resolveForList(path,session.getDefaultCwd()));
+                String base=sftp.canonicalize(SshSftpPathResolver.resolveForList(path,session.getDefaultCwd(),session.getHomeDir()));
                 // Check every target before writing any file, including preexisting symlink ancestors.
                 for(String name:entries)checkTarget(sftp,base,name);
                 for(String name:entries) {

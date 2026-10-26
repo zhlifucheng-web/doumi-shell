@@ -30,6 +30,8 @@ import java.io.FilterInputStream;
 import java.io.InputStream;
 import java.net.URLEncoder;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -54,9 +56,9 @@ public class SshSftpService {
     public ListResult directories(String sessionToken, String path) throws IOException {
         SshSessionRegistry.SessionEntry entry = sessionRegistry.get(sessionToken);
         try (SFTPClient sftp = openSftp(entry)) {
-            String requested = StringUtils.hasText(path) ? path :
-                    (StringUtils.hasText(entry.getDefaultCwd()) ? entry.getDefaultCwd() : sftp.canonicalize("."));
-            String resolved = SshSftpPathResolver.resolve(requested, entry.getDefaultCwd());
+            String home = resolveHomeDir(sftp, entry);
+            String requested = StringUtils.hasText(path) ? path : home;
+            String resolved = SshSftpPathResolver.resolve(requested, entry.getDefaultCwd(), home);
             List<FileEntry> items = new ArrayList<>();
             for (RemoteResourceInfo info : sftp.ls(resolved)) {
                 if (!info.isDirectory() || ".".equals(info.getName()) || "..".equals(info.getName())) continue;
@@ -69,9 +71,11 @@ public class SshSftpService {
 
     public ListResult list(String sessionToken, String path) throws IOException {
         SshSessionRegistry.SessionEntry entry = sessionRegistry.get(sessionToken);
-        String resolved = SshSftpPathResolver.resolveForList(path, entry.getDefaultCwd());
         List<RemoteResourceInfo> infos;
+        String resolved;
         try (SFTPClient sftp = openSftp(entry)) {
+            String home = needHome(path) ? resolveHomeDir(sftp, entry) : (entry != null ? entry.getHomeDir() : null);
+            resolved = SshSftpPathResolver.resolveForList(path, entry != null ? entry.getDefaultCwd() : null, home);
             infos = sftp.ls(resolved);
         }
         // Use SFTP attributes as the source of truth, including for unusual filenames.
@@ -112,8 +116,9 @@ public class SshSftpService {
     /** The response owns these resources until its stream is closed. */
     public ResponseEntity<InputStreamResource> streamDownload(String token, String path) throws IOException {
         SshSessionRegistry.SessionEntry entry = sessionRegistry.get(token);
-        String resolved = SshSftpPathResolver.resolve(path, entry.getDefaultCwd());
         SFTPClient sftp = openSftp(entry);
+        String home = needHome(path) ? resolveHomeDir(sftp, entry) : (entry != null ? entry.getHomeDir() : null);
+        String resolved = SshSftpPathResolver.resolve(path, entry != null ? entry.getDefaultCwd() : null, home);
         RemoteFile remote = null;
         try {
             if (sftp.type(resolved) != FileMode.Type.REGULAR) throw new IOException("仅支持下载普通文件");
@@ -144,6 +149,62 @@ public class SshSftpService {
         }
     }
 
+    /**
+     * 流式分块读取大文件片段：支持从文件头向后读，或从文件末尾（Tail 模式）向前读。
+     *
+     * @param sessionToken 会话凭证
+     * @param path         远程文件路径
+     * @param offset       字节偏移量（若 fromEnd 为 true 或 offset < 0，则从文件末尾倒数计算）
+     * @param length       需要读取的字节数（默认 256KB，单次上限 2MB）
+     * @param fromEnd      是否从文件末尾开始读取（适用于查看最新日志）
+     * @return 分块读取结果（包含总大小、当前分块起止与 Base64 编码的字节数据）
+     */
+    public ChunkResult readChunk(String sessionToken, String path, long offset, int length, boolean fromEnd) throws IOException {
+        if (length <= 0) {
+            length = 256 * 1024;
+        }
+        // 单次分片上限保护：最高 2MB
+        length = Math.min(length, 2 * 1024 * 1024);
+
+        SshSessionRegistry.SessionEntry entry = sessionRegistry.get(sessionToken);
+        try (SFTPClient sftp = openSftp(entry)) {
+            String home = needHome(path) ? resolveHomeDir(sftp, entry) : (entry != null ? entry.getHomeDir() : null);
+            String resolved = SshSftpPathResolver.resolve(path, entry != null ? entry.getDefaultCwd() : null, home);
+            if (sftp.type(resolved) != FileMode.Type.REGULAR) {
+                throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "仅支持读取普通文件");
+            }
+            try (RemoteFile remote = sftp.open(resolved)) {
+                long totalSize = remote.length();
+                long startOffset;
+                if (fromEnd || offset < 0) {
+                    startOffset = Math.max(0, totalSize - length);
+                } else {
+                    startOffset = Math.min(Math.max(0, offset), totalSize);
+                }
+                int toRead = (int) Math.min((long) length, totalSize - startOffset);
+                byte[] buf = new byte[toRead];
+                int totalRead = 0;
+                while (totalRead < toRead) {
+                    int r = remote.read(startOffset + totalRead, buf, totalRead, toRead - totalRead);
+                    if (r <= 0) {
+                        break;
+                    }
+                    totalRead += r;
+                }
+                byte[] actualBytes = totalRead == toRead ? buf : Arrays.copyOf(buf, totalRead);
+                ChunkResult result = new ChunkResult();
+                result.setTotalSize(totalSize);
+                result.setOffset(startOffset);
+                result.setLength(actualBytes.length);
+                result.setHasMoreBefore(startOffset > 0);
+                result.setHasMoreAfter(startOffset + actualBytes.length < totalSize);
+                result.setContentBase64(Base64.getEncoder().encodeToString(actualBytes));
+                sessionRegistry.touchSession(sessionToken);
+                return result;
+            }
+        }
+    }
+
     public void upload(String sessionToken, String path, MultipartFile file) throws IOException {
         if (file == null || !StringUtils.hasText(file.getOriginalFilename())) {
             throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "请选择要上传的文件");
@@ -154,16 +215,17 @@ public class SshSftpService {
                     "文件超过大小限制 " + properties.getUploadMaxSizeMb() + " MB");
         }
         SshSessionRegistry.SessionEntry entry = sessionRegistry.get(sessionToken);
-        String dir = SshSftpPathResolver.resolveForList(path, entry.getDefaultCwd());
-        String original = file.getOriginalFilename();
-        String name = StringUtils.hasText(original) ? original.trim() : "upload.bin";
-        if (name.contains("/") || name.contains("\\") || "..".equals(name)) {
-            throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "无效的文件名");
-        }
-        String remote = dir.endsWith("/") ? dir + name : dir + "/" + name;
-        remote = SshSftpPathResolver.resolve(remote, entry.getDefaultCwd());
         Path tmp = Files.createTempFile("ssh-sftp-ul-", ".part");
         try (SFTPClient sftp = openSftp(entry)) {
+            String home = needHome(path) ? resolveHomeDir(sftp, entry) : (entry != null ? entry.getHomeDir() : null);
+            String dir = SshSftpPathResolver.resolveForList(path, entry != null ? entry.getDefaultCwd() : null, home);
+            String original = file.getOriginalFilename();
+            String name = StringUtils.hasText(original) ? original.trim() : "upload.bin";
+            if (name.contains("/") || name.contains("\\") || "..".equals(name)) {
+                throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "无效的文件名");
+            }
+            String remote = dir.endsWith("/") ? dir + name : dir + "/" + name;
+            remote = SshSftpPathResolver.resolve(remote, entry != null ? entry.getDefaultCwd() : null, home);
             file.transferTo(tmp);
             SftpStreams.put(sftp, tmp, remote);
         } finally {
@@ -173,8 +235,9 @@ public class SshSftpService {
 
     public void mkdir(String sessionToken, String path) throws IOException {
         SshSessionRegistry.SessionEntry entry = sessionRegistry.get(sessionToken);
-        String resolved = SshSftpPathResolver.resolve(path, entry.getDefaultCwd());
         try (SFTPClient sftp = openSftp(entry)) {
+            String home = needHome(path) ? resolveHomeDir(sftp, entry) : (entry != null ? entry.getHomeDir() : null);
+            String resolved = SshSftpPathResolver.resolve(path, entry != null ? entry.getDefaultCwd() : null, home);
             try {
                 sftp.mkdirs(resolved);
             } catch (SFTPException e) {
@@ -186,8 +249,9 @@ public class SshSftpService {
 
     public void delete(String sessionToken, String path) throws IOException {
         SshSessionRegistry.SessionEntry entry = sessionRegistry.get(sessionToken);
-        String resolved = SshSftpPathResolver.resolve(path, entry.getDefaultCwd());
         try (SFTPClient sftp = openSftp(entry)) {
+            String home = needHome(path) ? resolveHomeDir(sftp, entry) : (entry != null ? entry.getHomeDir() : null);
+            String resolved = SshSftpPathResolver.resolve(path, entry != null ? entry.getDefaultCwd() : null, home);
             try {
                 net.schmizz.sshj.sftp.FileMode.Type type = sftp.type(resolved);
                 if (type == net.schmizz.sshj.sftp.FileMode.Type.DIRECTORY) {
@@ -207,14 +271,15 @@ public class SshSftpService {
             throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "新名称不能为空");
         }
         SshSessionRegistry.SessionEntry entry = sessionRegistry.get(sessionToken);
-        String resolved = SshSftpPathResolver.resolve(path, entry.getDefaultCwd());
-        int slash = resolved.lastIndexOf('/');
-        String parent = slash >= 0 ? resolved.substring(0, slash) : "/";
-        if (parent.isEmpty()) {
-            parent = "/";
-        }
-        String target = SshSftpPathResolver.resolveChildDir(parent, newName.trim(), entry.getDefaultCwd());
         try (SFTPClient sftp = openSftp(entry)) {
+            String home = needHome(path) ? resolveHomeDir(sftp, entry) : (entry != null ? entry.getHomeDir() : null);
+            String resolved = SshSftpPathResolver.resolve(path, entry != null ? entry.getDefaultCwd() : null, home);
+            int slash = resolved.lastIndexOf('/');
+            String parent = slash >= 0 ? resolved.substring(0, slash) : "/";
+            if (parent.isEmpty()) {
+                parent = "/";
+            }
+            String target = SshSftpPathResolver.resolveChildDir(parent, newName.trim(), entry != null ? entry.getDefaultCwd() : null, home);
             try {
                 sftp.rename(resolved, target);
             } catch (SFTPException e) {
@@ -222,6 +287,36 @@ public class SshSftpService {
                         "重命名失败: " + e.getMessage());
             }
         }
+    }
+
+    private String resolveHomeDir(SFTPClient sftp, SshSessionRegistry.SessionEntry entry) {
+        if (entry != null && StringUtils.hasText(entry.getHomeDir())) {
+            return entry.getHomeDir();
+        }
+        if (entry != null && StringUtils.hasText(entry.getDefaultCwd())) {
+            entry.setHomeDir(entry.getDefaultCwd().trim());
+            return entry.getHomeDir();
+        }
+        if (sftp != null) {
+            try {
+                String canon = sftp.canonicalize(".");
+                if (StringUtils.hasText(canon)) {
+                    if (entry != null) {
+                        entry.setHomeDir(canon.trim());
+                    }
+                    return canon.trim();
+                }
+            } catch (Exception e) {
+                log.debug("SFTP canonicalize home failed", e);
+            }
+        }
+        return "/";
+    }
+
+    private static boolean needHome(String path) {
+        if (!StringUtils.hasText(path)) return true;
+        String t = path.trim();
+        return "~".equals(t) || t.startsWith("~/") || t.startsWith("~\\");
     }
 
     private static SFTPClient openSftp(SshSessionRegistry.SessionEntry entry) throws IOException {
@@ -310,6 +405,16 @@ public class SshSftpService {
     public static class ListResult {
         private String path;
         private List<FileEntry> items;
+    }
+
+    @Data
+    public static class ChunkResult {
+        private long totalSize;
+        private long offset;
+        private int length;
+        private boolean hasMoreBefore;
+        private boolean hasMoreAfter;
+        private String contentBase64;
     }
 
 }
