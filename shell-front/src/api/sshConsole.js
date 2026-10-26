@@ -384,6 +384,13 @@ export async function sftpDownload(sessionToken, path, filename, options={}) {
   setTimeout(()=>URL.revokeObjectURL(link.href),10000)
 }
 
+/**
+ * 分块动态读取大文件片段
+ */
+export function sftpReadChunk(sessionToken, path, { offset = 0, length = 262144, fromEnd = false } = {}) {
+  return get(`${BASE}/sftp/read-chunk`, { sessionToken, path, offset, length, fromEnd }, { showSuccess: false })
+}
+
 export const startExecution = (scriptId, accountId) => post(`${BASE}/executions`, {scriptId,accountId}, {showSuccess:false})
 export const listExecutions = params => get(`${BASE}/executions`, params, {showSuccess:false})
 export const getExecution = id => get(`${BASE}/executions/${id}`, {}, {showSuccess:false})
