@@ -231,9 +231,44 @@
           </div>
         </template>
         <div class="ctx-menu-divider" />
+        <!-- 复制 子菜单 (路径 / 文件名) -->
+        <div
+          class="ctx-menu-item has-submenu"
+          @mouseenter="onCopySubmenuEnter"
+          @mouseleave="onCopySubmenuLeave"
+          @click.stop="toggleCopySubmenu"
+        >
+          <div class="ctx-menu-item-left">
+            <el-icon><CopyDocument /></el-icon>
+            <span>复制</span>
+          </div>
+          <el-icon class="submenu-arrow"><ArrowRight /></el-icon>
+
+          <!-- 二级菜单 -->
+          <div
+            v-if="copySubmenuVisible"
+            class="ctx-submenu"
+            :class="{ 'align-left': copySubmenuAlignLeft }"
+            @click.stop
+          >
+            <div class="ctx-menu-item" @click.stop="copyPath">
+              <el-icon><Link /></el-icon>
+              <span>路径</span>
+            </div>
+            <div class="ctx-menu-item" @click.stop="copyFileName">
+              <el-icon><DocumentCopy /></el-icon>
+              <span>文件名</span>
+            </div>
+          </div>
+        </div>
+
         <div class="ctx-menu-item" @click="handleContextMenuAction('rename')">
           <el-icon><Document /></el-icon>
           <span>重命名</span>
+        </div>
+        <div v-if="canChown" class="ctx-menu-item" @click="handleContextMenuAction('chown')">
+          <el-icon><User /></el-icon>
+          <span>修改所有者</span>
         </div>
         <div class="ctx-menu-item is-danger" @click="handleContextMenuAction('delete')">
           <el-icon><Delete /></el-icon>
@@ -246,7 +281,21 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Delete, Document, Download, Edit, Folder, FolderOpened, TopRight } from '@element-plus/icons-vue'
+import {
+  ArrowRight,
+  CopyDocument,
+  Delete,
+  Document,
+  DocumentCopy,
+  Download,
+  Edit,
+  Folder,
+  FolderOpened,
+  Link,
+  TopRight,
+  User
+} from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { isParentPath } from '@/utils/fileTypeHelper'
 
 const props = defineProps({
@@ -258,7 +307,8 @@ const props = defineProps({
   sortOrder: { type: String, default: 'ascending' },
   rowHeight: { type: Number, default: 36 },
   emptyDescription: { type: String, default: '当前目录为空' },
-  currentPath: { type: String, default: '' }
+  currentPath: { type: String, default: '' },
+  canChown: { type: Boolean, default: false }
 })
 
 const emit = defineEmits([
@@ -271,6 +321,7 @@ const emit = defineEmits([
   'open',
   'folder-download',
   'rename',
+  'chown',
   'delete'
 ])
 
@@ -398,11 +449,15 @@ const contextMenuRef = ref(null)
 const contextMenuVisible = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
 const contextMenuRow = ref(null)
+const copySubmenuVisible = ref(false)
+const copySubmenuAlignLeft = ref(false)
+let copySubmenuTimer = null
 
 function onRowContextMenu(row, event) {
   contextMenuRow.value = row
+  copySubmenuVisible.value = false
   const menuWidth = 175
-  const menuHeight = 180
+  const menuHeight = 220
   const x = Math.min(event.clientX, window.innerWidth - menuWidth - 10)
   const y = Math.min(event.clientY, window.innerHeight - menuHeight - 10)
   contextMenuPosition.value = { x, y }
@@ -410,7 +465,75 @@ function onRowContextMenu(row, event) {
 }
 
 function closeContextMenu() {
+  clearTimeout(copySubmenuTimer)
+  copySubmenuVisible.value = false
   contextMenuVisible.value = false
+}
+
+function onCopySubmenuEnter(e) {
+  clearTimeout(copySubmenuTimer)
+  const rect = e?.currentTarget?.getBoundingClientRect?.()
+  if (rect) {
+    copySubmenuAlignLeft.value = (window.innerWidth - rect.right) < 140
+  }
+  copySubmenuVisible.value = true
+}
+
+function onCopySubmenuLeave() {
+  copySubmenuTimer = setTimeout(() => {
+    copySubmenuVisible.value = false
+  }, 120)
+}
+
+function toggleCopySubmenu(e) {
+  if (copySubmenuVisible.value) {
+    copySubmenuVisible.value = false
+  } else {
+    onCopySubmenuEnter(e)
+  }
+}
+
+function fullPathFor(row) {
+  if (!row) return ''
+  const base = props.currentPath || ''
+  if (!base) return row.name || ''
+  return base.endsWith('/') ? `${base}${row.name}` : `${base}/${row.name}`
+}
+
+async function copyToClipboard(text, successMsg) {
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.focus()
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+    }
+    ElMessage.success(successMsg)
+  } catch (err) {
+    ElMessage.error('复制失败：' + (err?.message || '未知错误'))
+  }
+}
+
+function copyPath() {
+  const row = contextMenuRow.value
+  closeContextMenu()
+  if (!row) return
+  const fullPath = fullPathFor(row)
+  void copyToClipboard(fullPath, '已复制路径到剪贴板')
+}
+
+function copyFileName() {
+  const row = contextMenuRow.value
+  closeContextMenu()
+  if (!row) return
+  void copyToClipboard(row.name || '', '已复制文件名到剪贴板')
 }
 
 function handleContextMenuAction(action) {
@@ -438,6 +561,9 @@ function handleContextMenuAction(action) {
       break
     case 'rename':
       emit('rename', row)
+      break
+    case 'chown':
+      emit('chown', row)
       break
     case 'delete':
       emit('delete', row)
@@ -866,8 +992,57 @@ html.dark .file-name-text.is-dir,
   background-color: var(--el-color-danger-light-9, #fef0f0);
 }
 
+:global(.ssh-virtual-table-context-menu .ctx-menu-item.has-submenu) {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+:global(.ssh-virtual-table-context-menu .ctx-menu-item-left) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+:global(.ssh-virtual-table-context-menu .submenu-arrow) {
+  font-size: 12px;
+  margin-left: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+:global(.ssh-virtual-table-context-menu .ctx-submenu) {
+  position: absolute;
+  top: -4px;
+  left: 100%;
+  margin-left: 2px;
+  min-width: 130px;
+  background: var(--el-bg-color-overlay, #ffffff);
+  border: 1px solid var(--el-border-color-light, #e4e7ed);
+  border-radius: 8px;
+  box-shadow: var(--el-box-shadow-light, 0 4px 16px rgba(0, 0, 0, 0.12));
+  padding: 4px 0;
+  font-size: 13px;
+  animation: ctx-menu-pop 0.12s cubic-bezier(0, 0, 0.2, 1);
+  z-index: 10000;
+}
+
+:global(.ssh-virtual-table-context-menu .ctx-submenu.align-left) {
+  left: auto;
+  right: 100%;
+  margin-left: 0;
+  margin-right: 2px;
+}
+
 :global(html.dark .ssh-virtual-table-context-menu),
 :global(:root[data-theme='dark'] .ssh-virtual-table-context-menu) {
+  background: var(--ws-bg-card, #141b2d);
+  border-color: var(--ws-border, rgba(255, 255, 255, 0.12));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
+}
+
+:global(html.dark .ssh-virtual-table-context-menu .ctx-submenu),
+:global(:root[data-theme='dark'] .ssh-virtual-table-context-menu .ctx-submenu) {
   background: var(--ws-bg-card, #141b2d);
   border-color: var(--ws-border, rgba(255, 255, 255, 0.12));
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);

@@ -42,7 +42,22 @@ public final class SftpStreams {
     public static void commit(SFTPClient sftp, String temp, String target) throws IOException {
         FileAttributes existing = sftp.statExistence(target);
         if (existing != null && existing.getMode() != null && existing.getType() == FileMode.Type.REGULAR) {
-            sftp.chmod(temp, existing.getMode().getPermissionsMask());
+            boolean attrSet = false;
+            if (existing.has(FileAttributes.Flag.UIDGID)) {
+                try {
+                    FileAttributes attr = new FileAttributes.Builder()
+                            .withPermissions(existing.getMode().getPermissionsMask())
+                            .withUIDGID(existing.getUID(), existing.getGID())
+                            .build();
+                    sftp.setattr(temp, attr);
+                    attrSet = true;
+                } catch (Exception ignored) {
+                    // Non-root or restricted users may lack chown permission to restore UID/GID; fall back to chmod
+                }
+            }
+            if (!attrSet) {
+                sftp.chmod(temp, existing.getMode().getPermissionsMask());
+            }
         }
         // Never emulate overwrite by deleting the original. Old servers may only create new files.
         if (sftp.version() >= 5 || sftp.getSFTPEngine().supportsServerExtension("posix-rename", "openssh.com")) {

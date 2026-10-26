@@ -289,6 +289,131 @@ public class SshSftpService {
         }
     }
 
+    public void chown(String sessionToken, String path, String owner, String group, boolean recursive) throws IOException {
+        String cleanOwner = owner != null ? owner.trim() : "";
+        String cleanGroup = group != null ? group.trim() : "";
+
+        if (!StringUtils.hasText(cleanOwner) && !StringUtils.hasText(cleanGroup)) {
+            throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "请至少指定用户或用户组");
+        }
+        String pattern = "^[a-zA-Z0-9_.][a-zA-Z0-9_.-]*$";
+        if (StringUtils.hasText(cleanOwner) && !cleanOwner.matches(pattern)) {
+            throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "无效的用户名格式");
+        }
+        if (StringUtils.hasText(cleanGroup) && !cleanGroup.matches(pattern)) {
+            throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "无效的用户组格式");
+        }
+
+        SystemUsersAndGroups ug = systemUsersAndGroups(sessionToken);
+        if (!ug.isCanChown()) {
+            throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "当前用户无权限修改文件所有者或无法查看其他用户");
+        }
+
+        SshSessionRegistry.SessionEntry entry = sessionRegistry.get(sessionToken);
+        String home;
+        try (SFTPClient sftp = openSftp(entry)) {
+            home = needHome(path) ? resolveHomeDir(sftp, entry) : (entry != null ? entry.getHomeDir() : null);
+        }
+        String resolved = SshSftpPathResolver.resolve(path, entry != null ? entry.getDefaultCwd() : null, home);
+
+        StringBuilder spec = new StringBuilder();
+        if (StringUtils.hasText(cleanOwner)) {
+            spec.append(cleanOwner);
+            if (StringUtils.hasText(cleanGroup)) {
+                spec.append(':').append(cleanGroup);
+            }
+        } else {
+            spec.append(':').append(cleanGroup);
+        }
+
+        StringBuilder cmd = new StringBuilder();
+        cmd.append("chown ");
+        if (recursive) {
+            cmd.append("-R ");
+        }
+        cmd.append(spec).append(" ").append(quote(resolved));
+
+        int timeoutSec = recursive ? 120 : 30;
+        SshRemoteExec.ExecResult result = SshRemoteExec.exec(
+                entry.getClient(), entry.getExecLock(), cmd.toString(), timeoutSec);
+
+        if (result.getExitStatus() != 0) {
+            String err = StringUtils.hasText(result.getStderr()) ? result.getStderr().trim() : result.getStdout().trim();
+            if (!StringUtils.hasText(err)) {
+                err = "命令退出码: " + result.getExitStatus();
+            }
+            throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "修改归属用户失败: " + err);
+        }
+    }
+
+    public SystemUsersAndGroups systemUsersAndGroups(String sessionToken) throws IOException {
+        SshSessionRegistry.SessionEntry entry = sessionRegistry.get(sessionToken);
+        String command = "echo '===ID==='; "
+                + "id -u 2>/dev/null || true; "
+                + "id -un 2>/dev/null || true; "
+                + "echo '===USERS==='; "
+                + "if command -v getent >/dev/null 2>&1; then getent passwd; else cat /etc/passwd; fi 2>/dev/null | awk -F: '$1 ~ /^[a-zA-Z0-9_.-]+$/ {print $1}'; "
+                + "echo '===GROUPS==='; "
+                + "if command -v getent >/dev/null 2>&1; then getent group; else cat /etc/group; fi 2>/dev/null | awk -F: '$1 ~ /^[a-zA-Z0-9_.-]+$/ {print $1}'";
+
+        SystemUsersAndGroups result = new SystemUsersAndGroups();
+        try {
+            SshRemoteExec.ExecResult exec = SshRemoteExec.exec(
+                    entry.getClient(), entry.getExecLock(), command, 8);
+            if (exec.getExitStatus() == 0 && StringUtils.hasText(exec.getStdout())) {
+                String[] lines = exec.getStdout().split("\r?\n");
+                String section = "";
+                List<String> idLines = new ArrayList<>();
+                Set<String> userSet = new LinkedHashSet<>();
+                Set<String> groupSet = new LinkedHashSet<>();
+                for (String line : lines) {
+                    String trimmed = line.trim();
+                    if ("===ID===".equals(trimmed)) {
+                        section = "ID";
+                        continue;
+                    }
+                    if ("===USERS===".equals(trimmed)) {
+                        section = "USERS";
+                        continue;
+                    }
+                    if ("===GROUPS===".equals(trimmed)) {
+                        section = "GROUPS";
+                        continue;
+                    }
+                    if (trimmed.isEmpty()) continue;
+                    if ("ID".equals(section)) {
+                        idLines.add(trimmed);
+                    } else if ("USERS".equals(section)) {
+                        userSet.add(trimmed);
+                    } else if ("GROUPS".equals(section)) {
+                        groupSet.add(trimmed);
+                    }
+                }
+                if (idLines.size() >= 1) {
+                    try {
+                        result.setCurrentUid(Integer.parseInt(idLines.get(0)));
+                    } catch (NumberFormatException ignored) {}
+                }
+                if (idLines.size() >= 2) {
+                    result.setCurrentUser(idLines.get(1));
+                }
+                result.setUsers(new ArrayList<>(userSet));
+                result.setGroups(new ArrayList<>(groupSet));
+
+                boolean isRoot = (result.getCurrentUid() == 0 || "root".equalsIgnoreCase(result.getCurrentUser()));
+                long otherUsers = userSet.stream()
+                        .filter(u -> !u.equalsIgnoreCase(result.getCurrentUser()))
+                        .count();
+                boolean canViewOther = isRoot && (otherUsers > 0);
+                result.setCanViewOtherUsers(canViewOther);
+                result.setCanChown(canViewOther);
+            }
+        } catch (Exception e) {
+            log.debug("获取系统用户与用户组失败: {}", e.getMessage());
+        }
+        return result;
+    }
+
     private String resolveHomeDir(SFTPClient sftp, SshSessionRegistry.SessionEntry entry) {
         if (entry != null && StringUtils.hasText(entry.getHomeDir())) {
             return entry.getHomeDir();
@@ -329,6 +454,10 @@ public class SshSftpService {
     private static String fileNameOf(String path) {
         int idx = path.lastIndexOf('/');
         return idx >= 0 ? path.substring(idx + 1) : path;
+    }
+
+    static String quote(String text) {
+        return "'" + text.replace("'", "'\"'\"'") + "'";
     }
 
     private IdNameMaps loadIdNameMaps(SshSessionRegistry.SessionEntry entry, List<RemoteResourceInfo> infos) {
@@ -380,6 +509,16 @@ public class SshSftpService {
     private static final class IdNameMaps {
         private Map<Integer, String> uidToName = Collections.emptyMap();
         private Map<Integer, String> gidToName = Collections.emptyMap();
+    }
+
+    @Data
+    public static class SystemUsersAndGroups {
+        private String currentUser = "";
+        private int currentUid = -1;
+        private boolean canViewOtherUsers = false;
+        private boolean canChown = false;
+        private List<String> users = new ArrayList<>();
+        private List<String> groups = new ArrayList<>();
     }
 
     @Data

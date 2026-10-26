@@ -177,6 +177,14 @@ export function sftpRename(sessionToken, path, newName) {
   return post(`${BASE}/sftp/rename`, { sessionToken, path, newName })
 }
 
+export function sftpChown(sessionToken, path, owner, group, recursive = false) {
+  return post(`${BASE}/sftp/chown`, { sessionToken, path, owner, group, recursive })
+}
+
+export function sftpGetUsersAndGroups(sessionToken) {
+  return get(`${BASE}/sftp/users-and-groups`, { sessionToken }, { showSuccess: false })
+}
+
 export function killHostProcess(sessionToken, pid, signal = 'TERM') {
   return post(`${BASE}/host/processes/kill`, { sessionToken, pid, signal }, { showSuccess: false })
 }

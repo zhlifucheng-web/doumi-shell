@@ -472,6 +472,8 @@
                             :font-size="terminalFontSize"
                             :light-tone="terminalLightTone"
                             :encoding="tab.encoding || terminalEncoding"
+                            :current-path="currentSftpPath || tab.defaultCwd || ''"
+                            @drop-files="onTerminalDropFiles"
                             @ready="payload => onTerminalReady(tab.tabId, payload)"
                             @disconnected="() => onTerminalDisconnected(tab.tabId)"
                             @size-change="onTerminalSizeChange"
@@ -493,6 +495,8 @@
                             :font-size="terminalFontSize"
                             :light-tone="terminalLightTone"
                             :encoding="splitTerminalTab.encoding || terminalEncoding"
+                            :current-path="currentSftpPath || splitTerminalTab.defaultCwd || ''"
+                            @drop-files="onTerminalDropFiles"
                             @ready="payload => onTerminalReady(splitTerminalTab.tabId, payload)"
                             @disconnected="() => onTerminalDisconnected(splitTerminalTab.tabId)"
                             @change-encoding="enc => onChangeEncoding(enc, splitTerminalTab.tabId)" />
@@ -503,11 +507,12 @@
                   <el-empty v-else description="从左侧选择账户以打开终端" />
                 </template>
                 <template #files>
-                  <SshFilePanel v-if="activeTerminalTab" :account-id="activeTerminalTab.accountId" :host-id="activeTerminalTab.hostId"
+                  <SshFilePanel v-if="activeTerminalTab" ref="filePanelRef" :account-id="activeTerminalTab.accountId" :host-id="activeTerminalTab.hostId"
                     :active="accountTab === 'terminal'" embedded
                     :session-token="sessionToken" :default-cwd="activeTerminalTab.defaultCwd || ''"
                     :opening-session="openingFileSession" @request-session="establishFileSession"
-                    @session-invalid="onFileSessionInvalid" />
+                    @session-invalid="onFileSessionInvalid"
+                    @path-change="onFilePanelPathChange" />
                 </template>
               </TerminalFileLayout>
             </div>
@@ -1043,6 +1048,30 @@ const splitTerminalTab = computed(() => {
   if (!isSplit.value || terminalTabs.value.length < 2) return null
   return terminalTabs.value.find(tab => tab.tabId !== activeTerminalId.value) || null
 })
+
+const filePanelRef = ref(null)
+const currentSftpPath = ref('')
+
+function onFilePanelPathChange(path) {
+  currentSftpPath.value = path || ''
+}
+
+watch(activeTerminalId, () => {
+  currentSftpPath.value = ''
+})
+
+async function onTerminalDropFiles(dataTransfer) {
+  if (!activeTerminalTab.value) return
+  if (!sessionToken.value) {
+    ElMessage.info('正在建立 SFTP 会话以开始上传...')
+    await establishFileSession()
+  }
+  await nextTick()
+  if (filePanelRef.value?.processDroppedDataTransfer) {
+    const targetDir = currentSftpPath.value || activeTerminalTab.value?.defaultCwd || ''
+    await filePanelRef.value.processDroppedDataTransfer(dataTransfer, targetDir)
+  }
+}
 
 const terminalRefs = new Map()
 function setTerminalRef(key, el) {
