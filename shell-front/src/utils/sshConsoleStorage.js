@@ -214,16 +214,16 @@ export function allocateTerminalId(accountId, existingTabs = [], options = {}) {
   }
 }
 
-/** 懒加载树展开到主机：祖先分组 g:* + 主机 h:* */
-export async function resolveSshExpandedKeys(selection, { getGroup, getHost }) {
+/** 懒加载树展开到目标节点：祖先分组 g:* + 主机 h:* */
+export async function resolveSshExpandedKeys(selection, { getGroup, getHost } = {}) {
   if (!selection) return []
   const keys = []
-  let groupId = selection.groupId ?? null
-  let hostId = selection.hostId ?? null
+  let groupId = selection.groupId ?? selection.extra?.groupId ?? null
+  let hostId = selection.hostId ?? selection.extra?.hostId ?? null
 
-  if (selection.nodeType === 'ACCOUNT' && hostId) {
-    keys.push(`h:${hostId}`)
-    if (groupId == null) {
+  if (selection.nodeType === 'ACCOUNT') {
+    if (hostId) keys.push(`h:${hostId}`)
+    if (groupId == null && hostId && getHost) {
       try {
         const h = await getHost(hostId)
         groupId = h?.groupId ?? null
@@ -231,10 +231,12 @@ export async function resolveSshExpandedKeys(selection, { getGroup, getHost }) {
         groupId = null
       }
     }
-  } else if (selection.nodeType === 'HOST' && selection.id) {
-    hostId = selection.id
-    keys.push(`h:${hostId}`)
-    if (groupId == null) {
+  } else if (selection.nodeType === 'HOST') {
+    if (selection.id) {
+      hostId = selection.id
+      keys.push(`h:${hostId}`)
+    }
+    if (groupId == null && hostId && getHost) {
       try {
         const h = await getHost(hostId)
         groupId = h?.groupId ?? null
@@ -242,6 +244,17 @@ export async function resolveSshExpandedKeys(selection, { getGroup, getHost }) {
         groupId = null
       }
     }
+  } else if (selection.nodeType === 'GROUP') {
+    let parentId = selection.parentId ?? selection.extra?.parentId ?? null
+    if (parentId == null && selection.id && getGroup) {
+      try {
+        const g = await getGroup(selection.id)
+        parentId = g?.parentId ?? null
+      } catch {
+        parentId = null
+      }
+    }
+    groupId = parentId
   }
 
   const groupKeys = []
@@ -250,6 +263,7 @@ export async function resolveSshExpandedKeys(selection, { getGroup, getHost }) {
   while (gid != null && !seen.has(gid)) {
     seen.add(gid)
     groupKeys.unshift(`g:${gid}`)
+    if (!getGroup) break
     try {
       const g = await getGroup(gid)
       gid = g?.parentId ?? null
