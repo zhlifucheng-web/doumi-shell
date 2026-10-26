@@ -49,7 +49,7 @@ Content-Type: application/json
 | 脚本与定时任务 | `scripts_list`、`script_get/create/update/delete/run`、`schedule_accounts`、`cron_preview`、`executions_list`、`execution_get/stop` |
 | 进程 | `processes_list`、`process_kill` |
 | 存储管理 | `disk_scan`，结合文件工具处理选中的文件 |
-| 数据管理 | `data_tables`、`cleanup_preview/execute`、`configuration_export/import`、`attachment_read` |
+| 数据管理 | `data_tables`、`cleanup_preview/execute`、`configuration_export/import`、`finalshell_import`、`remote_backup_get/save/execute`、`attachment_read` |
 
 表内 `/` 为名称简写，例如 `group_get/create` 对应 `group_get`、`group_create`。AI 自有 SSH 连接与页面终端分开；`ssh_disconnect` 仅关闭 AI 自有连接。清理需要先调用 `cleanup_preview` 再使用其 token，执行前仍需确认。下载返回应用内 `downloadUrl`，供用户点击保存；导出的备份内容不回传模型。
 

@@ -48,6 +48,38 @@ export function importConfiguration(password, archive) {
   return post(`${BASE}/configuration/import`, { password, archive }, { showSuccess: false })
 }
 
+export function listAllGroups() {
+  return get(`${BASE}/groups`, {}, { showSuccess: false })
+}
+
+export function importFinalShell({ file, targetGroupId, localPath, overwrite = false } = {}) {
+  const form = new FormData()
+  if (file) form.append('file', file)
+  if (targetGroupId != null && targetGroupId !== '') form.append('targetGroupId', targetGroupId)
+  if (localPath) form.append('localPath', localPath)
+  if (overwrite) form.append('overwrite', 'true')
+  return handleApiResponse(apiClient.post(`${BASE}/configuration/import/finalshell`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300000
+  }), { showSuccess: false })
+}
+
+export function getRemoteBackupConfig() {
+  return get(`${BASE}/backup/remote/config`, {}, { showSuccess: false })
+}
+
+export function saveRemoteBackupConfig(body) {
+  return post(`${BASE}/backup/remote/config`, body)
+}
+
+export function testRemoteBackup(body) {
+  return post(`${BASE}/backup/remote/test`, body, { showSuccess: false })
+}
+
+export function executeRemoteBackup() {
+  return post(`${BASE}/backup/remote/execute`, {})
+}
+
 export function fetchTreeChildren(parentType, parentId) {
   const params = { parentType }
   if (parentId != null) {

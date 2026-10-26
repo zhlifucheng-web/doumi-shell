@@ -92,6 +92,12 @@ public class SshGroupService {
         return requireGroup(id);
     }
 
+    public java.util.List<SshGroup> listAll() {
+        LambdaQueryWrapper<SshGroup> q = new LambdaQueryWrapper<>();
+        q.orderByAsc(SshGroup::getSortOrder).orderByAsc(SshGroup::getId);
+        return sshGroupMapper.selectList(q);
+    }
+
     @Transactional(rollbackFor = Exception.class)
     public int delete(long id) {
         jdbc.update("UPDATE ssh_group SET id=id WHERE id=?", id);

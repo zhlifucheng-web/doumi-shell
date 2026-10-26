@@ -27,6 +27,8 @@
         <com.baomidou.mybatis-plus-boot-starter.version>3.5.3.1</com.baomidou.mybatis-plus-boot-starter.version>
         <hutool.version>5.8.40</hutool.version>
         <org.projectlombok.lombok.version>1.18.36</org.projectlombok.lombok.version>
+        <minio.version>8.4.6</minio.version>
+        <okhttp3.version>4.8.1</okhttp3.version>
     </properties>
 
     <dependencies>
@@ -93,6 +95,11 @@
             <groupId>cn.hutool</groupId>
             <artifactId>hutool-all</artifactId>
             <version>${hutool.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.minio</groupId>
+            <artifactId>minio</artifactId>
+            <version>${minio.version}</version>
         </dependency>
 
         <dependency>

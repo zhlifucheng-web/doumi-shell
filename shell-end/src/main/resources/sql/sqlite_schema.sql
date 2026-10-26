@@ -83,3 +83,27 @@ CREATE TABLE IF NOT EXISTS ssh_script_execution (
 );
 CREATE INDEX IF NOT EXISTS idx_execution_started ON ssh_script_execution(started_at);
 CREATE INDEX IF NOT EXISTS idx_execution_script ON ssh_script_execution(script_id,started_at);
+
+CREATE TABLE IF NOT EXISTS ssh_backup_config (
+  id INTEGER PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  target_type TEXT NOT NULL DEFAULT 'MINIO',
+  cron TEXT NOT NULL DEFAULT '0 0 2 * * *',
+  zone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+  encrypted INTEGER NOT NULL DEFAULT 1,
+  minio_endpoint TEXT,
+  minio_bucket TEXT,
+  minio_access_key TEXT,
+  minio_region TEXT,
+  minio_path TEXT,
+  sftp_host TEXT,
+  sftp_port INTEGER DEFAULT 22,
+  sftp_username TEXT,
+  sftp_auth_type TEXT DEFAULT 'PASSWORD',
+  sftp_remote_dir TEXT,
+  secret_enc BLOB,
+  last_backup_at TEXT,
+  last_status TEXT,
+  last_message TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
