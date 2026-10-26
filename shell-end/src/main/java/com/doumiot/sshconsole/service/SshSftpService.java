@@ -88,7 +88,11 @@ public class SshSftpService {
             fe.setDir(info.isDirectory());
             FileAttributes attrs = info.getAttributes();
             fe.setSize(attrs != null ? attrs.getSize() : 0L);
-            fe.setMtime(attrs != null ? attrs.getMtime() : 0L);
+            long mtime = attrs != null ? attrs.getMtime() : 0L;
+            long atime = attrs != null ? attrs.getAtime() : 0L;
+            fe.setMtime(mtime);
+            fe.setAtime(atime);
+            fe.setCreateTime(atime > 0 ? atime : mtime);
             boolean symlink = attrs != null && attrs.getType() == FileMode.Type.SYMLINK;
             boolean hasIds = attrs != null && attrs.has(FileAttributes.Flag.UIDGID);
             Integer uid = hasIds ? attrs.getUID() : null;
@@ -290,6 +294,10 @@ public class SshSftpService {
         private long size;
         /** Unix epoch seconds */
         private long mtime;
+        /** Unix epoch seconds (access time) */
+        private long atime;
+        /** Unix epoch seconds (create / add time fallback) */
+        private long createTime;
         /** 属主用户名（无法解析时为 uid 数字） */
         private String owner;
         /** 属组名（无法解析时为 gid 数字） */

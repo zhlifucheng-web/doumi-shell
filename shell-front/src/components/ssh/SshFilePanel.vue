@@ -27,6 +27,9 @@
             <button type="button" class="bookmark-pill" title="前往配置目录" @click="navigateToQuickPath('/etc')">/etc</button>
             <button type="button" class="bookmark-pill" title="前往临时目录" @click="navigateToQuickPath('/tmp')">/tmp</button>
           </div>
+          <span v-if="items.length" class="items-count-pill" :title="`当前目录共 ${items.length} 项`">
+            共 {{ items.length }} 项<template v-if="filterKeyword && sortedItems.length !== items.length"> (匹配 {{ sortedItems.length }})</template>
+          </span>
         </div>
         <div class="toolbar-actions">
           <el-input
@@ -38,6 +41,36 @@
           />
           <el-button size="small" @click="navigateToPath">前往</el-button>
           <el-button size="small" :loading="loading" @click="refresh">刷新</el-button>
+          <el-dropdown trigger="click" @command="handleSortCommand">
+            <el-button size="small" :title="`当前排序: ${currentSortLabel}`">
+              <el-icon class="el-icon--left"><Sort /></el-icon>
+              <span>{{ currentSortLabel }}</span>
+              <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="name:ascending" :class="{ 'is-active': sortProp === 'name' && sortOrder === 'ascending' }">文件名（A → Z 顺序）</el-dropdown-item>
+                <el-dropdown-item command="name:descending" :class="{ 'is-active': sortProp === 'name' && sortOrder === 'descending' }">文件名（Z → A 倒序）</el-dropdown-item>
+                <el-dropdown-item divided command="mtime:descending" :class="{ 'is-active': sortProp === 'mtime' && sortOrder === 'descending' }">修改时间（最新在前 倒序）</el-dropdown-item>
+                <el-dropdown-item command="mtime:ascending" :class="{ 'is-active': sortProp === 'mtime' && sortOrder === 'ascending' }">修改时间（最早在前 顺序）</el-dropdown-item>
+                <el-dropdown-item divided command="createTime:descending" :class="{ 'is-active': sortProp === 'createTime' && sortOrder === 'descending' }">新增时间（最新在前 倒序）</el-dropdown-item>
+                <el-dropdown-item command="createTime:ascending" :class="{ 'is-active': sortProp === 'createTime' && sortOrder === 'ascending' }">新增时间（最早在前 顺序）</el-dropdown-item>
+                <el-dropdown-item divided command="size:descending" :class="{ 'is-active': sortProp === 'size' && sortOrder === 'descending' }">大小（由大到小 倒序）</el-dropdown-item>
+                <el-dropdown-item command="size:ascending" :class="{ 'is-active': sortProp === 'size' && sortOrder === 'ascending' }">大小（由小到大 顺序）</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-input
+            v-model="filterKeyword"
+            size="small"
+            class="filter-input"
+            placeholder="过滤文件名..."
+            clearable
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
           <el-button size="small" :type="activeTransferCount ? 'primary' : 'default'" plain @click="showTransfers = true">{{ transferButtonLabel }}</el-button>
           <el-button v-if="embedded" size="small" :aria-pressed="showDetails" @click="showDetails=!showDetails">{{ showDetails ? '精简列表' : '详细信息' }}</el-button>
           <el-button size="small" type="primary" @click="showMkdir = true">新建目录</el-button>
@@ -59,56 +92,22 @@
           <span>松开鼠标立即上传到当前目录 ({{ currentPath }})</span>
         </div>
 
-        <el-table
-          v-loading="loading"
-          :data="items"
-          size="small"
-          height="100%"
-          class="file-table"
+        <SshVirtualTable
+          :items="sortedItems"
+          :loading="loading"
+          :embedded="embedded"
+          :show-details="showDetails"
+          :sort-prop="sortProp"
+          :sort-order="sortOrder"
+          :empty-description="filterKeyword ? '未匹配到相关文件' : '当前目录为空'"
+          @sort-change="onSortChange"
           @row-dblclick="onRowDblClick"
-        >
-          <el-table-column label="名称" min-width="200">
-            <template #default="{ row }">
-              <div class="file-name-cell">
-                <el-icon class="row-ico" :class="{ 'is-dir': row.dir }">
-                  <Folder v-if="row.dir" />
-                  <Document v-else />
-                </el-icon>
-                <span class="file-name-text" :class="{ 'is-dir': row.dir }">{{ row.name }}</span>
-              </div>
-            </template>
-          </el-table-column>
-        <el-table-column label="大小" width="100">
-          <template #default="{ row }">
-            {{ row.dir ? '—' : formatSize(row.size) }}
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!embedded || showDetails" prop="owner" label="属主" width="88" show-overflow-tooltip />
-        <el-table-column v-if="!embedded || showDetails" prop="group" label="属组" width="88" show-overflow-tooltip />
-        <el-table-column v-if="!embedded || showDetails" prop="permissions" label="权限" width="108">
-          <template #default="{ row }">
-            <span class="perm-cell">{{ row.permissions || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!embedded || showDetails" label="修改时间" width="168">
-          <template #default="{ row }">
-            {{ formatMtime(row.mtime) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" :width="embedded ? 210 : 260" fixed="right">
-          <template #default="{ row }">
-            <el-button v-if="!row.dir" link type="primary" size="small" @click="downloadRow(row)">
-              下载
-            </el-button>
-            <el-button v-else link type="primary" size="small" @click="enterDir(row.name)">
-              打开
-            </el-button>
-            <el-button v-if="row.dir" link type="primary" size="small" @click="folderTransfer.openDownload(row)">下载</el-button>
-            <el-button link size="small" @click="openRename(row)">重命名</el-button>
-            <el-button link type="danger" size="small" @click="confirmDelete(row)">删除</el-button>
-          </template>
-        </el-table-column>
-        </el-table>
+          @download="downloadRow"
+          @open="enterDir($event.name)"
+          @folder-download="folderTransfer?.openDownload($event)"
+          @rename="openRename"
+          @delete="confirmDelete"
+        />
       </div>
     </template>
 
@@ -154,13 +153,15 @@
 <script setup>
 import { computed, onDeactivated, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Document, Folder, Upload } from '@element-plus/icons-vue'
+import { ArrowDown, Document, Folder, Search, Sort, Upload } from '@element-plus/icons-vue'
 import { sftpDelete, sftpDownloadLarge, sftpList, sftpMkdir, sftpRename, sftpUploadLarge } from '@/api/sshConsole'
 import { useTransfers } from '@/composables/useTransfers'
 import { storeToRefs } from 'pinia'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { isTransferActive, transferErrorMessage, transfersForServer } from '@/composables/transferHistory'
 import FolderTransfer from './FolderTransfer.vue'
+import SshVirtualTable from './SshVirtualTable.vue'
+import { sortFileList } from '@/utils/fileSorter'
 import { useAiChanges } from '@/composables/useAiChanges'
 useAiChanges(/^(file_|ssh_command)/, () => { if (props.sessionToken) return refresh() })
 
@@ -211,6 +212,46 @@ const renameName = ref('')
 const renameTarget = ref(null)
 const renameLoading = ref(false)
 const isDragOver = ref(false)
+const sortProp = ref(localStorage.getItem('ssh_file_sort_prop') || 'name')
+const sortOrder = ref(localStorage.getItem('ssh_file_sort_order') || 'ascending')
+const filterKeyword = ref('')
+
+const currentSortLabel = computed(() => {
+  const isAsc = sortOrder.value === 'ascending'
+  switch (sortProp.value) {
+    case 'name': return isAsc ? '文件名 (A-Z)' : '文件名 (Z-A)'
+    case 'mtime': return isAsc ? '修改时间 (旧→新)' : '修改时间 (新→旧)'
+    case 'createTime': return isAsc ? '新增时间 (旧→新)' : '新增时间 (新→旧)'
+    case 'size': return isAsc ? '大小 (小→大)' : '大小 (大→小)'
+    default: return '排序'
+  }
+})
+
+function handleSortCommand(command) {
+  if (!command) return
+  const [prop, order] = command.split(':')
+  onSortChange({ prop, order })
+}
+
+function onSortChange({ prop, order }) {
+  sortProp.value = prop
+  sortOrder.value = order
+  try {
+    localStorage.setItem('ssh_file_sort_prop', prop)
+    localStorage.setItem('ssh_file_sort_order', order)
+  } catch {
+    /* ignore storage quota / sandbox */
+  }
+}
+
+const sortedItems = computed(() => {
+  let list = items.value || []
+  const kw = filterKeyword.value.trim().toLowerCase()
+  if (kw) {
+    list = list.filter(item => String(item.name || '').toLowerCase().includes(kw))
+  }
+  return sortFileList(list, { prop: sortProp.value, order: sortOrder.value })
+})
 
 const breadcrumbs = computed(() => {
   const p = currentPath.value
@@ -296,7 +337,11 @@ async function refresh() {
 }
 
 function onRowDblClick(row) {
-  if (row.dir) enterDir(row.name)
+  if (row.dir) {
+    enterDir(row.name)
+  } else {
+    downloadRow(row)
+  }
 }
 
 async function downloadRow(row) {
@@ -475,6 +520,19 @@ function formatMtime(sec) {
 .path-input {
   width: 220px;
 }
+.filter-input {
+  width: 140px;
+}
+.items-count-pill {
+  font-size: 11px;
+  color: var(--el-text-color-secondary, #909399);
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--el-fill-color-light, rgba(0, 0, 0, 0.04));
+  border: 1px solid var(--el-border-color-lighter, #e4e7ed);
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+}
 .upload-drop {
   flex-shrink: 0;
 }
@@ -494,6 +552,7 @@ function formatMtime(sec) {
 .embedded .toolbar-actions { gap:4px; }
 .embedded .toolbar-actions :deep(.el-button + .el-button) { margin-left:0; }
 .embedded .path-input { width:170px; }
+.embedded .filter-input { width:110px; }
 .embedded .file-table { min-height:70px; }
 .embedded .no-session { padding:0; overflow:auto; }
 .embedded .no-session :deep(.el-empty) { padding:4px; }
