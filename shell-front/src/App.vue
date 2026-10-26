@@ -1,7 +1,7 @@
 <template>
   <div id="app" class="app-root" :style="backgroundStyle">
     <!-- ================= 顶部全局导航栏 (TOP BAR 48px) ================= -->
-    <header class="app-header">
+    <header v-if="!isStandalone" class="app-header">
       <!-- 左侧：品牌 Logo 与当前连接上下文 -->
       <div class="header-left">
         <div class="brand-group">
@@ -113,14 +113,16 @@
     </header>
 
     <!-- ================= 主体工作区 ================= -->
-    <main class="app-main">
+    <main class="app-main" :class="{ 'is-standalone': isStandalone }">
       <router-view v-slot="{ Component }">
-        <keep-alive><component :is="Component" /></keep-alive>
+        <component :is="Component" v-if="isStandalone" :key="route.fullPath" />
+        <keep-alive v-else><component :is="Component" /></keep-alive>
       </router-view>
     </main>
 
     <!-- ================= 现代 WebShell 底部专业状态条 ================= -->
     <AppStatusBar
+      v-if="!isStandalone"
       :cols="workspaceStore.terminalCols"
       :rows="workspaceStore.terminalRows"
       :session-active="workspaceStore.terminalConnected"
@@ -137,7 +139,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ArrowDown, Brush, InfoFilled, MagicStick, Monitor, Moon, QuestionFilled, Sunny } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -150,6 +152,8 @@ import PwaInstall from '@/components/PwaInstall.vue'
 import { useReleaseStore } from '@/stores/release'
 
 const router = useRouter()
+const route = useRoute()
+const isStandalone = computed(() => Boolean(route.meta?.standalone))
 const { background, style: backgroundStyle } = useBackground()
 const workspaceStore = useWorkspaceStore()
 const { managedServer } = storeToRefs(workspaceStore)
@@ -484,5 +488,11 @@ function onThemeCommand(cmd) {
   flex-direction: column;
   overflow: hidden;
   background-color: var(--ws-bg-root);
+}
+.app-main.is-standalone {
+  height: 100vh;
+  min-height: 100vh;
+  padding: 0;
+  margin: 0;
 }
 </style>
