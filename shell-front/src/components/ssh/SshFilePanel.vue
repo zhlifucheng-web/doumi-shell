@@ -21,6 +21,7 @@
             </el-breadcrumb-item>
           </el-breadcrumb>
           <div class="quick-bookmarks">
+            <button v-if="canGoParent" type="button" class="bookmark-pill is-parent-btn" title="返回上一级目录" @click="goParent">.. 上一级</button>
             <button type="button" class="bookmark-pill" title="前往家目录" @click="navigateToQuickPath('~')">~ 家目录</button>
             <button type="button" class="bookmark-pill" title="前往根目录" @click="navigateToQuickPath('/')">/ 根</button>
             <button type="button" class="bookmark-pill" title="前往日志目录" @click="navigateToQuickPath('/var/log')">/var/log</button>
@@ -99,11 +100,15 @@
           :show-details="showDetails"
           :sort-prop="sortProp"
           :sort-order="sortOrder"
+          :current-path="loadedPath || currentPath"
           :empty-description="filterKeyword ? '未匹配到相关文件' : '当前目录为空'"
           @sort-change="onSortChange"
           @row-dblclick="onRowDblClick"
+          @edit-file="openFileEditor"
+          @force-edit="openFullEditor"
+          @view-standalone="openStandaloneViewer"
           @download="downloadRow"
-          @open="enterDir($event.name)"
+          @open="enterDir"
           @folder-download="folderTransfer?.openDownload($event)"
           @rename="openRename"
           @delete="confirmDelete"
@@ -147,11 +152,29 @@
         <el-button type="primary" :loading="renameLoading" @click="doRename">确定</el-button>
       </template>
     </el-dialog>
+
+    <SshFileEditorDialog
+      v-model="showEditor"
+      :file="editorFile"
+      :dir="loadedPath || currentPath || defaultCwd || '/'"
+      :session-token="sessionToken"
+      @saved="refresh"
+      @switch-to-stream="openLargeFileViewer"
+    />
+
+    <SshLargeFileViewerDialog
+      v-model="showLargeViewer"
+      :file="largeViewerFile"
+      :dir="loadedPath || currentPath || defaultCwd || '/'"
+      :session-token="sessionToken"
+      @switch-to-editor="openFullEditor"
+    />
   </div>
 </template>
 
 <script setup>
 import { computed, onDeactivated, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Document, Folder, Search, Sort, Upload } from '@element-plus/icons-vue'
 import { sftpDelete, sftpDownloadLarge, sftpList, sftpMkdir, sftpRename, sftpUploadLarge } from '@/api/sshConsole'
@@ -161,6 +184,9 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import { isTransferActive, transferErrorMessage, transfersForServer } from '@/composables/transferHistory'
 import FolderTransfer from './FolderTransfer.vue'
 import SshVirtualTable from './SshVirtualTable.vue'
+import SshFileEditorDialog from './SshFileEditorDialog.vue'
+import SshLargeFileViewerDialog from './SshLargeFileViewerDialog.vue'
+import { isDefaultEditableFile, isBinaryFile, isTextFile } from '@/utils/fileTypeHelper'
 import { sortFileList } from '@/utils/fileSorter'
 import { useAiChanges } from '@/composables/useAiChanges'
 useAiChanges(/^(file_|ssh_command)/, () => { if (props.sessionToken) return refresh() })
@@ -198,6 +224,7 @@ function clearVisibleTransfers() {
 }
 
 const currentPath = ref('')
+const loadedPath = ref('')
 const pathInput = ref('')
 const items = ref([])
 const loading = ref(false)
@@ -212,6 +239,10 @@ const renameName = ref('')
 const renameTarget = ref(null)
 const renameLoading = ref(false)
 const isDragOver = ref(false)
+const showEditor = ref(false)
+const editorFile = ref(null)
+const showLargeViewer = ref(false)
+const largeViewerFile = ref(null)
 const sortProp = ref(localStorage.getItem('ssh_file_sort_prop') || 'name')
 const sortOrder = ref(localStorage.getItem('ssh_file_sort_order') || 'ascending')
 const filterKeyword = ref('')
@@ -266,8 +297,12 @@ watch(
     ++listRequest // Invalidate a response even when the next view has no session.
     loading.value = false
     if (accountId !== lastAccount) {
-      currentPath.value='';pathInput.value=props.defaultCwd||'';lastAccount=accountId
-      handledLocation=null;items.value=[]
+      currentPath.value = ''
+      pathInput.value = props.defaultCwd || ''
+      loadedPath.value = ''
+      lastAccount = accountId
+      handledLocation = null
+      items.value = []
     }
     if (!active) return
     if (tok) {
@@ -279,6 +314,22 @@ watch(
   },
   { immediate: true }
 )
+
+const canGoParent = computed(() => {
+  const p = (loadedPath.value || currentPath.value || '').trim()
+  if (!p || p === '/') return false
+  return true
+})
+
+function goParent() {
+  if (!canGoParent.value) return
+  const p = (loadedPath.value || currentPath.value || '/').replace(/\/+$/, '')
+  const lastSlash = p.lastIndexOf('/')
+  const parent = lastSlash <= 0 ? '/' : p.substring(0, lastSlash)
+  currentPath.value = parent
+  pathInput.value = parent
+  refresh()
+}
 
 function goRoot() {
   currentPath.value = props.defaultCwd || '/'
@@ -293,9 +344,21 @@ function goToIndex(idx) {
   refresh()
 }
 
-function enterDir(name) {
-  const base = currentPath.value || props.defaultCwd || '/'
-  const next = base.endsWith('/') ? base + name : `${base}/${name}`
+function enterDir(target) {
+  const name = (typeof target === 'object' && target !== null ? target.name : target)?.trim()
+  if (!name) return
+
+  // Base path is the directory currently loaded and displayed in the table
+  const base = loadedPath.value || currentPath.value || props.defaultCwd || '/'
+  const next = name.startsWith('/')
+    ? name
+    : base.endsWith('/') ? `${base}${name}` : `${base}/${name}`
+
+  // Guard against redundant duplicate navigation while a request is already loading
+  if (loading.value && currentPath.value === next) {
+    return
+  }
+
   currentPath.value = next
   pathInput.value = next
   refresh()
@@ -320,8 +383,9 @@ async function refresh() {
     const pathArg = currentPath.value || pathInput.value || ''
     const data = await sftpList(token, pathArg)
     if (request !== listRequest || token !== props.sessionToken) return
-    currentPath.value = data.path || currentPath.value
-    pathInput.value = currentPath.value
+    loadedPath.value = data.path || pathArg
+    currentPath.value = loadedPath.value
+    pathInput.value = loadedPath.value
     items.value = data.items || []
   } catch (err) {
     if (request !== listRequest || token !== props.sessionToken) return
@@ -330,6 +394,9 @@ async function refresh() {
       // 页面刷新/终端重连时旧 token 会被服务端主动清理；终端 ready
       // 后会自动提供新 token，不在这个过渡窗口弹出全局告警。
       emit('session-invalid')
+    } else {
+      const errMsg = err?.response?.data?.externMessage || err?.response?.data?.message || err?.message || '读取远程目录失败'
+      ElMessage.error(errMsg)
     }
   } finally {
     if (request === listRequest) loading.value = false
@@ -339,9 +406,100 @@ async function refresh() {
 function onRowDblClick(row) {
   if (row.dir) {
     enterDir(row.name)
+  } else if (row.size > 5 * 1024 * 1024 && !isBinaryFile(row.name)) {
+    // Large text / log files (> 5MB): open with dynamic chunk streaming viewer
+    openLargeFileViewer(row)
+  } else if (isDefaultEditableFile(row.name, row.size)) {
+    openFileEditor(row)
   } else {
     downloadRow(row)
   }
+}
+
+function openLargeFileViewer(row) {
+  if (!row || row.dir) return
+  largeViewerFile.value = row
+  showLargeViewer.value = true
+}
+
+const router = useRouter()
+
+function openStandaloneViewer(row) {
+  if (!row || row.dir || !props.sessionToken) return
+  const base = loadedPath.value || currentPath.value || props.defaultCwd || '/'
+  const filePath = row.path || (base.endsWith('/') ? `${base}${row.name}` : `${base}/${row.name}`)
+
+  const routeData = router.resolve({
+    path: '/file-viewer',
+    query: {
+      token: props.sessionToken,
+      path: filePath,
+      name: row.name,
+      size: row.size
+    }
+  })
+
+  const width = Math.min(1280, Math.floor(window.screen.availWidth * 0.88))
+  const height = Math.min(860, Math.floor(window.screen.availHeight * 0.88))
+  const left = Math.max(0, Math.floor((window.screen.availWidth - width) / 2))
+  const top = Math.max(0, Math.floor((window.screen.availHeight - height) / 2))
+
+  window.open(
+    routeData.href,
+    `ssh_viewer_${Date.now()}`,
+    `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`
+  )
+}
+
+async function openFullEditor(row) {
+  if (!row || row.dir) return
+  if (row.size > 50 * 1024 * 1024) {
+    ElMessage.warning(`文件大小 (${formatSize(row.size)}) 超过全量在线编辑上限 (50 MB)，请使用查看功能或下载后编辑`)
+    return
+  }
+
+  if (isBinaryFile(row.name)) {
+    try {
+      await ElMessageBox.confirm(
+        `文件「${row.name}」疑似二进制文件，在线编辑可能出现乱码或损坏。是否仍要强制打开？`,
+        '文件格式提示',
+        {
+          confirmButtonText: '强制打开',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      )
+    } catch {
+      return
+    }
+  } else if (row.size > 5 * 1024 * 1024) {
+    try {
+      await ElMessageBox.confirm(
+        `文件「${row.name}」大小约为 ${formatSize(row.size)}，全量加载将下载完整文件至浏览器排版，建议使用直接查看。是否仍要全量打开？`,
+        '全量加载提示',
+        {
+          confirmButtonText: '全量打开',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      )
+    } catch {
+      return
+    }
+  }
+
+  editorFile.value = row
+  showEditor.value = true
+}
+
+async function openFileEditor(row) {
+  if (!row || row.dir) return
+  // If large text file (> 5MB), route to large file dynamic streaming viewer directly
+  if (row.size > 5 * 1024 * 1024 && !isBinaryFile(row.name)) {
+    openLargeFileViewer(row)
+    return
+  }
+  await openFullEditor(row)
 }
 
 async function downloadRow(row) {
@@ -587,6 +745,12 @@ function formatMtime(sec) {
   font-family: var(--font-mono, monospace);
   cursor: pointer;
   transition: all 0.15s ease;
+}
+.bookmark-pill.is-parent-btn {
+  font-weight: 600;
+  color: var(--el-color-primary, #6366f1);
+  background: var(--ws-fill-active, rgba(99, 102, 241, 0.08));
+  border-color: rgba(99, 102, 241, 0.25);
 }
 html.dark .bookmark-pill {
   background: rgba(255, 255, 255, 0.05);
