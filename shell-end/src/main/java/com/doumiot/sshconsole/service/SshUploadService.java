@@ -33,11 +33,11 @@ public class SshUploadService {
                 || ".".equals(name) || "..".equals(name) || total < 0) throw new IOException("无效文件名或文件大小");
         if (uploads.size() >= 256) throw new IOException("未结束的上传过多，请稍后重试");
         SshSessionRegistry.SessionEntry entry = sessionRegistry.get(token);
-        String dir = SshSftpPathResolver.resolveForList(path, entry.getDefaultCwd());
+        String dir = SshSftpPathResolver.resolveForList(path, entry.getDefaultCwd(), entry.getHomeDir());
         String id = UUID.randomUUID().toString();
         Upload upload = new Upload(token, entry, total,
-                SshSftpPathResolver.resolveChildDir(dir, name, entry.getDefaultCwd()),
-                SshSftpPathResolver.resolveChildDir(dir, ".doumi-upload-" + id + ".part", entry.getDefaultCwd()));
+                SshSftpPathResolver.resolveChildDir(dir, name, entry.getDefaultCwd(), entry.getHomeDir()),
+                SshSftpPathResolver.resolveChildDir(dir, ".doumi-upload-" + id + ".part", entry.getDefaultCwd(), entry.getHomeDir()));
         try (SFTPClient sftp = entry.getClient().newSFTPClient();
              RemoteFile ignored = SftpStreams.createTemporary(sftp, upload.temp)) {
             uploads.put(id, upload);

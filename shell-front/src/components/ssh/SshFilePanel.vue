@@ -21,12 +21,16 @@
             </el-breadcrumb-item>
           </el-breadcrumb>
           <div class="quick-bookmarks">
+            <button v-if="canGoParent" type="button" class="bookmark-pill is-parent-btn" title="返回上一级目录" @click="goParent">.. 上一级</button>
             <button type="button" class="bookmark-pill" title="前往家目录" @click="navigateToQuickPath('~')">~ 家目录</button>
             <button type="button" class="bookmark-pill" title="前往根目录" @click="navigateToQuickPath('/')">/ 根</button>
             <button type="button" class="bookmark-pill" title="前往日志目录" @click="navigateToQuickPath('/var/log')">/var/log</button>
             <button type="button" class="bookmark-pill" title="前往配置目录" @click="navigateToQuickPath('/etc')">/etc</button>
             <button type="button" class="bookmark-pill" title="前往临时目录" @click="navigateToQuickPath('/tmp')">/tmp</button>
           </div>
+          <span v-if="items.length" class="items-count-pill" :title="`当前目录共 ${items.length} 项`">
+            共 {{ items.length }} 项<template v-if="filterKeyword && sortedItems.length !== items.length"> (匹配 {{ sortedItems.length }})</template>
+          </span>
         </div>
         <div class="toolbar-actions">
           <el-input
@@ -38,6 +42,36 @@
           />
           <el-button size="small" @click="navigateToPath">前往</el-button>
           <el-button size="small" :loading="loading" @click="refresh">刷新</el-button>
+          <el-dropdown trigger="click" @command="handleSortCommand">
+            <el-button size="small" :title="`当前排序: ${currentSortLabel}`">
+              <el-icon class="el-icon--left"><Sort /></el-icon>
+              <span>{{ currentSortLabel }}</span>
+              <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="name:ascending" :class="{ 'is-active': sortProp === 'name' && sortOrder === 'ascending' }">文件名（A → Z 顺序）</el-dropdown-item>
+                <el-dropdown-item command="name:descending" :class="{ 'is-active': sortProp === 'name' && sortOrder === 'descending' }">文件名（Z → A 倒序）</el-dropdown-item>
+                <el-dropdown-item divided command="mtime:descending" :class="{ 'is-active': sortProp === 'mtime' && sortOrder === 'descending' }">修改时间（最新在前 倒序）</el-dropdown-item>
+                <el-dropdown-item command="mtime:ascending" :class="{ 'is-active': sortProp === 'mtime' && sortOrder === 'ascending' }">修改时间（最早在前 顺序）</el-dropdown-item>
+                <el-dropdown-item divided command="createTime:descending" :class="{ 'is-active': sortProp === 'createTime' && sortOrder === 'descending' }">新增时间（最新在前 倒序）</el-dropdown-item>
+                <el-dropdown-item command="createTime:ascending" :class="{ 'is-active': sortProp === 'createTime' && sortOrder === 'ascending' }">新增时间（最早在前 顺序）</el-dropdown-item>
+                <el-dropdown-item divided command="size:descending" :class="{ 'is-active': sortProp === 'size' && sortOrder === 'descending' }">大小（由大到小 倒序）</el-dropdown-item>
+                <el-dropdown-item command="size:ascending" :class="{ 'is-active': sortProp === 'size' && sortOrder === 'ascending' }">大小（由小到大 顺序）</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-input
+            v-model="filterKeyword"
+            size="small"
+            class="filter-input"
+            placeholder="过滤文件名..."
+            clearable
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
           <el-button size="small" :type="activeTransferCount ? 'primary' : 'default'" plain @click="showTransfers = true">{{ transferButtonLabel }}</el-button>
           <el-button v-if="embedded" size="small" :aria-pressed="showDetails" @click="showDetails=!showDetails">{{ showDetails ? '精简列表' : '详细信息' }}</el-button>
           <el-button size="small" type="primary" @click="showMkdir = true">新建目录</el-button>
@@ -59,56 +93,26 @@
           <span>松开鼠标立即上传到当前目录 ({{ currentPath }})</span>
         </div>
 
-        <el-table
-          v-loading="loading"
-          :data="items"
-          size="small"
-          height="100%"
-          class="file-table"
+        <SshVirtualTable
+          :items="sortedItems"
+          :loading="loading"
+          :embedded="embedded"
+          :show-details="showDetails"
+          :sort-prop="sortProp"
+          :sort-order="sortOrder"
+          :current-path="loadedPath || currentPath"
+          :empty-description="filterKeyword ? '未匹配到相关文件' : '当前目录为空'"
+          @sort-change="onSortChange"
           @row-dblclick="onRowDblClick"
-        >
-          <el-table-column label="名称" min-width="200">
-            <template #default="{ row }">
-              <div class="file-name-cell">
-                <el-icon class="row-ico" :class="{ 'is-dir': row.dir }">
-                  <Folder v-if="row.dir" />
-                  <Document v-else />
-                </el-icon>
-                <span class="file-name-text" :class="{ 'is-dir': row.dir }">{{ row.name }}</span>
-              </div>
-            </template>
-          </el-table-column>
-        <el-table-column label="大小" width="100">
-          <template #default="{ row }">
-            {{ row.dir ? '—' : formatSize(row.size) }}
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!embedded || showDetails" prop="owner" label="属主" width="88" show-overflow-tooltip />
-        <el-table-column v-if="!embedded || showDetails" prop="group" label="属组" width="88" show-overflow-tooltip />
-        <el-table-column v-if="!embedded || showDetails" prop="permissions" label="权限" width="108">
-          <template #default="{ row }">
-            <span class="perm-cell">{{ row.permissions || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!embedded || showDetails" label="修改时间" width="168">
-          <template #default="{ row }">
-            {{ formatMtime(row.mtime) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" :width="embedded ? 210 : 260" fixed="right">
-          <template #default="{ row }">
-            <el-button v-if="!row.dir" link type="primary" size="small" @click="downloadRow(row)">
-              下载
-            </el-button>
-            <el-button v-else link type="primary" size="small" @click="enterDir(row.name)">
-              打开
-            </el-button>
-            <el-button v-if="row.dir" link type="primary" size="small" @click="folderTransfer.openDownload(row)">下载</el-button>
-            <el-button link size="small" @click="openRename(row)">重命名</el-button>
-            <el-button link type="danger" size="small" @click="confirmDelete(row)">删除</el-button>
-          </template>
-        </el-table-column>
-        </el-table>
+          @edit-file="openFileEditor"
+          @force-edit="openFullEditor"
+          @view-standalone="openStandaloneViewer"
+          @download="downloadRow"
+          @open="enterDir"
+          @folder-download="folderTransfer?.openDownload($event)"
+          @rename="openRename"
+          @delete="confirmDelete"
+        />
       </div>
     </template>
 
@@ -148,19 +152,42 @@
         <el-button type="primary" :loading="renameLoading" @click="doRename">确定</el-button>
       </template>
     </el-dialog>
+
+    <SshFileEditorDialog
+      v-model="showEditor"
+      :file="editorFile"
+      :dir="loadedPath || currentPath || defaultCwd || '/'"
+      :session-token="sessionToken"
+      @saved="refresh"
+      @switch-to-stream="openLargeFileViewer"
+    />
+
+    <SshLargeFileViewerDialog
+      v-model="showLargeViewer"
+      :file="largeViewerFile"
+      :dir="loadedPath || currentPath || defaultCwd || '/'"
+      :session-token="sessionToken"
+      @switch-to-editor="openFullEditor"
+    />
   </div>
 </template>
 
 <script setup>
 import { computed, onDeactivated, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Document, Folder, Upload } from '@element-plus/icons-vue'
+import { ArrowDown, Document, Folder, Search, Sort, Upload } from '@element-plus/icons-vue'
 import { sftpDelete, sftpDownloadLarge, sftpList, sftpMkdir, sftpRename, sftpUploadLarge } from '@/api/sshConsole'
 import { useTransfers } from '@/composables/useTransfers'
 import { storeToRefs } from 'pinia'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { isTransferActive, transferErrorMessage, transfersForServer } from '@/composables/transferHistory'
 import FolderTransfer from './FolderTransfer.vue'
+import SshVirtualTable from './SshVirtualTable.vue'
+import SshFileEditorDialog from './SshFileEditorDialog.vue'
+import SshLargeFileViewerDialog from './SshLargeFileViewerDialog.vue'
+import { isDefaultEditableFile, isBinaryFile, isTextFile } from '@/utils/fileTypeHelper'
+import { sortFileList } from '@/utils/fileSorter'
 import { useAiChanges } from '@/composables/useAiChanges'
 useAiChanges(/^(file_|ssh_command)/, () => { if (props.sessionToken) return refresh() })
 
@@ -197,6 +224,7 @@ function clearVisibleTransfers() {
 }
 
 const currentPath = ref('')
+const loadedPath = ref('')
 const pathInput = ref('')
 const items = ref([])
 const loading = ref(false)
@@ -211,6 +239,50 @@ const renameName = ref('')
 const renameTarget = ref(null)
 const renameLoading = ref(false)
 const isDragOver = ref(false)
+const showEditor = ref(false)
+const editorFile = ref(null)
+const showLargeViewer = ref(false)
+const largeViewerFile = ref(null)
+const sortProp = ref(localStorage.getItem('ssh_file_sort_prop') || 'name')
+const sortOrder = ref(localStorage.getItem('ssh_file_sort_order') || 'ascending')
+const filterKeyword = ref('')
+
+const currentSortLabel = computed(() => {
+  const isAsc = sortOrder.value === 'ascending'
+  switch (sortProp.value) {
+    case 'name': return isAsc ? '文件名 (A-Z)' : '文件名 (Z-A)'
+    case 'mtime': return isAsc ? '修改时间 (旧→新)' : '修改时间 (新→旧)'
+    case 'createTime': return isAsc ? '新增时间 (旧→新)' : '新增时间 (新→旧)'
+    case 'size': return isAsc ? '大小 (小→大)' : '大小 (大→小)'
+    default: return '排序'
+  }
+})
+
+function handleSortCommand(command) {
+  if (!command) return
+  const [prop, order] = command.split(':')
+  onSortChange({ prop, order })
+}
+
+function onSortChange({ prop, order }) {
+  sortProp.value = prop
+  sortOrder.value = order
+  try {
+    localStorage.setItem('ssh_file_sort_prop', prop)
+    localStorage.setItem('ssh_file_sort_order', order)
+  } catch {
+    /* ignore storage quota / sandbox */
+  }
+}
+
+const sortedItems = computed(() => {
+  let list = items.value || []
+  const kw = filterKeyword.value.trim().toLowerCase()
+  if (kw) {
+    list = list.filter(item => String(item.name || '').toLowerCase().includes(kw))
+  }
+  return sortFileList(list, { prop: sortProp.value, order: sortOrder.value })
+})
 
 const breadcrumbs = computed(() => {
   const p = currentPath.value
@@ -225,8 +297,12 @@ watch(
     ++listRequest // Invalidate a response even when the next view has no session.
     loading.value = false
     if (accountId !== lastAccount) {
-      currentPath.value='';pathInput.value=props.defaultCwd||'';lastAccount=accountId
-      handledLocation=null;items.value=[]
+      currentPath.value = ''
+      pathInput.value = props.defaultCwd || ''
+      loadedPath.value = ''
+      lastAccount = accountId
+      handledLocation = null
+      items.value = []
     }
     if (!active) return
     if (tok) {
@@ -238,6 +314,22 @@ watch(
   },
   { immediate: true }
 )
+
+const canGoParent = computed(() => {
+  const p = (loadedPath.value || currentPath.value || '').trim()
+  if (!p || p === '/') return false
+  return true
+})
+
+function goParent() {
+  if (!canGoParent.value) return
+  const p = (loadedPath.value || currentPath.value || '/').replace(/\/+$/, '')
+  const lastSlash = p.lastIndexOf('/')
+  const parent = lastSlash <= 0 ? '/' : p.substring(0, lastSlash)
+  currentPath.value = parent
+  pathInput.value = parent
+  refresh()
+}
 
 function goRoot() {
   currentPath.value = props.defaultCwd || '/'
@@ -252,9 +344,21 @@ function goToIndex(idx) {
   refresh()
 }
 
-function enterDir(name) {
-  const base = currentPath.value || props.defaultCwd || '/'
-  const next = base.endsWith('/') ? base + name : `${base}/${name}`
+function enterDir(target) {
+  const name = (typeof target === 'object' && target !== null ? target.name : target)?.trim()
+  if (!name) return
+
+  // Base path is the directory currently loaded and displayed in the table
+  const base = loadedPath.value || currentPath.value || props.defaultCwd || '/'
+  const next = name.startsWith('/')
+    ? name
+    : base.endsWith('/') ? `${base}${name}` : `${base}/${name}`
+
+  // Guard against redundant duplicate navigation while a request is already loading
+  if (loading.value && currentPath.value === next) {
+    return
+  }
+
   currentPath.value = next
   pathInput.value = next
   refresh()
@@ -279,8 +383,9 @@ async function refresh() {
     const pathArg = currentPath.value || pathInput.value || ''
     const data = await sftpList(token, pathArg)
     if (request !== listRequest || token !== props.sessionToken) return
-    currentPath.value = data.path || currentPath.value
-    pathInput.value = currentPath.value
+    loadedPath.value = data.path || pathArg
+    currentPath.value = loadedPath.value
+    pathInput.value = loadedPath.value
     items.value = data.items || []
   } catch (err) {
     if (request !== listRequest || token !== props.sessionToken) return
@@ -289,6 +394,9 @@ async function refresh() {
       // 页面刷新/终端重连时旧 token 会被服务端主动清理；终端 ready
       // 后会自动提供新 token，不在这个过渡窗口弹出全局告警。
       emit('session-invalid')
+    } else {
+      const errMsg = err?.response?.data?.externMessage || err?.response?.data?.message || err?.message || '读取远程目录失败'
+      ElMessage.error(errMsg)
     }
   } finally {
     if (request === listRequest) loading.value = false
@@ -296,7 +404,102 @@ async function refresh() {
 }
 
 function onRowDblClick(row) {
-  if (row.dir) enterDir(row.name)
+  if (row.dir) {
+    enterDir(row.name)
+  } else if (row.size > 5 * 1024 * 1024 && !isBinaryFile(row.name)) {
+    // Large text / log files (> 5MB): open with dynamic chunk streaming viewer
+    openLargeFileViewer(row)
+  } else if (isDefaultEditableFile(row.name, row.size)) {
+    openFileEditor(row)
+  } else {
+    downloadRow(row)
+  }
+}
+
+function openLargeFileViewer(row) {
+  if (!row || row.dir) return
+  largeViewerFile.value = row
+  showLargeViewer.value = true
+}
+
+const router = useRouter()
+
+function openStandaloneViewer(row) {
+  if (!row || row.dir || !props.sessionToken) return
+  const base = loadedPath.value || currentPath.value || props.defaultCwd || '/'
+  const filePath = row.path || (base.endsWith('/') ? `${base}${row.name}` : `${base}/${row.name}`)
+
+  const routeData = router.resolve({
+    path: '/file-viewer',
+    query: {
+      token: props.sessionToken,
+      path: filePath,
+      name: row.name,
+      size: row.size
+    }
+  })
+
+  const width = Math.min(1280, Math.floor(window.screen.availWidth * 0.88))
+  const height = Math.min(860, Math.floor(window.screen.availHeight * 0.88))
+  const left = Math.max(0, Math.floor((window.screen.availWidth - width) / 2))
+  const top = Math.max(0, Math.floor((window.screen.availHeight - height) / 2))
+
+  window.open(
+    routeData.href,
+    `ssh_viewer_${Date.now()}`,
+    `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`
+  )
+}
+
+async function openFullEditor(row) {
+  if (!row || row.dir) return
+  if (row.size > 50 * 1024 * 1024) {
+    ElMessage.warning(`文件大小 (${formatSize(row.size)}) 超过全量在线编辑上限 (50 MB)，请使用查看功能或下载后编辑`)
+    return
+  }
+
+  if (isBinaryFile(row.name)) {
+    try {
+      await ElMessageBox.confirm(
+        `文件「${row.name}」疑似二进制文件，在线编辑可能出现乱码或损坏。是否仍要强制打开？`,
+        '文件格式提示',
+        {
+          confirmButtonText: '强制打开',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      )
+    } catch {
+      return
+    }
+  } else if (row.size > 5 * 1024 * 1024) {
+    try {
+      await ElMessageBox.confirm(
+        `文件「${row.name}」大小约为 ${formatSize(row.size)}，全量加载将下载完整文件至浏览器排版，建议使用直接查看。是否仍要全量打开？`,
+        '全量加载提示',
+        {
+          confirmButtonText: '全量打开',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      )
+    } catch {
+      return
+    }
+  }
+
+  editorFile.value = row
+  showEditor.value = true
+}
+
+async function openFileEditor(row) {
+  if (!row || row.dir) return
+  // If large text file (> 5MB), route to large file dynamic streaming viewer directly
+  if (row.size > 5 * 1024 * 1024 && !isBinaryFile(row.name)) {
+    openLargeFileViewer(row)
+    return
+  }
+  await openFullEditor(row)
 }
 
 async function downloadRow(row) {
@@ -475,6 +678,19 @@ function formatMtime(sec) {
 .path-input {
   width: 220px;
 }
+.filter-input {
+  width: 140px;
+}
+.items-count-pill {
+  font-size: 11px;
+  color: var(--el-text-color-secondary, #909399);
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--el-fill-color-light, rgba(0, 0, 0, 0.04));
+  border: 1px solid var(--el-border-color-lighter, #e4e7ed);
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+}
 .upload-drop {
   flex-shrink: 0;
 }
@@ -494,6 +710,7 @@ function formatMtime(sec) {
 .embedded .toolbar-actions { gap:4px; }
 .embedded .toolbar-actions :deep(.el-button + .el-button) { margin-left:0; }
 .embedded .path-input { width:170px; }
+.embedded .filter-input { width:110px; }
 .embedded .file-table { min-height:70px; }
 .embedded .no-session { padding:0; overflow:auto; }
 .embedded .no-session :deep(.el-empty) { padding:4px; }
@@ -528,6 +745,12 @@ function formatMtime(sec) {
   font-family: var(--font-mono, monospace);
   cursor: pointer;
   transition: all 0.15s ease;
+}
+.bookmark-pill.is-parent-btn {
+  font-weight: 600;
+  color: var(--el-color-primary, #6366f1);
+  background: var(--ws-fill-active, rgba(99, 102, 241, 0.08));
+  border-color: rgba(99, 102, 241, 0.25);
 }
 html.dark .bookmark-pill {
   background: rgba(255, 255, 255, 0.05);

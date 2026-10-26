@@ -140,6 +140,8 @@ public class SshSessionRegistry {
         private String accountRemark;
         /** 账户 default_cwd，SFTP 路径沙箱根（可为空） */
         private String defaultCwd;
+        /** SFTP 用户家目录（惰性解析并缓存，如 /root 或 /home/ubuntu） */
+        private volatile String homeDir;
         private SSHClient client;
         private Session sshSession;
         private Channel terminalChannel;
