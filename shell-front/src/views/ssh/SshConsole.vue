@@ -85,8 +85,8 @@
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item command="group">新建分组</el-dropdown-item>
-                  <el-dropdown-item command="host" :disabled="!selectedGroupId">新建主机</el-dropdown-item>
-                  <el-dropdown-item command="account" :disabled="!selectedHostId">新建账户</el-dropdown-item>
+                  <el-dropdown-item command="host">新建主机</el-dropdown-item>
+                  <el-dropdown-item command="account">新建账户</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -136,11 +136,14 @@
             :load="loadNode"
             :props="treeProps"
             :default-expanded-keys="defaultExpandedKeys"
+            :auto-expand-parent="false"
             :current-node-key="treeCurrentNodeKey"
             :filter-node-method="filterNode"
             :draggable="!filterText"
             :allow-drop="allowTreeDrop"
             @node-click="onNodeClick"
+            @node-expand="onNodeExpand"
+            @node-collapse="onNodeCollapse"
             @node-drag-start="onNodeDragStart"
             @node-drop="onNodeDrop"
           >
@@ -248,8 +251,9 @@
                       <el-dropdown-item command="edit">编辑</el-dropdown-item>
                       <el-dropdown-item v-if="data.nodeType === 'ACCOUNT'" command="terminal">新建终端</el-dropdown-item>
                       <el-dropdown-item v-if="data.nodeType === 'ACCOUNT'" command="test">测试连接</el-dropdown-item>
-                      <el-dropdown-item v-if="data.nodeType === 'GROUP'" command="host">新建主机</el-dropdown-item>
-                      <el-dropdown-item v-if="data.nodeType === 'HOST'" command="account">新建账户</el-dropdown-item>
+                      <el-dropdown-item v-if="data.nodeType === 'GROUP'" command="subgroup">新建子分组</el-dropdown-item>
+                      <el-dropdown-item v-if="data.nodeType === 'GROUP' || data.nodeType === 'HOST' || data.nodeType === 'ACCOUNT'" command="host">新建主机</el-dropdown-item>
+                      <el-dropdown-item v-if="data.nodeType === 'HOST' || data.nodeType === 'ACCOUNT'" command="account">新建账户</el-dropdown-item>
                       <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
                     </el-dropdown-menu>
                   </template>
@@ -530,6 +534,22 @@
               >
                 🚀 快速打开终端
               </el-button>
+              <el-button
+                v-if="detail.type === 'GROUP'"
+                type="primary"
+                plain
+                @click="openAddHost(detail.raw.id)"
+              >
+                + 新建主机
+              </el-button>
+              <el-button
+                v-if="detail.type === 'HOST'"
+                type="primary"
+                plain
+                @click="openAddHost(detail.raw.groupId)"
+              >
+                + 新建主机
+              </el-button>
               <el-button type="primary" @click="openEditFromDetail">编辑</el-button>
               <el-button type="danger" plain @click="confirmDeleteDetail">删除</el-button>
             </div>
@@ -599,13 +619,12 @@
     <el-dialog v-model="hostDlg" :title="hostForm.id ? '编辑主机' : '新建主机'" width="520px" destroy-on-close><el-scrollbar max-height="65vh">
       <el-form ref="hostFormRef" :model="hostForm" :rules="hostRules" label-width="88px">
         <el-form-item label="分组" prop="groupId">
-          <el-input v-if="hostGroupLocked" :model-value="hostGroupLabel" disabled />
           <el-tree-select
-            v-else
             v-model="hostForm.groupId"
             :data="hostGroupTree"
             check-strictly
             filterable
+            clearable
             placeholder="选择所属分组"
             style="width: 100%"
             :render-after-expand="false"
@@ -613,13 +632,13 @@
           />
         </el-form-item>
         <el-form-item label="展示名" prop="name">
-          <el-input v-model="hostForm.name" maxlength="128" />
+          <el-input v-model="hostForm.name" maxlength="128" placeholder="如：测试服、业务网关、DB主库" clearable />
         </el-form-item>
         <el-form-item label="地址" prop="host">
-          <el-input v-model="hostForm.host" placeholder="IP 或域名" />
+          <el-input v-model="hostForm.host" placeholder="IP（IPv4/IPv6）或域名" clearable />
         </el-form-item>
-        <el-form-item label="端口">
-          <el-input-number v-model="hostForm.port" :min="1" :max="65535" />
+        <el-form-item label="端口" prop="port">
+          <el-input-number v-model="hostForm.port" :min="1" :max="65535" controls-position="right" style="width: 100%" />
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="hostForm.enabled" :active-value="1" :inactive-value="0" />
@@ -640,12 +659,33 @@
     <!-- 账户 -->
     <el-dialog v-model="accountDlg" :title="accountForm.id ? '编辑账户' : '新建账户'" width="560px" destroy-on-close><el-scrollbar max-height="65vh">
       <el-form ref="accountFormRef" :model="accountForm" :rules="accountRules" label-width="100px">
-        <el-form-item label="主机" prop="hostId">
-          <el-input v-if="accountHostLocked" :model-value="accountHostLabel" disabled />
-          <el-input-number v-else v-model="accountForm.hostId" :min="1" style="width: 100%;" />
+        <el-form-item label="所属主机" prop="hostId">
+          <el-select
+            v-model="accountForm.hostId"
+            filterable
+            clearable
+            placeholder="请选择所属主机"
+            style="width: 100%"
+            popper-class="ssh-host-select-popper"
+          >
+            <el-option
+              v-for="h in hostOptions"
+              :key="h.id"
+              :label="`${h.name} (${h.host}:${h.port})`"
+              :value="h.id"
+            >
+              <div class="host-select-option">
+                <div class="host-select-left">
+                  <span class="host-select-name">{{ h.name }}</span>
+                  <span class="host-select-addr font-mono-code">{{ h.host }}:{{ h.port }}</span>
+                </div>
+                <el-tag size="small" type="info" effect="plain" class="host-select-group">{{ h.groupPath }}</el-tag>
+              </div>
+            </el-option>
+          </el-select>
         </el-form-item>
         <el-form-item label="用户名" prop="username">
-          <el-input v-model="accountForm.username" maxlength="64" />
+          <el-input v-model="accountForm.username" maxlength="64" placeholder="SSH 登录用户名，如 root" clearable />
         </el-form-item>
         <el-form-item label="认证方式" prop="authType">
           <el-select v-model="accountForm.authType" style="width: 100%;">
@@ -809,6 +849,10 @@ import {
   getTabMiniHost,
   getTabThemeStyle
 } from '@/utils/sshConsoleStorage'
+import {
+  validateHostAddressRule,
+  validateHostPortRule
+} from '@/utils/hostValidator'
 
 const savedAccount = readSavedSshAccount()
 const { managedServer } = storeToRefs(useWorkspaceStore())
@@ -925,14 +969,11 @@ const groupNameById = ref({})
 const hostDlg = ref(false)
 const hostForm = ref({})
 const hostFormRef = ref(null)
-const hostGroupLocked = ref(false)
-const hostGroupLabel = ref('')
 
 const accountDlg = ref(false)
 const accountForm = ref({})
 const accountFormRef = ref(null)
-const accountHostLocked = ref(false)
-const accountHostLabel = ref('')
+const hostOptions = ref([])
 const secretPassword = ref('')
 const secretPrivateKey = ref('')
 const secretPassphrase = ref('')
@@ -946,7 +987,7 @@ const terminalVisited = ref(accountTab.value === 'terminal')
 const scriptsVisited = ref(accountTab.value === 'scripts')
 watch(accountTab, tab => { if (tab === 'scripts') scriptsVisited.value = true })
 watch(accountTab, tab => { if (tab === 'terminal') terminalVisited.value = true })
-const accountHostMeta = ref({ name: '', remark: '' })
+const accountHostMeta = ref({ name: '', remark: '', host: '', port: 22, groupId: null })
 const sessionToken = ref('')
 const terminalTabs = ref([])
 const activeTerminalId = ref(null)
@@ -1041,12 +1082,19 @@ function handleTerminalAskAi(prompt) {
 
 const groupRules = { name: [{ required: true, message: '请输入名称', trigger: 'blur' }] }
 const hostRules = {
-  groupId: [{ required: true, message: '请选择分组', trigger: 'change' }],
+  groupId: [{ required: true, message: '请选择所属分组', trigger: 'change' }],
   name: [{ required: true, message: '请输入展示名', trigger: 'blur' }],
-  host: [{ required: true, message: '请输入地址', trigger: 'blur' }]
+  host: [
+    { required: true, message: '请输入主机地址（IP 或域名）', trigger: 'blur' },
+    { validator: validateHostAddressRule, trigger: ['blur', 'change'] }
+  ],
+  port: [
+    { required: true, message: '请输入 SSH 端口号', trigger: 'blur' },
+    { validator: validateHostPortRule, trigger: ['blur', 'change'] }
+  ]
 }
 const accountRules = {
-  hostId: [{ required: true, message: 'hostId 必填', trigger: 'change' }],
+  hostId: [{ required: true, message: '请选择所属主机', trigger: 'change' }],
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   authType: [{ required: true, message: '请选择认证方式', trigger: 'change' }]
 }
@@ -1055,7 +1103,10 @@ const selectedGroupId = computed(() => {
   const n = selectedNode.value
   if (!n) return null
   if (n.nodeType === 'GROUP') return n.id
-  if (n.nodeType === 'HOST') return n.extra?.groupId
+  if (n.nodeType === 'HOST') return n.extra?.groupId ?? null
+  if (n.nodeType === 'ACCOUNT') {
+    return n.extra?.groupId ?? accountHostMeta.value?.groupId ?? null
+  }
   return null
 })
 
@@ -1063,7 +1114,9 @@ const selectedHostId = computed(() => {
   const n = selectedNode.value
   if (!n) return null
   if (n.nodeType === 'HOST') return n.id
-  if (n.nodeType === 'ACCOUNT') return n.extra?.hostId
+  if (n.nodeType === 'ACCOUNT') {
+    return n.extra?.hostId ?? detail.value.raw?.hostId ?? null
+  }
   return null
 })
 
@@ -1147,7 +1200,10 @@ async function restoreSavedAccount() {
     key: `a:${acc.id}`,
     label: acc.username,
     leaf: true,
-    extra: { hostId: acc.hostId }
+    extra: {
+      hostId: acc.hostId,
+      groupId: groupId ?? null
+    }
   }
   selectedNode.value = node
   treeCurrentNodeKey.value = node.key
@@ -1159,7 +1215,7 @@ async function restoreSavedAccount() {
   if (keys.length && treeRef.value?.setExpandedKeys) {
     treeRef.value.setExpandedKeys(keys)
   }
-  treeRef.value?.setCurrentKey?.(node.key)
+  treeRef.value?.setCurrentKey?.(node.key, false)
 }
 
 function hasCustomHostName(data) {
@@ -1234,12 +1290,48 @@ function filterNode(value, data) {
     .some(field => String(field || '').toLocaleLowerCase().includes(v))
 }
 
+function checkHighlightCurrent(list) {
+  if (treeCurrentNodeKey.value && (list || []).some((n) => n.key === treeCurrentNodeKey.value)) {
+    nextTick(() => {
+      treeRef.value?.setCurrentKey?.(treeCurrentNodeKey.value, false)
+      const el = treeRef.value?.$el?.querySelector('.is-current')
+      el?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+    })
+  }
+}
+
+function onNodeExpand(data) {
+  if (data?.key) {
+    if (!defaultExpandedKeys.value.includes(data.key)) {
+      defaultExpandedKeys.value.push(data.key)
+    }
+  }
+}
+
+function onNodeCollapse(data, node) {
+  if (data?.key) {
+    const toRemove = new Set([data.key])
+    function collectChildKeys(n) {
+      if (n && n.childNodes) {
+        for (const child of n.childNodes) {
+          if (child.data?.key) toRemove.add(child.data.key)
+          collectChildKeys(child)
+        }
+      }
+    }
+    collectChildKeys(node)
+    defaultExpandedKeys.value = defaultExpandedKeys.value.filter((k) => !toRemove.has(k))
+  }
+}
+
 async function loadNode(node, resolve) {
   if (node.level === 0) {
     treeLoading.value = true
     try {
       const list = await fetchTreeChildren('ROOT')
-      resolve(mapNodes(list))
+      const mapped = mapNodes(list)
+      resolve(mapped)
+      checkHighlightCurrent(mapped)
     } catch {
       resolve([])
     } finally {
@@ -1250,9 +1342,23 @@ async function loadNode(node, resolve) {
   const data = node.data
   try {
     if (data.nodeType === 'GROUP') {
-      resolve(mapNodes(await fetchTreeChildren('GROUP', data.id)))
+      const list = await fetchTreeChildren('GROUP', data.id)
+      const mapped = mapNodes(list)
+      resolve(mapped)
+      checkHighlightCurrent(mapped)
     } else if (data.nodeType === 'HOST') {
-      resolve(mapNodes(await fetchTreeChildren('HOST', data.id)))
+      const list = await fetchTreeChildren('HOST', data.id)
+      const mapped = (list || []).map((child) => ({
+        ...child,
+        leaf: child.leaf === true,
+        extra: {
+          ...child.extra,
+          hostId: child.extra?.hostId ?? data.id,
+          groupId: child.extra?.groupId ?? data.extra?.groupId ?? null
+        }
+      }))
+      resolve(mapped)
+      checkHighlightCurrent(mapped)
     } else {
       resolve([])
     }
@@ -1343,15 +1449,29 @@ async function onNodeDrop(draggingNode, dropNode, dropType) {
   }
 }
 
-function refreshTree() {
+async function refreshTree(targetNode = null) {
+  const explicitTarget = targetNode && typeof targetNode === 'object' && targetNode.nodeType ? targetNode : null
+  if (explicitTarget) {
+    selectedNode.value = explicitTarget
+    treeCurrentNodeKey.value = explicitTarget.key
+  }
   const current = selectedNode.value
+
+  const expandedSet = new Set(defaultExpandedKeys.value || [])
+  if (current?.nodeType && current.id != null) {
+    try {
+      const neededKeys = await resolveSshExpandedKeys(current, { getGroup, getHost })
+      for (const k of neededKeys) expandedSet.add(k)
+    } catch { /* ignore */ }
+  }
+  defaultExpandedKeys.value = Array.from(expandedSet)
   treeVersion.value += 1
   detail.value = { type: null, raw: null }
   nextTick(async () => {
     if (current?.nodeType && current.id != null) {
       await loadDetail(current)
       treeCurrentNodeKey.value = current.key
-      treeRef.value?.setCurrentKey?.(current.key)
+      treeRef.value?.setCurrentKey?.(current.key, false)
     } else {
       await restoreSavedAccount()
     }
@@ -1366,14 +1486,22 @@ function onNodeClick(data) {
 
 async function connectHostAccount(acc) {
   if (!acc?.id) return
-  await loadDetail({
+  const node = {
     nodeType: 'ACCOUNT',
     id: acc.id,
     key: `a:${acc.id}`,
     label: acc.label || acc.username,
     leaf: true,
-    extra: { hostId: detail.value.raw?.id }
-  })
+    extra: {
+      ...(acc.extra || {}),
+      hostId: detail.value.raw?.id,
+      groupId: detail.value.raw?.groupId ?? null
+    }
+  }
+  selectedNode.value = node
+  treeCurrentNodeKey.value = node.key
+  treeRef.value?.setCurrentKey?.(node.key, false)
+  await loadDetail(node)
   if (route.meta.panel !== 'terminal') {
     router.push('/terminal')
   }
@@ -1407,14 +1535,9 @@ async function loadDetail(data) {
         openedTab.hostAddress = hostMeta.host
         openedTab.label = terminalTabLabel(raw, hostMeta)
       }
-      let groupId = null
-      if (raw.hostId) {
-        try {
-          const h = await getHost(raw.hostId)
-          groupId = h?.groupId ?? null
-        } catch {
-          groupId = null
-        }
+      const groupId = hostMeta?.groupId ?? null
+      if (data.extra) {
+        data.extra.groupId = groupId
       }
       await persistAccountSelection(data, groupId)
     }
@@ -1431,15 +1554,22 @@ async function loadDetail(data) {
 
 async function loadAccountHostMeta(hostId) {
   if (!hostId) {
-    accountHostMeta.value = { name: '', remark: '' }
+    accountHostMeta.value = { name: '', remark: '', host: '', port: 22, groupId: null }
     return accountHostMeta.value
   }
   try {
     const h = await getHost(hostId)
-    accountHostMeta.value = { name: h.name || '', remark: h.remark || '', host: h.host || '', port: h.port || 22 }
+    accountHostMeta.value = {
+      id: h.id,
+      name: h.name || '',
+      remark: h.remark || '',
+      host: h.host || '',
+      port: h.port || 22,
+      groupId: h.groupId ?? null
+    }
     return accountHostMeta.value
   } catch {
-    accountHostMeta.value = { name: '', remark: '' }
+    accountHostMeta.value = { name: '', remark: '', host: '', port: 22, groupId: null }
     return accountHostMeta.value
   }
 }
@@ -1898,8 +2028,21 @@ function onNodeAction(command, data) {
     else editAccountNode(data)
     return
   }
-  if (command === 'host') return openAddHost(data.id)
-  if (command === 'account') return openAddAccount(data.id)
+  if (command === 'subgroup') return openAddGroup(data.id)
+  if (command === 'host') {
+    if (data.nodeType === 'GROUP') return openAddHost(data.id)
+    if (data.nodeType === 'HOST') return openAddHost(data.extra?.groupId)
+    if (data.nodeType === 'ACCOUNT') {
+      const gId = data.extra?.groupId || accountHostMeta.value?.groupId || null
+      return openAddHost(gId)
+    }
+    return openAddHost(null)
+  }
+  if (command === 'account') {
+    if (data.nodeType === 'HOST') return openAddAccount(data.id)
+    if (data.nodeType === 'ACCOUNT') return openAddAccount(data.extra?.hostId)
+    return openAddAccount(null)
+  }
   if (command === 'delete') {
     loadDetail(data)
     nextTick(() => confirmDeleteDetail())
@@ -1941,7 +2084,7 @@ async function openNewAccountTerminal(data) {
 }
 
 function onAddCommand(cmd) {
-  if (cmd === 'group') openAddGroup()
+  if (cmd === 'group') openAddGroup(null)
   else if (cmd === 'host') openAddHost(selectedGroupId.value)
   else if (cmd === 'account') openAddAccount(selectedHostId.value)
 }
@@ -2050,26 +2193,40 @@ async function refreshGroupParentOptions(editingGroupId) {
   }
 }
 
-async function resolveHostLabel(hostId) {
-  if (hostId == null) return ''
-  const n = selectedNode.value
-  if (n?.nodeType === 'HOST' && n.id === hostId) {
-    const addr = n.extra?.host && n.extra?.port ? ` (${n.extra.host}:${n.extra.port})` : ''
-    return `${n.label}${addr}`
-  }
+async function refreshHostOptions() {
   try {
-    const h = await getHost(hostId)
-    return `${h.name} (${h.host}:${h.port ?? 22})`
+    const list = []
+    async function walk(parentType, parentId, groupPath = '') {
+      const children = await fetchTreeChildren(parentType, parentId)
+      for (const n of children || []) {
+        if (n.nodeType === 'GROUP') {
+          const curPath = groupPath ? `${groupPath} / ${n.label}` : n.label
+          await walk('GROUP', n.id, curPath)
+        } else if (n.nodeType === 'HOST') {
+          list.push({
+            id: n.id,
+            name: n.label,
+            host: n.extra?.host || '',
+            port: n.extra?.port || 22,
+            groupId: parentId,
+            groupPath: groupPath || '默认分组',
+            label: `${n.label} (${n.extra?.host || ''}:${n.extra?.port || 22})`
+          })
+        }
+      }
+    }
+    await walk('ROOT')
+    hostOptions.value = list
+    return list
   } catch {
-    return `主机 #${hostId}`
+    hostOptions.value = []
+    return []
   }
 }
 
-async function openAddGroup() {
+async function openAddGroup(defaultParentId = null) {
   await refreshGroupParentOptions(null)
-  const defaultParent =
-    selectedNode.value?.nodeType === 'GROUP' ? selectedNode.value.id : null
-  groupForm.value = { parentId: defaultParent, name: '', remark: '', sortOrder: 0 }
+  groupForm.value = { parentId: defaultParentId, name: '', remark: '', sortOrder: 0 }
   groupDlg.value = true
 }
 
@@ -2080,35 +2237,56 @@ async function editGroupNode(data) {
   groupDlg.value = true
 }
 
-async function openAddHost(groupId) {
+async function openAddHost(groupId = null) {
   await refreshGroupParentOptions(null)
-  const locked = groupId != null
-  hostGroupLocked.value = locked
-  const fallback =
-    selectedNode.value?.nodeType === 'GROUP' && selectedNode.value.id === groupId
-      ? selectedNode.value.label
-      : ''
-  hostGroupLabel.value = locked ? groupDisplayName(groupId, fallback) : ''
-  hostForm.value = { groupId, name: '', host: '', port: 22, remark: '', sortOrder: 0, enabled: 1 }
+  let defaultGroupId =
+    groupId != null
+      ? groupId
+      : (selectedGroupId.value || null)
+  if (!defaultGroupId && selectedNode.value?.nodeType === 'ACCOUNT') {
+    const hostId = selectedNode.value.extra?.hostId || detail.value.raw?.hostId
+    if (hostId) {
+      try {
+        const h = await getHost(hostId)
+        defaultGroupId = h?.groupId ?? null
+      } catch {
+        // ignore
+      }
+    }
+  }
+  hostForm.value = {
+    groupId: defaultGroupId,
+    name: '',
+    host: '',
+    port: 22,
+    remark: '',
+    sortOrder: 0,
+    enabled: 1
+  }
   hostDlg.value = true
 }
 
 async function editHostNode(data) {
   await refreshGroupParentOptions(null)
   const h = await getHost(data.id)
-  hostGroupLocked.value = false
   hostForm.value = { ...h, port: h.port ?? 22 }
   hostDlg.value = true
 }
 
-async function openAddAccount(hostId) {
-  accountHostLocked.value = hostId != null
-  accountHostLabel.value = hostId != null ? await resolveHostLabel(hostId) : ''
+async function openAddAccount(hostId = null) {
+  await refreshHostOptions()
+  let defaultHostId =
+    hostId != null
+      ? hostId
+      : (selectedHostId.value || null)
+  if (!defaultHostId && selectedNode.value?.nodeType === 'ACCOUNT') {
+    defaultHostId = selectedNode.value.extra?.hostId || detail.value.raw?.hostId || null
+  }
   secretPassword.value = ''
   secretPrivateKey.value = ''
   secretPassphrase.value = ''
   accountForm.value = {
-    hostId,
+    hostId: defaultHostId,
     username: '',
     authType: 'PASSWORD',
     defaultCwd: '',
@@ -2120,9 +2298,8 @@ async function openAddAccount(hostId) {
 }
 
 async function editAccountNode(data) {
+  await refreshHostOptions()
   const a = await getAccount(data.id)
-  accountHostLocked.value = true
-  accountHostLabel.value = await resolveHostLabel(a.hostId)
   secretPassword.value = ''
   secretPrivateKey.value = ''
   secretPassphrase.value = ''
@@ -2143,10 +2320,21 @@ async function saveGroup() {
   saving.value = true
   try {
     const body = { ...groupForm.value }
-    if (body.id) await updateGroup(body.id, body)
-    else await createGroup(body)
+    let saved
+    if (body.id) saved = await updateGroup(body.id, body)
+    else saved = await createGroup(body)
     groupDlg.value = false
-    refreshTree()
+    const node = {
+      nodeType: 'GROUP',
+      id: saved.id,
+      key: `g:${saved.id}`,
+      label: saved.name,
+      remark: saved.remark,
+      parentId: saved.parentId ?? null,
+      leaf: false,
+      extra: {}
+    }
+    await refreshTree(node)
   } finally {
     saving.value = false
   }
@@ -2157,10 +2345,30 @@ async function saveHost() {
   saving.value = true
   try {
     const body = { ...hostForm.value }
-    if (body.id) await updateHost(body.id, body)
-    else await createHost(body)
+    if (body.host) body.host = String(body.host).trim()
+    if (body.port) body.port = Number(body.port)
+    let saved
+    if (body.id) saved = await updateHost(body.id, body)
+    else saved = await createHost(body)
     hostDlg.value = false
-    refreshTree()
+    const port = saved.port != null ? saved.port : 22
+    const node = {
+      nodeType: 'HOST',
+      id: saved.id,
+      key: `h:${saved.id}`,
+      label: saved.name,
+      remark: saved.remark,
+      groupId: saved.groupId,
+      leaf: false,
+      extra: {
+        endpoint: `${saved.host}:${port}`,
+        host: saved.host,
+        port,
+        groupId: saved.groupId,
+        enabled: saved.enabled
+      }
+    }
+    await refreshTree(node)
   } finally {
     saving.value = false
   }
@@ -2191,11 +2399,38 @@ async function saveAccount() {
   saving.value = true
   try {
     const body = { ...accountForm.value }
+    if (body.username) body.username = String(body.username).trim()
+    if (body.hostId) body.hostId = Number(body.hostId)
     if (secret !== undefined) body.secret = secret
-    if (body.id) await updateAccount(body.id, body)
-    else await createAccount(body)
+    let saved
+    if (body.id) saved = await updateAccount(body.id, body)
+    else saved = await createAccount(body)
     accountDlg.value = false
-    refreshTree()
+    let hostGroupId = null
+    if (saved.hostId) {
+      try {
+        const h = await getHost(saved.hostId)
+        hostGroupId = h?.groupId ?? null
+      } catch {
+        // ignore
+      }
+    }
+    const node = {
+      nodeType: 'ACCOUNT',
+      id: saved.id,
+      key: `a:${saved.id}`,
+      label: saved.username,
+      remark: saved.remark,
+      hostId: saved.hostId,
+      leaf: true,
+      extra: {
+        authType: saved.authType,
+        hostId: saved.hostId,
+        groupId: hostGroupId,
+        enabled: saved.enabled
+      }
+    }
+    await refreshTree(node)
   } finally {
     saving.value = false
   }
@@ -2210,7 +2445,7 @@ async function testAccountConnection() {
     return
   }
   if (!form.hostId) {
-    ElMessage.warning('未能识别当前所属主机')
+    ElMessage.warning('请先选择所属主机')
     return
   }
   const secret = buildSecretPayload()
@@ -2280,9 +2515,13 @@ async function confirmDeleteDetail() {
     if (saved?.id === n.id) clearSavedSshAccount()
     await deleteAccount(n.id)
   }
+  if (n.key) {
+    defaultExpandedKeys.value = defaultExpandedKeys.value.filter((k) => k !== n.key)
+  }
   detail.value = { type: null, raw: null }
   treeCurrentNodeKey.value = null
-  refreshTree()
+  selectedNode.value = null
+  await refreshTree()
 }
 
 async function isHostInsideGroup(hostId, groupId) {
@@ -3409,6 +3648,41 @@ async function isHostInsideGroup(hostId, groupId) {
   height: auto;
   padding-top: 4px;
   padding-bottom: 4px;
+}
+
+/* 主机下拉选择项 */
+.ssh-host-select-popper .el-select-dropdown__item {
+  height: auto !important;
+  line-height: normal !important;
+  padding: 8px 12px !important;
+}
+.host-select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+.host-select-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.host-select-name {
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+  white-space: nowrap;
+}
+.host-select-addr {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+}
+.host-select-group {
+  font-size: 11px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 /* 树节点富文本提示悬浮卡片 */
