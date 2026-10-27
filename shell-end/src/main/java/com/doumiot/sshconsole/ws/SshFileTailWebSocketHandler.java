@@ -98,13 +98,14 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
         long offset=number(frame,"offset"); if(offset<0) throw new IOException("无效的 Tail 字节偏移");
         String encoding=frame.path("encoding").asText("UTF-8");
         String scanId=frame.path("scanId").asText("");
+        byte[] expectedAnchor=anchor(frame,offset);
         Tail tail=new Tail(UUID.randomUUID().toString(),token,path,encoding,offset);
         synchronized(tail) {
             synchronized(tails) {
                 if(tails.size()>=MAX_TAILS) throw new IOException("实时 Tail 数量已达上限，请关闭其他 Tail");
                 tails.put(tail.id,tail);
             }
-            tail.scanId=scanId; tail.lastHeartbeat=clock.millis();
+            tail.scanId=scanId; tail.anchor=expectedAnchor; tail.lastHeartbeat=clock.millis();
             tail.control=new Control(socket); tail.socket=socket; sockets.put(socket.getId(),tail);
             deliver(tail,ready(tail)); // The client can resume even if paused before initialization.
             request(tail,true); // Opening and decoder seeding belong on the read worker.
@@ -204,7 +205,11 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
                         tail.lease=filters.claimTail(tail.token,tail.scanId);tail.path=tail.lease.path();tail.offset=tail.lease.offset();
                     }
                     if(!open(tail)) return;
-                    if(tail.lease==null) tail.normal=new NormalReader(control.handle.get(),tail.offset,tail.encoding);
+                    if(tail.lease==null) {
+                        tail.normal=new NormalReader(control.handle.get(),tail.offset,tail.encoding);
+                        byte[] boundary=tail.normal.boundary;
+                        if(tail.anchor.length>boundary.length || !Arrays.equals(tail.anchor,Arrays.copyOfRange(boundary,boundary.length-tail.anchor.length,boundary.length))) throw changed();
+                    }
                     tail.initialized=true;
                     tail.nextCheckAt=clock.millis();return;
                 }
@@ -282,6 +287,16 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
         try {writers.execute(()->{try {if(socket.isOpen())socket.close(CloseStatus.NORMAL);}catch(IOException ignored){}});}
         catch(RejectedExecutionException ignored) {}
     }
+    private static byte[] anchor(JsonNode frame,long offset) throws IOException {
+        JsonNode value=frame.get("anchorBase64");
+        if(value==null) return new byte[0];
+        if(!value.isTextual() || value.asText().length()>5464) throw new IOException("无效的 Tail 文件校验边界");
+        final byte[] bytes;
+        try {bytes=Base64.getDecoder().decode(value.asText());}
+        catch(IllegalArgumentException error) {throw new IOException("无效的 Tail 文件校验边界",error);}
+        if(bytes.length>ANCHOR || bytes.length>offset) throw new IOException("无效的 Tail 文件校验边界");
+        return bytes;
+    }
     private static String required(JsonNode frame,String name) throws IOException { JsonNode value=frame.get(name); if(value==null || !value.isTextual() || value.asText().isEmpty()) throw new IOException("缺少 Tail 参数: "+name); return value.asText(); }
     private static long number(JsonNode frame,String name) throws IOException { JsonNode value=frame.get(name); if(value==null || !value.isIntegralNumber() || !value.canConvertToLong()) throw new IOException("无效的 Tail 参数: "+name); return value.asLong(); }
     private static long sequence(JsonNode frame) throws IOException { long value=number(frame,"sequence"); if(value<0) throw new IOException("无效的 Tail 序号"); return value; }
@@ -289,6 +304,7 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
     private static final class Tail {
         final String id,token,encoding; String path;
         long offset,sequence,acknowledged,disconnectedAt,lastHeartbeat;
+        byte[] anchor=new byte[0];
         boolean limited,pendingSent,catchup,initialized; String pending,scanId="";
         int interval=200;
         volatile long nextCheckAt; long readAt;

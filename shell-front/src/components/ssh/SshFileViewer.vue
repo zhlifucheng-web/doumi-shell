@@ -303,8 +303,13 @@ function setFollowing(value) {
   else {
     tailStarted = true
     tail.start({ sessionToken: viewerSession.token, path: props.path, encoding: selectedEncoding.value,
-      offset: filter.active.value ? filter.offset.value : rangeEnd.value, ...(filter.active.value ? filter.tailSource() : {}) })
+      offset: filter.active.value ? filter.offset.value : rangeEnd.value,
+      ...(filter.active.value ? filter.tailSource() : { anchorBase64: tailAnchor() }) })
   }
+}
+function tailAnchor() {
+  const bytes = chunks.value.at(-1)?.bytes
+  return bytes?.length ? btoa(String.fromCharCode(...bytes.subarray(Math.max(0, bytes.length - 4096)))) : undefined
 }
 function onViewerScroll() {
   const el = viewerBodyRef.value

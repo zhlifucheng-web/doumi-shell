@@ -354,3 +354,12 @@ test('transient recovery failure schedules one retry and pause cancels it until 
   } finally { viewer.unmount() }
   assert.equal(viewer.timers.size, 0)
 })
+
+
+test('new normal Tail carries the HTTP byte boundary so startup cannot silently skip a replaced file', async () => {
+  const viewer = mountViewer()
+  try {
+    await flush()
+    assert.equal(viewer.sockets[0].sent[0].anchorBase64, 'aGVsbG8K')
+  } finally { viewer.unmount() }
+})

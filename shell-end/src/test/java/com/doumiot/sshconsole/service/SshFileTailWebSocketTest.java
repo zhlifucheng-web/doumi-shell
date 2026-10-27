@@ -138,6 +138,11 @@ class SshFileTailWebSocketTest {
         pathMissing=true; start(2,null);
         assertEquals("FILE_CHANGED",last().path("code").asText()); assertEquals(opened,closed);
     }
+    @Test void replacementBetweenHttpReadAndTailOpenIsDetectedByExpectedBoundary() throws Exception {
+        bytes="b\n".getBytes(StandardCharsets.UTF_8);
+        send(socket,"{\"type\":\"start\",\"sessionToken\":\"owner\",\"path\":\"/app.log\",\"offset\":2,\"anchorBase64\":\"YQo=\"}");
+        assertEquals("FILE_CHANGED",last().path("code").asText()); assertEquals(opened,closed);
+    }
     @Test void quietAndPausedStreamsSendHeartbeatWithoutReopeningSftp() throws Exception {
         start(2,null);clock.millis+=15001;check();assertEquals("heartbeat",last().path("type").asText());assertEquals(1,opened);
         send(socket,"{\"type\":\"pause\"}");clock.millis+=15001;check();assertEquals("heartbeat",last().path("type").asText());assertEquals(0,closed);
