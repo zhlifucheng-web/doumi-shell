@@ -88,6 +88,10 @@ export function fetchTreeChildren(parentType, parentId) {
   return get(`${BASE}/tree/children`, params, { showSuccess: false })
 }
 
+export function fetchSearchTargets() {
+  return get(`${BASE}/tree/search-targets`, {}, { showSuccess: false })
+}
+
 export function moveTreeNode(body) {
   return patch(`${BASE}/tree/reorder`, body)
 }

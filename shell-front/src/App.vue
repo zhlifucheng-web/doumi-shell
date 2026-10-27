@@ -32,6 +32,22 @@
         </div>
       </div>
 
+      <!-- 中间：全局快捷命令面板 (Ctrl+K / ⌘K) 入口 -->
+      <div class="header-center">
+        <button
+          type="button"
+          class="command-palette-btn"
+          :title="`打开全局检索与命令面板 · ${isMac ? '⌘K' : 'Ctrl+K'}`"
+          @click="commandPaletteOpen = true"
+        >
+          <div class="command-palette-placeholder">
+            <el-icon class="search-ico"><Search /></el-icon>
+            <span>搜索主机、IP、操作命令、询问 AI...</span>
+          </div>
+          <kbd class="kbd-badge font-mono-code">{{ isMac ? '⌘K' : 'Ctrl+K' }}</kbd>
+        </button>
+      </div>
+
       <!-- 右侧：功能路由导航与主题切换 -->
       <div class="header-right">
         <!-- 路由切换胶囊组 (Segmented Control) -->
@@ -133,6 +149,12 @@
     <ThemeBackground v-model="backgroundDialog" />
     <TerminalThemeDialog v-model="workspaceStore.terminalThemeOpen" />
     <AiAssistant v-model="aiDialog" />
+    <CommandPalette
+      v-model="commandPaletteOpen"
+      @select-target="onSelectTargetFromPalette"
+      @action="onPaletteAction"
+      @ask-ai="onPaletteAskAi"
+    />
   </div>
 </template>
 
@@ -140,13 +162,14 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, Brush, InfoFilled, MagicStick, Monitor, Moon, QuestionFilled, Sunny } from '@element-plus/icons-vue'
+import { ArrowDown, Brush, InfoFilled, MagicStick, Monitor, Moon, QuestionFilled, Search, Sunny } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useBackground } from '@/composables/useBackground'
 import ThemeBackground from '@/components/ThemeBackground.vue'
 import TerminalThemeDialog from '@/components/ssh/TerminalThemeDialog.vue'
 import AiAssistant from '@/components/AiAssistant.vue'
+import CommandPalette from '@/components/CommandPalette.vue'
 import AppStatusBar from '@/components/AppStatusBar.vue'
 import PwaInstall from '@/components/PwaInstall.vue'
 import { useReleaseStore } from '@/stores/release'
@@ -172,6 +195,8 @@ watchEffect(() => {
 
 const backgroundDialog = ref(false)
 const aiDialog = ref(false)
+const commandPaletteOpen = ref(false)
+const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
 const AI_AUTO_OPEN_KEY = 'doumi-ai-auto-open'
 const hasUpdate = computed(() => Boolean(latestRelease.value?.newer))
 releaseStore.check().catch(() => { /* The About page reports failures and always offers manual downloads. */ })
@@ -184,7 +209,44 @@ function onGlobalKeydown(event) {
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'k' && !event.altKey && !event.metaKey) {
     event.preventDefault()
     aiDialog.value = !aiDialog.value
+  } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k' && !event.altKey && !event.shiftKey) {
+    event.preventDefault()
+    commandPaletteOpen.value = !commandPaletteOpen.value
   }
+}
+
+function onOpenCommandPalette() {
+  commandPaletteOpen.value = true
+}
+
+function onSelectTargetFromPalette(target) {
+  window.dispatchEvent(new CustomEvent('doumi-open-account', { detail: target }))
+  if (route.path !== '/terminal') {
+    void router.push('/terminal')
+  }
+}
+
+function onPaletteAction(action) {
+  if (action === 'ai') {
+    aiDialog.value = true
+  } else if (action === 'toggle-theme') {
+    toggleThemeDirect()
+  } else if (action === 'terminal-theme') {
+    workspaceStore.terminalThemeOpen = true
+  } else if (action.startsWith('route:')) {
+    const path = action.replace('route:', '')
+    void router.push(path)
+  } else {
+    window.dispatchEvent(new CustomEvent('doumi-terminal-action', { detail: action }))
+    if (route.path !== '/terminal') {
+      void router.push('/terminal')
+    }
+  }
+}
+
+function onPaletteAskAi(prompt) {
+  workspaceStore.openAi(prompt)
+  aiDialog.value = true
 }
 watch(() => workspaceStore.aiOpen, (open) => {
   aiDialog.value = open
@@ -210,10 +272,12 @@ onMounted(() => {
     /* 默认不自动打开 */
   }
   window.addEventListener('keydown', onGlobalKeydown)
+  window.addEventListener('doumi-open-command-palette', onOpenCommandPalette)
   document.addEventListener('contextmenu', onContextMenu)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
+  window.removeEventListener('doumi-open-command-palette', onOpenCommandPalette)
   document.removeEventListener('contextmenu', onContextMenu)
 })
 
@@ -363,6 +427,63 @@ function onThemeCommand(cmd) {
 .server-ip {
   font-size: 11px;
   color: var(--ws-text-subtle);
+}
+
+/* 1.2 中间全局命令面板入口 */
+.header-center {
+  flex: 1;
+  max-width: 440px;
+  display: flex;
+  justify-content: center;
+}
+.command-palette-btn {
+  width: 100%;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--ws-radius-sm);
+  background: var(--ws-bg-input, var(--el-fill-color-light));
+  border: 1px solid var(--ws-border, var(--el-border-color));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  color: var(--ws-text-muted, var(--el-text-color-placeholder));
+  font-size: 12px;
+  transition: all var(--ws-transition-fast, 0.15s ease);
+}
+.command-palette-btn:hover {
+  background: var(--ws-bg-hover, var(--el-fill-color));
+  border-color: var(--ws-border-focus, var(--el-color-primary));
+  color: var(--ws-text-primary, var(--el-text-color-primary));
+}
+.command-palette-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.command-palette-placeholder .search-ico {
+  font-size: 14px;
+  color: var(--ws-brand-500, var(--el-color-primary));
+  flex-shrink: 0;
+}
+.command-palette-placeholder span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.command-palette-btn .kbd-badge {
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--ws-bg-hover, var(--el-fill-color));
+  border: 1px solid var(--ws-border, var(--el-border-color));
+  color: var(--ws-text-subtle, var(--el-text-color-secondary));
+  flex-shrink: 0;
+  margin-left: 8px;
 }
 
 /* 1.3 右侧导航与功能操作 */

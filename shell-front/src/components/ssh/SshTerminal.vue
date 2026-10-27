@@ -608,6 +608,14 @@ function connect() {
     scrollback: TERMINAL_SCROLLBACK
   })
   terminal.attachCustomKeyEventHandler((event) => {
+    if ((event.ctrlKey || event.metaKey) && (event.key?.toLowerCase() === 'k' || event.code === 'KeyK') && !event.altKey) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.type === 'keydown' && !event.shiftKey) {
+        window.dispatchEvent(new CustomEvent('doumi-open-command-palette'))
+      }
+      return false
+    }
     if ((event.ctrlKey || event.metaKey) && (event.key?.toLowerCase() === 'f' || event.code === 'KeyF')) {
       event.preventDefault()
       event.stopPropagation()

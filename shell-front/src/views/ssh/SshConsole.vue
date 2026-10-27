@@ -833,6 +833,7 @@ import {
   getAccount,
   getGroup,
   getHost,
+  fetchSearchTargets,
   fetchTreeChildren,
   moveTreeNode,
   openAccountSession,
@@ -1155,13 +1156,66 @@ if (savedAccount) {
   })
 }
 
-watch(filterText, (val) => {
+const searchTargetsCache = ref([])
+async function loadSearchTargets() {
+  try {
+    const list = await fetchSearchTargets()
+    if (Array.isArray(list)) {
+      searchTargetsCache.value = list
+    }
+  } catch {
+    /* fallback quietly */
+  }
+}
+
+const matchingGroupIds = computed(() => {
+  const q = filterText.value.trim().toLowerCase()
+  if (!q) return new Set()
+  const s = new Set()
+  for (const item of searchTargetsCache.value) {
+    const hostAddr = String(item.hostAddress || '').toLowerCase()
+    const hostName = String(item.hostName || '').toLowerCase()
+    const endpoint = `${hostAddr}:${item.hostPort || 22}`
+    const user = String(item.username || '').toLowerCase()
+    const accRemark = String(item.accountRemark || '').toLowerCase()
+    const hostRemark = String(item.hostRemark || '').toLowerCase()
+    if (
+      hostAddr.includes(q) ||
+      endpoint.includes(q) ||
+      hostName.includes(q) ||
+      user.includes(q) ||
+      accRemark.includes(q) ||
+      hostRemark.includes(q)
+    ) {
+      if (item.groupId != null) {
+        s.add(item.groupId)
+      }
+    }
+  }
+  return s
+})
+
+watch(filterText, async (val) => {
+  if (val && searchTargetsCache.value.length === 0) {
+    await loadSearchTargets()
+  }
+  if (val) {
+    for (const gid of matchingGroupIds.value) {
+      const gKey = `g:${gid}`
+      if (!defaultExpandedKeys.value.includes(gKey)) {
+        defaultExpandedKeys.value.push(gKey)
+      }
+    }
+  }
   treeRef.value?.filter(val)
 })
 
 onMounted(() => {
   restoreSavedAccount()
+  void loadSearchTargets()
   window.addEventListener('doumi-configuration-imported', refreshTree)
+  window.addEventListener('doumi-open-account', onGlobalOpenAccount)
+  window.addEventListener('doumi-terminal-action', onGlobalTerminalAction)
   window.addEventListener('click', closeContextMenu)
   window.addEventListener('blur', closeContextMenu)
   window.addEventListener('resize', checkScrollOverflow)
@@ -1172,6 +1226,8 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   window.removeEventListener('doumi-configuration-imported', refreshTree)
+  window.removeEventListener('doumi-open-account', onGlobalOpenAccount)
+  window.removeEventListener('doumi-terminal-action', onGlobalTerminalAction)
   window.removeEventListener('click', closeContextMenu)
   window.removeEventListener('blur', closeContextMenu)
   window.removeEventListener('resize', checkScrollOverflow)
@@ -1313,8 +1369,12 @@ function filterNode(value, data) {
   if (!value) return true
   const v = String(value).trim().toLocaleLowerCase()
   if (!v) return true
-  const host = data.nodeType === 'HOST' ? data.extra?.host || '' : ''
-  const endpoint = data.nodeType === 'HOST' ? data.extra?.endpoint || '' : ''
+  if (data.nodeType === 'GROUP') {
+    if (matchingGroupIds.value.has(data.id)) return true
+    return [data.label, data.remark].some(field => String(field || '').toLocaleLowerCase().includes(v))
+  }
+  const host = data.extra?.host || ''
+  const endpoint = data.extra?.endpoint || ''
   return [data.label, data.remark, host, endpoint]
     .some(field => String(field || '').toLocaleLowerCase().includes(v))
 }
@@ -1383,7 +1443,9 @@ async function loadNode(node, resolve) {
         extra: {
           ...child.extra,
           hostId: child.extra?.hostId ?? data.id,
-          groupId: child.extra?.groupId ?? data.extra?.groupId ?? null
+          groupId: child.extra?.groupId ?? data.extra?.groupId ?? null,
+          host: data.extra?.host || '',
+          endpoint: data.extra?.endpoint || ''
         }
       }))
       resolve(mapped)
@@ -1496,6 +1558,7 @@ async function refreshTree(targetNode = null) {
   defaultExpandedKeys.value = Array.from(expandedSet)
   treeVersion.value += 1
   detail.value = { type: null, raw: null }
+  void loadSearchTargets()
   nextTick(async () => {
     if (current?.nodeType && current.id != null) {
       await loadDetail(current)
@@ -1523,8 +1586,8 @@ async function connectHostAccount(acc) {
     leaf: true,
     extra: {
       ...(acc.extra || {}),
-      hostId: detail.value.raw?.id,
-      groupId: detail.value.raw?.groupId ?? null
+      hostId: acc.hostId ?? detail.value.raw?.id,
+      groupId: acc.groupId ?? detail.value.raw?.groupId ?? null
     }
   }
   selectedNode.value = node
@@ -1533,6 +1596,48 @@ async function connectHostAccount(acc) {
   await loadDetail(node)
   if (route.meta.panel !== 'terminal') {
     router.push('/terminal')
+  }
+}
+
+async function onGlobalOpenAccount(e) {
+  const target = e.detail
+  if (!target) return
+  if (target.accountId) {
+    const acc = {
+      id: target.accountId,
+      username: target.username,
+      hostId: target.hostId,
+      groupId: target.groupId,
+      label: target.username ? `${target.username}@${target.hostName || target.hostAddress}` : (target.hostName || target.hostAddress)
+    }
+    await connectHostAccount(acc)
+  } else if (target.hostId) {
+    const node = {
+      nodeType: 'HOST',
+      id: target.hostId,
+      key: `h:${target.hostId}`,
+      label: target.hostName || target.hostAddress,
+      extra: {
+        host: target.hostAddress,
+        port: target.hostPort || 22,
+        groupId: target.groupId
+      }
+    }
+    selectedNode.value = node
+    treeCurrentNodeKey.value = node.key
+    treeRef.value?.setCurrentKey?.(node.key, false)
+    await loadDetail(node)
+  }
+}
+
+function onGlobalTerminalAction(e) {
+  const act = e.detail
+  if (act === 'clear') {
+    onClearActiveTerminal()
+  } else if (act === 'split') {
+    isSplit.value = !isSplit.value
+  } else if (act === 'snippets') {
+    snippetBarVisible.value = !snippetBarVisible.value
   }
 }
 
