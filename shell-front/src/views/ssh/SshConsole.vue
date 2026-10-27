@@ -3300,6 +3300,20 @@ async function isHostInsideGroup(hostId, groupId) {
   padding-top: 3px;
 }
 
+:global(.terminal-tab-popper.el-popper) {
+  background: var(--ws-bg-card, #0f1523) !important;
+  color: var(--ws-text-primary, #f8fafc) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7) !important;
+  border-radius: 8px !important;
+  padding: 8px 10px !important;
+}
+
+:global(.terminal-tab-popper.el-popper .el-popper__arrow::before) {
+  background: var(--ws-bg-card, #0f1523) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+}
+
 /* 下拉终端列表 */
 .terminal-tabs-dropdown-menu {
   min-width: 260px;
