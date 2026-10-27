@@ -286,10 +286,6 @@ const transferNotice = '切换页面可继续传输。刷新或关闭页面会�
 
 const emit = defineEmits(['request-session', 'session-invalid', 'path-change'])
 
-watch(currentPath, val => {
-  if (val) emit('path-change', val)
-})
-
 watch(() => [props.accountId, props.hostId], ([accountId, hostId]) => {
   // Old records predate host metadata; assign only when the account's actual server is known.
   assignTransferHost(accountId, hostId)
@@ -308,6 +304,10 @@ function clearVisibleTransfers() {
 }
 
 const currentPath = ref('')
+watch(currentPath, val => {
+  if (val) emit('path-change', val)
+})
+
 const loadedPath = ref('')
 const pathInput = ref('')
 const items = ref([])
