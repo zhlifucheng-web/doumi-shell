@@ -200,6 +200,8 @@ const tail = createViewerTail({
       const offset = rangeEnd.value
       if (page.offset < offset || page.totalSize < offset) throw new Error('文件已改变或截断，请刷新文件')
       if (page.offset > offset) {
+        // An empty initial HTTP read shares its offset with the first pushed batch.
+        if (chunks.value.at(-1)?.length === 0) chunks.value.pop()
         chunks.value.push({ offset, length: page.offset - offset, text: page.content || '' })
         if (chunks.value.length > maxChunks) chunks.value.shift()
       }

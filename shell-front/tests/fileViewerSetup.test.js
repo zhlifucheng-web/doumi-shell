@@ -192,3 +192,15 @@ test('Tail appends stable render blocks and selection holds late data until expl
     assert.equal(viewer.state.combinedText.value, 'hello\nnew\nheld\n')
   } finally { viewer.unmount() }
 })
+
+test('first Tail append to an empty file creates one unique keyed content block', async () => {
+  const viewer = mountViewer({ read: async () => ({ offset: 0, length: 0, totalSize: 0, contentBase64: '' }) })
+  try {
+    await flush()
+    viewer.sockets[0].frame({ type: 'data', sequence: 1, offset: 5, totalSize: 5, content: 'first' });await flush()
+    const blocks = viewer.state.renderedBlocks.value
+    assert.equal(blocks.length, 1)
+    assert.equal(new Set(blocks.map(b => b.key)).size, blocks.length)
+    assert.equal(viewer.state.combinedText.value, 'first')
+  } finally { viewer.unmount() }
+})
