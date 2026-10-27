@@ -531,7 +531,8 @@ onBeforeUnmount(() => { disposed = true; closeEvents(); clearTimeout(timer); end
 .ai-context>span{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .ai-context>.el-button{flex-shrink:0}
 .ai-conversation{position:relative;display:flex;flex:1;min-height:80px;margin-bottom:10px}
-.ai-history{min-height:0;border:0;padding:12px 4px;overscroll-behavior:contain;scrollbar-width:thin}
+.ai-history{min-height:0;border:0;padding:12px 4px;overscroll-behavior:contain;scrollbar-width:thin;user-select:text;-webkit-user-select:text}
+.ai-history :deep(*){user-select:text;-webkit-user-select:text}
 .ai-message{margin-bottom:14px;padding:12px;border:1px solid var(--el-border-color-lighter);border-radius:10px}
 .ai-message--assistant{background:transparent;border-color:transparent;padding-left:2px;padding-right:2px}
 .ai-message--user{margin-left:24px;background:var(--el-color-primary-light-9)}
