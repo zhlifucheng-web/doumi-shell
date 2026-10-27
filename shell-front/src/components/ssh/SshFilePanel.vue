@@ -266,7 +266,7 @@ import FolderTransfer from './FolderTransfer.vue'
 import SshVirtualTable from './SshVirtualTable.vue'
 import SshFileEditorDialog from './SshFileEditorDialog.vue'
 import SshLargeFileViewerDialog from './SshLargeFileViewerDialog.vue'
-import { isDefaultEditableFile, isBinaryFile, isTextFile } from '@/utils/fileTypeHelper'
+import { isBinaryFile } from '@/utils/fileTypeHelper'
 import { sortFileList } from '@/utils/fileSorter'
 import { useAiChanges } from '@/composables/useAiChanges'
 useAiChanges(/^(file_|ssh_command)/, () => { if (props.sessionToken) return refresh() })
@@ -526,13 +526,10 @@ async function refresh() {
 function onRowDblClick(row) {
   if (row.dir) {
     enterDir(row.name)
-  } else if (row.size > 5 * 1024 * 1024 && !isBinaryFile(row.name)) {
-    // Large text / log files (> 5MB): open with dynamic chunk streaming viewer
-    openLargeFileViewer(row)
-  } else if (isDefaultEditableFile(row.name, row.size)) {
-    openFileEditor(row)
+  } else if (isBinaryFile(row.name)) {
+    ElMessage.warning('该文件不支持文本预览，请使用下载操作')
   } else {
-    downloadRow(row)
+    openLargeFileViewer(row)
   }
 }
 
