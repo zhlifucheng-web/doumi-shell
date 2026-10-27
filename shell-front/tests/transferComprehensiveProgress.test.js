@@ -1,5 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import {
+  formatSize,
+  formatSpeed,
+  formatEta,
+  getTaskEta,
+  getOverallEta
+} from '../src/utils/transferFormat.js'
 
 function computeOverallProgress(tasks, batchStart = null) {
   const ACTIVE_STATUSES = new Set(['等待中', '传输中', '取消中', '保存中', '交给浏览器中'])
@@ -111,4 +118,46 @@ test('zero total size produces safe 0% without NaN', () => {
   assert.equal(progress.activeCount, 1)
   assert.equal(progress.percent, 0)
   assert.equal(progress.label, '传输列表（1 项进行中）')
+})
+
+test('formatSize formats byte sizes correctly', () => {
+  assert.equal(formatSize(0), '0 B')
+  assert.equal(formatSize(512), '512 B')
+  assert.equal(formatSize(1024), '1.0 KB')
+  assert.equal(formatSize(1024 * 1024 * 2.5), '2.5 MB')
+  assert.equal(formatSize(1024 * 1024 * 1024 * 1.5), '1.50 GB')
+})
+
+test('formatSpeed formats transfer speeds correctly', () => {
+  assert.equal(formatSpeed(0), '0 B/s')
+  assert.equal(formatSpeed(null), '0 B/s')
+  assert.equal(formatSpeed(1024), '1.0 KB/s')
+  assert.equal(formatSpeed(1024 * 1024 * 3.2), '3.2 MB/s')
+})
+
+test('formatEta formats seconds to human readable time strings', () => {
+  assert.equal(formatEta(null), '计算中...')
+  assert.equal(formatEta(-5), '计算中...')
+  assert.equal(formatEta(0), '即将完成')
+  assert.equal(formatEta(15), '15 秒')
+  assert.equal(formatEta(60), '1 分钟')
+  assert.equal(formatEta(125), '2 分 5 秒')
+  assert.equal(formatEta(3600), '1 小时')
+  assert.equal(formatEta(3665), '1 小时 1 分')
+})
+
+test('getTaskEta returns correct state or estimated time for tasks', () => {
+  assert.equal(getTaskEta({ status: '等待中' }), '排队等待中')
+  assert.equal(getTaskEta({ status: '保存中' }), '正在写入远程')
+  assert.equal(getTaskEta({ status: '已完成' }), '已完成')
+  assert.equal(getTaskEta({ status: '传输中', speed: 0, loaded: 100, total: 1000 }), '计算中...')
+  assert.equal(getTaskEta({ status: '传输中', speed: 100, loaded: 1000, total: 1000 }), '即将完成')
+  assert.equal(getTaskEta({ status: '传输中', speed: 200, loaded: 400, total: 1000 }), '剩余 3 秒')
+})
+
+test('getOverallEta calculates batch remaining time correctly', () => {
+  const overall = { loaded: 500, total: 1500, percent: 33 }
+  assert.equal(getOverallEta(overall, 0), '计算中...')
+  assert.equal(getOverallEta(overall, 500), '剩余 2 秒')
+  assert.equal(getOverallEta({ loaded: 1000, total: 1000 }, 100), '即将完成')
 })
