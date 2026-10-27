@@ -472,7 +472,7 @@
                             :font-size="terminalFontSize"
                             :light-tone="terminalLightTone"
                             :encoding="tab.encoding || terminalEncoding"
-                            :current-path="currentSftpPath || tab.defaultCwd || ''"
+                            :current-path="tab.sftpPath || tab.defaultCwd || ''"
                             @drop-files="onTerminalDropFiles"
                             @ready="payload => onTerminalReady(tab.tabId, payload)"
                             @disconnected="() => onTerminalDisconnected(tab.tabId)"
@@ -495,7 +495,7 @@
                             :font-size="terminalFontSize"
                             :light-tone="terminalLightTone"
                             :encoding="splitTerminalTab.encoding || terminalEncoding"
-                            :current-path="currentSftpPath || splitTerminalTab.defaultCwd || ''"
+                            :current-path="splitTerminalTab.sftpPath || splitTerminalTab.defaultCwd || ''"
                             @drop-files="onTerminalDropFiles"
                             @ready="payload => onTerminalReady(splitTerminalTab.tabId, payload)"
                             @disconnected="() => onTerminalDisconnected(splitTerminalTab.tabId)"
@@ -507,7 +507,9 @@
                   <el-empty v-else description="从左侧选择账户以打开终端" />
                 </template>
                 <template #files>
-                  <SshFilePanel v-if="activeTerminalTab" ref="filePanelRef" :account-id="activeTerminalTab.accountId" :host-id="activeTerminalTab.hostId"
+                  <SshFilePanel v-if="activeTerminalTab" ref="filePanelRef"
+                    :tab-id="activeTerminalTab.tabId" :saved-path="activeTerminalTab.sftpPath || ''"
+                    :account-id="activeTerminalTab.accountId" :host-id="activeTerminalTab.hostId"
                     :active="accountTab === 'terminal'" embedded
                     :session-token="sessionToken" :default-cwd="activeTerminalTab.defaultCwd || ''"
                     :opening-session="openingFileSession" @request-session="establishFileSession"
@@ -818,6 +820,7 @@ import { tmuxCompatibility } from '@/utils/tmuxCompatibility'
 import TerminalShareDialog from '@/components/ssh/TerminalShareDialog.vue'
 import SnippetBar from '@/components/ssh/SnippetBar.vue'
 import TerminalFileLayout from '@/components/ssh/TerminalFileLayout.vue'
+import { useLayoutPreference } from '@/composables/useLayoutPreference'
 import SshFilePanel from '@/components/ssh/SshFilePanel.vue'
 import SshMonitorPanel from '@/components/ssh/SshMonitorPanel.vue'
 import ScriptManagement from '@/components/ssh/ScriptManagement.vue'
@@ -862,25 +865,14 @@ import {
 
 const savedAccount = readSavedSshAccount()
 const { managedServer } = storeToRefs(useWorkspaceStore())
-const sidebarCollapsed = ref(false)
-try { sidebarCollapsed.value=localStorage.getItem('doumi-sidebar-collapsed')==='true' } catch { /* Default expanded. */ }
-watch(sidebarCollapsed, value=>{try{localStorage.setItem('doumi-sidebar-collapsed',String(value))}catch{/* Preference only. */}})
+const sidebarCollapsed = useLayoutPreference('sidebarCollapsed')
 
 const DEFAULT_SIDEBAR_WIDTH = 280
 const MIN_SIDEBAR_WIDTH = 220
 const MAX_SIDEBAR_WIDTH = 640
-const sidebarWidth = ref(DEFAULT_SIDEBAR_WIDTH)
+const sidebarWidth = useLayoutPreference('sidebarWidth')
 const isSidebarResizing = ref(false)
 let sidebarResizeOrigin = null
-
-try {
-  const savedWidth = Number(localStorage.getItem('doumi-sidebar-width'))
-  if (savedWidth >= MIN_SIDEBAR_WIDTH && savedWidth <= MAX_SIDEBAR_WIDTH) {
-    sidebarWidth.value = savedWidth
-  }
-} catch {
-  // Use default
-}
 
 function onSidebarResizeStart(event) {
   if (event.button !== 0 || sidebarCollapsed.value) return
@@ -909,9 +901,6 @@ function onSidebarResizeEnd(event) {
   try {
     event.currentTarget.releasePointerCapture(event.pointerId)
   } catch {}
-  try {
-    localStorage.setItem('doumi-sidebar-width', String(sidebarWidth.value))
-  } catch {}
 }
 
 function resizeSidebarByKeyboard(event) {
@@ -921,17 +910,11 @@ function resizeSidebarByKeyboard(event) {
   else if (event.key === 'End') sidebarWidth.value = MAX_SIDEBAR_WIDTH
   else sidebarWidth.value = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH,
     sidebarWidth.value + (event.key === 'ArrowRight' ? 10 : -10)))
-  try {
-    localStorage.setItem('doumi-sidebar-width', String(sidebarWidth.value))
-  } catch { /* Preference only. */ }
 }
 
 function resetSidebarWidth() {
   if (sidebarCollapsed.value) return
   sidebarWidth.value = DEFAULT_SIDEBAR_WIDTH
-  try {
-    localStorage.setItem('doumi-sidebar-width', String(DEFAULT_SIDEBAR_WIDTH))
-  } catch {}
 }
 
 async function copyText(text, successMsg = '已复制到剪贴板') {
@@ -1051,15 +1034,14 @@ const splitTerminalTab = computed(() => {
 })
 
 const filePanelRef = ref(null)
-const currentSftpPath = ref('')
+const currentSftpPath = computed(() => activeTerminalTab.value?.sftpPath || '')
 
-function onFilePanelPathChange(path) {
-  currentSftpPath.value = path || ''
+function onFilePanelPathChange(path, tabId) {
+  const tab = terminalTabs.value.find(tab => tab.tabId === tabId)
+  if (!tab || !path) return
+  tab.sftpPath = path
+  persistTerminalTabs()
 }
-
-watch(activeTerminalId, () => {
-  currentSftpPath.value = ''
-})
 
 async function onTerminalDropFiles(dataTransfer) {
   if (!activeTerminalTab.value) return
@@ -1956,6 +1938,7 @@ function activateTerminalForAccount(account) {
       account,
       hostId: account.hostId,
       defaultCwd: account.defaultCwd || '',
+      sftpPath: '',
       label: terminalTabLabel(account),
       customTitle: '',
       subIndex: subIndex || 1,
@@ -2197,6 +2180,7 @@ async function openNewAccountTerminal(data) {
       account,
       hostId: account.hostId,
       defaultCwd: account.defaultCwd || '',
+      sftpPath: '',
       label,
       customTitle: '',
       subIndex,

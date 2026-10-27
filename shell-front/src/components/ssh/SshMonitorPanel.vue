@@ -106,6 +106,7 @@
 <script setup>
 import { computed, nextTick, onActivated, onDeactivated, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import * as echarts from 'echarts'
+import { useLayoutPreference } from '@/composables/useLayoutPreference'
 import { chartForElement } from '@/utils/chartLifecycle'
 import { ElMessageBox } from 'element-plus'
 import { Close, Delete, Edit, EditPen, Expand, Fold, FullScreen, Plus, Setting } from '@element-plus/icons-vue'
@@ -124,7 +125,7 @@ const invalidSessionToken=ref('')
 const monitorConfigStore=useMonitorConfigStore()
 const {effectiveDark}=useTheme()
 const {style:backgroundStyle}=useBackground()
-const panel=ref(null),fullscreenHost=ref(null),cpuEl=ref(null),netEl=ref(null),gpuEl=ref(null),expanded=ref(false),paused=ref(false),fullscreenVisible=ref(false)
+const panel=ref(null),fullscreenHost=ref(null),cpuEl=ref(null),netEl=ref(null),gpuEl=ref(null),expanded=useLayoutPreference('monitorExpanded'),paused=ref(false),fullscreenVisible=ref(false)
 const cardOptions=[{key:'cpu',label:'CPU'},{key:'memory',label:'内存与 Swap'},{key:'network',label:'网络'},{key:'gpu',label:'GPU'},{key:'disk',label:'磁盘与 inode'}]
 const editorState=computed(()=>monitorConfigStore.editor(props.accountId))
 const configState=computed(()=>monitorConfigStore.ensure(props.accountId))
@@ -143,8 +144,8 @@ const latest=shallowRef(null),points=shallowRef([]),error=ref(''),loading=ref(fa
 const customChartEls=new Map(),customCharts=new Map()
 const customHistory=new Map()
 const detailVisible=ref(false),settingsVisible=ref(false),detailMetric=ref('cpu'),detailChartEl=ref(null)
-const defaultWidth=380,width=ref(defaultWidth),maxWidth=ref(760)
-try{const stored=Number(localStorage.getItem('doumi-monitor-width-v2'));if(stored>=260&&stored<=760)width.value=stored}catch{/* 默认宽度 */}
+const preferredWidth=useLayoutPreference('monitorWidth'),maxWidth=ref(760)
+const width=computed(()=>Math.min(expanded.value?760:preferredWidth.value,maxWidth.value))
 const effectiveInterval=computed(()=>Math.max(interval.value,serverInterval.value))
 const enabled=computed(()=>!!props.sessionToken&&invalidSessionToken.value!==props.sessionToken&&props.active&&activated.value&&visible.value&&!paused.value&&latest.value?.status!=='DISABLED')
 const historyKey=()=>props.accountId ? `account:${props.accountId}` : `session:${props.sessionToken}`
@@ -317,7 +318,7 @@ function renderCustomCharts(){
     chart.resize()
   })
 }
-function toggleExpanded(){expanded.value=!expanded.value;setWidth(expanded.value?maxWidth.value:defaultWidth)}
+function toggleExpanded(){expanded.value=!expanded.value}
 async function sampleCustomScripts(token,version){
   for(const item of customScripts.value){
     if(!item.enabled)continue
@@ -516,7 +517,7 @@ function openDetail(metric){
   })
 }
 function resizeDetail(){detailChart?.resize()}
-function setWidth(value){width.value=Math.round(Math.min(maxWidth.value,Math.max(260,value)));try{localStorage.setItem('doumi-monitor-width-v2',String(width.value))}catch{/* 仅保存偏好 */}}
+function setWidth(value){preferredWidth.value=Math.round(Math.min(maxWidth.value,Math.max(260,value)));expanded.value=false}
 function showScrollFeedback(event){
   const element=event.currentTarget
   element.classList.add('is-scrolling')
@@ -528,7 +529,6 @@ function dragMove(event){if(drag)setWidth(drag.width+event.clientX-drag.x)}
 function dragEnd(event){drag=null;if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId)}
 function resize(){
   maxWidth.value=Math.max(260,Math.min(760,(panel.value?.parentElement?.clientWidth||900)-260))
-  if(width.value>maxWidth.value)width.value=maxWidth.value
   ensureCharts();render()
 }
 function visibility(){visible.value=!document.hidden;sync()}

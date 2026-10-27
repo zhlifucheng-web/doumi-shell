@@ -76,21 +76,14 @@
 
 <script setup>
 import { ref, watch } from 'vue'
+import { useLayoutPreference } from '@/composables/useLayoutPreference'
 import { storeToRefs } from 'pinia'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const workspace = ref(null)
 const { fileLocation } = storeToRefs(useWorkspaceStore())
-const ratio = ref(60)
-const collapsed = ref(false)
-
-try {
-  const saved = Number(localStorage.getItem('doumi-terminal-height-percent'))
-  if (saved >= 30 && saved <= 75) ratio.value = saved
-  collapsed.value = localStorage.getItem('doumi-terminal-files-collapsed') === 'true'
-} catch {
-  /* Use defaults when preferences are unavailable. */
-}
+const ratio = useLayoutPreference('terminalPercent')
+const collapsed = useLayoutPreference('filesCollapsed')
 
 watch(fileLocation, (location) => {
   if (location) collapsed.value = false
@@ -98,21 +91,6 @@ watch(fileLocation, (location) => {
 function setRatio(value) {
   ratio.value = Math.round(Math.max(30, Math.min(75, value)))
 }
-watch(ratio, (value) => {
-  try {
-    localStorage.setItem('doumi-terminal-height-percent', String(value))
-  } catch {
-    /* Preference only. */
-  }
-})
-watch(collapsed, (value) => {
-  try {
-    localStorage.setItem('doumi-terminal-files-collapsed', String(value))
-  } catch {
-    /* Preference only. */
-  }
-})
-
 let dragging = false
 function startDrag(event) {
   if (event.button !== 0) return

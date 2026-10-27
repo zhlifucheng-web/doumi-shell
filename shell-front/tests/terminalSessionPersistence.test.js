@@ -140,3 +140,19 @@ test('saveTerminalTabs and readSavedTerminalTabs: serialize, restore, and migrat
   assert.equal(cleared.tabs.length, 0)
   assert.equal(cleared.activeTabId, null)
 })
+
+test('saved tabs retain separate SFTP directories for two sessions of the same account', () => {
+  const storage = createMockStorage()
+  saveTerminalTabs([
+    { tabId: 'tab-a', accountId: 101, terminalId: 's_a', sftpPath: '/var/log' },
+    { tabId: 'tab-b', accountId: 101, terminalId: 's_b', sftpPath: '/srv/app' }
+  ], 'tab-b', storage)
+  const restored = readSavedTerminalTabs(storage)
+  assert.deepEqual(restored.tabs.map(t => t.sftpPath), ['/var/log', '/srv/app'])
+  assert.equal(restored.activeTabId, 'tab-b')
+})
+
+test('legacy tabs without SFTP paths restore with an empty path', () => {
+  const storage = createMockStorage({ [SS_SSH_TERMINAL_TABS]: JSON.stringify([{ tabId: 'tab-a', accountId: 101, terminalId: 's_a' }]) })
+  assert.equal(readSavedTerminalTabs(storage).tabs[0].sftpPath, '')
+})

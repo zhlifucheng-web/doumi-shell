@@ -244,7 +244,7 @@
 </template>
 
 <script setup>
-import { computed, onDeactivated, ref, watch } from 'vue'
+import { computed, onDeactivated, onScopeDispose, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Document, Folder, Search, Sort, Upload } from '@element-plus/icons-vue'
@@ -273,6 +273,8 @@ useAiChanges(/^(file_|ssh_command)/, () => { if (props.sessionToken) return refr
 
 const props = defineProps({
   accountId: { type: Number, default: null },
+  tabId: { type: String, default: '' },
+  savedPath: { type: String, default: '' },
   hostId: { type: Number, default: null },
   active: { type: Boolean, default: true },
   embedded: { type: Boolean, default: false },
@@ -304,10 +306,6 @@ function clearVisibleTransfers() {
 }
 
 const currentPath = ref('')
-watch(currentPath, val => {
-  if (val) emit('path-change', val)
-})
-
 const loadedPath = ref('')
 const pathInput = ref('')
 const items = ref([])
@@ -383,23 +381,35 @@ const breadcrumbs = computed(() => {
   return p.split('/').filter(Boolean)
 })
 
-let handledLocation=null,lastAccount=null,listRequest=0
+let handledLocation=null,lastAccount,lastTab,listRequest=0
+let restoringPath = !!props.savedPath
+let disposed = false
+onScopeDispose(() => { disposed = true; ++listRequest })
 watch(
-  () => [props.sessionToken, props.active, fileLocation.value, props.accountId],
-  ([tok, active, location, accountId]) => {
+  () => [props.sessionToken, props.active, fileLocation.value, props.accountId, props.tabId],
+  ([tok, active, location, accountId, tabId], previous = []) => {
+    // Consuming a one-shot navigation request must not start a duplicate listing.
+    if (!location && previous[2] && tok === previous[0] && active === previous[1] && accountId === previous[3] && tabId === previous[4]) return
     ++listRequest // Invalidate a response even when the next view has no session.
     loading.value = false
-    if (accountId !== lastAccount) {
-      currentPath.value = ''
-      pathInput.value = props.defaultCwd || ''
+    if (accountId !== lastAccount || tabId !== lastTab) {
+      currentPath.value = props.savedPath || ''
+      pathInput.value = props.savedPath || props.defaultCwd || ''
+      restoringPath = !!props.savedPath
       loadedPath.value = ''
       lastAccount = accountId
+      lastTab = tabId
       handledLocation = null
       items.value = []
     }
     if (!active) return
     if (tok) {
-      if(location&&location!==handledLocation&&location.accountId===props.accountId){currentPath.value=location.path;pathInput.value=location.path;handledLocation=location}
+      if (location && location !== handledLocation && location.accountId === props.accountId) {
+        currentPath.value = location.path
+        pathInput.value = location.path
+        handledLocation = location
+        fileLocation.value = null
+      }
       refresh()
     } else {
       items.value = []
@@ -468,26 +478,43 @@ function isSessionExpiredError(err) {
   return /会话不存在|已过期/.test(msg)
 }
 
+function isUnavailableDirectoryError(err) {
+  const data = err?.response?.data
+  const message = [data?.externMessage, data?.message, err?.message].filter(Boolean).join(' ')
+  return /no[ _]such[ _](file|path)|not[ _]a[ _]directory|permission[ _]denied|不存在|无权|权限/i.test(message)
+}
+
 async function refresh() {
-  if (!props.sessionToken) return
-  const request = ++listRequest, token = props.sessionToken
+  if (!props.sessionToken || disposed) return
+  const request = ++listRequest, token = props.sessionToken, tabId = props.tabId
+  const pathArg = currentPath.value || pathInput.value || ''
+  const restoring = restoringPath && pathArg === props.savedPath
+  restoringPath = false
   loading.value = true
   try {
-    const pathArg = currentPath.value || pathInput.value || ''
     const data = await sftpList(token, pathArg)
-    if (request !== listRequest || token !== props.sessionToken) return
+    if (request !== listRequest || token !== props.sessionToken || tabId !== props.tabId) return
     loadedPath.value = data.path || pathArg
     currentPath.value = loadedPath.value
     pathInput.value = loadedPath.value
     items.value = data.items || []
+    if (loadedPath.value) emit('path-change', loadedPath.value, tabId)
   } catch (err) {
-    if (request !== listRequest || token !== props.sessionToken) return
-    items.value = []
+    if (request !== listRequest || token !== props.sessionToken || tabId !== props.tabId) return
     if (isSessionExpiredError(err)) {
       // 页面刷新/终端重连时旧 token 会被服务端主动清理；终端 ready
       // 后会自动提供新 token，不在这个过渡窗口弹出全局告警。
+      restoringPath = restoring
       emit('session-invalid')
+    } else if (restoring && isUnavailableDirectoryError(err)) {
+      ElMessage.warning('上次的 SFTP 目录不存在或无权访问，已尝试返回默认目录')
+      currentPath.value = props.defaultCwd || ''
+      pathInput.value = currentPath.value
+      await refresh()
     } else {
+      restoringPath = restoring
+      currentPath.value = loadedPath.value || currentPath.value
+      pathInput.value = currentPath.value
       const errMsg = err?.response?.data?.externMessage || err?.response?.data?.message || err?.message || '读取远程目录失败'
       ElMessage.error(errMsg)
     }
