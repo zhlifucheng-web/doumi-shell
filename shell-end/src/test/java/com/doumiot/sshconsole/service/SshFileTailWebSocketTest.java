@@ -29,7 +29,7 @@ class SshFileTailWebSocketTest {
     private byte[] bytes = "a\n".getBytes(StandardCharsets.UTF_8);
     private long mtime = 1;
     private int opened, closed, reads;
-    private boolean valid = true;
+    private boolean valid = true, pathMissing;
     private byte[] appendOnStat;
     private final java.util.concurrent.atomic.AtomicBoolean blockOnOpen = new java.util.concurrent.atomic.AtomicBoolean();
     private final java.util.concurrent.atomic.AtomicBoolean blockOnRead = new java.util.concurrent.atomic.AtomicBoolean();
@@ -46,6 +46,7 @@ class SshFileTailWebSocketTest {
             SFTPClient sftp = mock(SFTPClient.class); RemoteFile remote = mock(RemoteFile.class);
             when(sftp.type(anyString())).thenReturn(FileMode.Type.REGULAR); when(sftp.open(anyString())).thenReturn(remote);
             when(sftp.stat(anyString())).thenAnswer(c -> {
+                if(pathMissing) throw new SFTPException(Response.StatusCode.NO_SUCH_FILE,"No such file");
                 FileAttributes attrs=new FileAttributes.Builder().withSize(bytes.length).withAtimeMtime(mtime,mtime).build();
                 if(appendOnStat!=null) {bytes=appendOnStat;appendOnStat=null;mtime++;}
                 return attrs;
@@ -109,12 +110,29 @@ class SshFileTailWebSocketTest {
         bytes="hit again\n".getBytes(StandardCharsets.UTF_8); mtime++; check();
         assertEquals("hit again",last().path("rows").get(0).path("text").asText()); assertEquals(1,last().path("rows").get(0).path("lineNumber").asLong()); assertEquals(before+1,opened);
         send(socket,"{\"type\":\"ack\",\"sequence\":1}"); send(socket,"{\"type\":\"close\"}"); assertTrue(filters.next("owner",scan).isEof());
-        frames.clear(); start(bytes.length,null); bytes=new byte[0]; mtime++; check(); assertEquals("error",last().path("type").asText()); assertTrue(last().path("message").asText().contains("重新"));
+        frames.clear(); start(bytes.length,null); bytes=new byte[0]; mtime++; check(); assertEquals("error",last().path("type").asText()); assertEquals("FILE_CHANGED",last().path("code").asText());
     }
     @Test void expiresDisconnectedStateAndValidatesSshEvenWhilePaused() throws Exception {
         start(2,null); String id=last().path("tailId").asText(); handler.afterConnectionClosed(socket,CloseStatus.NORMAL); clock.millis+=60001; check();
-        List<JsonNode> resumed=new ArrayList<>(); send(socket("second",resumed),"{\"type\":\"resume\",\"sessionToken\":\"owner\",\"tailId\":\""+id+"\",\"sequence\":0}"); assertEquals("error",resumed.get(0).path("type").asText());
+        List<JsonNode> resumed=new ArrayList<>(); send(socket("second",resumed),"{\"type\":\"resume\",\"sessionToken\":\"owner\",\"tailId\":\""+id+"\",\"sequence\":0}"); assertEquals("error",resumed.get(0).path("type").asText()); assertEquals("TAIL_EXPIRED",resumed.get(0).path("code").asText());
         frames.clear(); start(2,null); send(socket,"{\"type\":\"pause\"}"); valid=false; check(); assertEquals("error",last().path("type").asText()); assertEquals(opened,closed);
+    }
+    @Test void expiredSessionReturnsRecoverableCodeRatherThanAnUnclassifiedError() throws Exception {
+        start(2,null);
+        when(registry.get(anyString())).thenThrow(new com.doumiot.spring.exception.BusinessRuntimeException(com.doumiot.common.exception.enums.ParamExceptionEnum.IN_PARAM_EMPTY,"会话不存在或已过期"));
+        check(); assertEquals("SESSION_EXPIRED",last().path("code").asText()); assertEquals(opened,closed);
+    }
+    @Test void filteredTruncationReturnsReloadCodeAndReleasesTheOldCursor() throws Exception {
+        bytes="hit old\n".getBytes(StandardCharsets.UTF_8);
+        String scan=filters.start("owner","/app.log","hit","UTF-8",true,0).getScanId(); filters.next("owner",scan);
+        start(bytes.length,scan); bytes="hit\n".getBytes(StandardCharsets.UTF_8); mtime++; check();
+        assertEquals("FILE_CHANGED",last().path("code").asText()); assertThrows(IOException.class,()->filters.next("owner",scan));
+        String replacement=filters.start("owner","/app.log","hit","UTF-8",true,0).getScanId();
+        assertEquals("hit",filters.next("owner",replacement).getRows().get(0).getText());
+    }
+    @Test void temporarilyMissingRotatedPathRequestsReloadInsteadOfEndingTail() throws Exception {
+        start(2,null); pathMissing=true; check();
+        assertEquals("FILE_CHANGED",last().path("code").asText()); assertEquals(opened,closed);
     }
     @Test void quietAndPausedStreamsSendHeartbeatWithoutReopeningSftp() throws Exception {
         start(2,null);clock.millis+=15001;check();assertEquals("heartbeat",last().path("type").asText());assertEquals(1,opened);

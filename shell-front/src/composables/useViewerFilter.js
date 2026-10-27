@@ -6,7 +6,7 @@ export function useViewerFilter({ source, api, onError }) {
   const rows = ref([]), offset = ref(0), totalSize = ref(0)
   const eof = ref(false), limited = ref(false), error = ref(''), paused = ref(false)
   const readyForTail = ref(false)
-  let generation = 0, cursor = null, pumping = false
+  let generation = 0, cursor = null, pumping = false, pendingPage = null
   const release = async entry => {
     if (entry) { try { await api.cancel(entry.id, entry.token) } catch { /* idle TTL is the fallback */ } }
   }
@@ -32,14 +32,16 @@ export function useViewerFilter({ source, api, onError }) {
     scanning.value = true
     try {
       do {
-        const page = await api.next(cursor.id, cursor.token)
+        const page = pendingPage || await api.next(cursor.id, cursor.token)
         if (gen !== generation) return
+        if (paused.value) { pendingPage = page; return }
+        pendingPage = null
         merge(page)
       } while (historical && !eof.value && !limited.value && !paused.value && gen === generation)
     } catch (err) {
       if (gen === generation) {
         error.value = err.message || '筛选失败，请重新筛选'
-        const old = cursor; cursor = null
+        const old = cursor; cursor = null; pendingPage = null
         void release(old)
         onError?.(error.value)
       }
@@ -51,7 +53,7 @@ export function useViewerFilter({ source, api, onError }) {
   }
   async function start(options) {
     const gen = ++generation
-    const old = cursor; cursor = null
+    const old = cursor; cursor = null; pendingPage = null
     void release(old)
     active.value = true; scanning.value = true; canceled.value = false
     rows.value = []; offset.value = 0; totalSize.value = 0
@@ -59,7 +61,7 @@ export function useViewerFilter({ source, api, onError }) {
     const src = source()
     try {
       const res = await api.start({ ...src, ...options })
-      const entry = { id: res.scanId, token: src.sessionToken }
+      const entry = { id: res.scanId, token: res.sessionToken || src.sessionToken }
       if (gen !== generation) { await release(entry); return }
       cursor = entry
       // A canceled generation may still be finishing its request. Wait without
@@ -72,7 +74,7 @@ export function useViewerFilter({ source, api, onError }) {
   }
   async function cancel() {
     ++generation
-    const old = cursor; cursor = null
+    const old = cursor; cursor = null; pendingPage = null
     scanning.value = false; canceled.value = true
     await release(old)
   }

@@ -432,7 +432,7 @@ export async function sftpDownload(sessionToken, path, filename, options={}) {
  * 分块动态读取大文件片段
  */
 export function sftpReadChunk(sessionToken, path, { offset = 0, length = 262144, fromEnd = false } = {}) {
-  return get(`${BASE}/sftp/read-chunk`, { sessionToken, path, offset, length, fromEnd }, { showSuccess: false })
+  return get(`${BASE}/sftp/read-chunk`, { sessionToken, path, offset, length, fromEnd }, { showSuccess: false, showFailure: false })
 }
 
 export function sftpFilterStart(data) {
@@ -460,4 +460,15 @@ export function buildFileTailWsUrl() {
   const url = new URL(`${API_BASE}/ws/ssh-console/file-tail`, window.location.origin)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
   return url.toString()
+}
+
+
+export function getSessionContext(sessionToken) {
+  return get(`${BASE}/accounts/sessions/${encodeURIComponent(sessionToken)}`, {}, { showSuccess: false, showFailure: false })
+}
+export function openViewerSession(accountId) {
+  return post(`${BASE}/accounts/${accountId}/viewer-session`, {}, { showSuccess: false, showFailure: false })
+}
+export function closeViewerSession(sessionToken) {
+  return del(`${BASE}/accounts/viewer-sessions/${encodeURIComponent(sessionToken)}`, { showSuccess: false, showFailure: false })
 }

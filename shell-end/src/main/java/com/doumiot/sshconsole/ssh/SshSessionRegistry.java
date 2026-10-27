@@ -97,6 +97,11 @@ public class SshSessionRegistry {
         });
     }
 
+    public void closeViewerSession(String token) {
+        SessionEntry entry = sessions.get(token);
+        if (entry != null && entry.isViewerOwned()) close(token);
+    }
+
     public void close(String sessionToken) {
         SessionEntry removed = sessions.remove(sessionToken);
         if (removed != null) {
@@ -151,6 +156,7 @@ public class SshSessionRegistry {
         private int ptyCols;
         private int ptyRows;
         private boolean terminalAttached;
+        private boolean viewerOwned;
         private volatile WebSocketSession webSocketSession;
         private Instant createdAt;
         private Instant lastAccessAt;

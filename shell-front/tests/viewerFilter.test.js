@@ -113,3 +113,19 @@ test('Tail upserts only changed rows and keeps the existing array and row identi
   assert.deepEqual(rows.map(row => row.text), ['x', 'x partial completed', 'x new'])
   await filter.close()
 })
+
+
+test('a historical page arriving while selected is retained until resume and applied exactly once', async () => {
+  const pending = deferred(), started = deferred(); let calls = 0
+  const { filter } = fixture({ start: async () => ({ scanId: 'a' }), next: () => { calls++; started.resolve(); return pending.promise }, cancel: async () => {} })
+  const scan = filter.start({ keyword: 'x' }); await started.promise
+  filter.pause(true)
+  pending.resolve({ rows: [{ lineNumber: 1, text: 'x', matched: true }], offset: 2, totalSize: 2, eof: true })
+  await scan
+  assert.deepEqual(filter.rows.value, [])
+  filter.pause(false); await new Promise(setImmediate)
+  assert.equal(calls, 1)
+  assert.deepEqual(filter.rows.value.map(r => r.text), ['x'])
+  assert.equal(filter.readyForTail.value, true)
+  await filter.close()
+})

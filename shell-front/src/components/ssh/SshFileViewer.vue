@@ -48,6 +48,10 @@
       <span v-if="autoFollow" class="tail-status">{{ tailStatus === 'reconnecting' ? '连接中断，正在续接…' : tailStatus === 'connecting' ? '正在连接…' : '实时追踪中' }}</span>
       <span v-else class="scope-hint">追踪暂停</span>
     </div>
+    <div v-if="recoveryNotice" class="viewer-bar" role="status">
+      <span>{{ recoveryNotice }}{{ recovering && !autoFollow ? '（恢复追踪后加载）' : '' }}</span>
+      <el-button v-if="recovering" size="small" :disabled="!!selectedText" @click="setFollowing(true)">重新连接 / 继续</el-button>
+    </div>
     <div ref="viewerBodyRef" v-loading="loading" class="viewer-body" tabindex="0" aria-label="文件文本内容" @scroll.passive="onViewerScroll" @wheel.passive="holdFollow = false" @pointerdown="holdFollow = false" @keydown="holdFollow = false">
       <div v-if="!filter.active.value && hasMoreBefore" class="edge-note">前面还有内容，可向上加载</div>
       <pre class="file-content"><span v-for="block in renderedBlocks" :key="block.key" v-html="block.html" /></pre>
@@ -69,14 +73,15 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { sftpReadChunk, sftpDownload, sftpFilterStart, sftpFilterNext, sftpFilterCancel, buildFileTailWsUrl } from '@/api/sshConsole'
+import { sftpReadChunk, sftpDownload, sftpFilterStart, sftpFilterNext, sftpFilterCancel, buildFileTailWsUrl, getSessionContext, openViewerSession, closeViewerSession } from '@/api/sshConsole'
 import { base64ToUint8Array, decodeFileBuffer, detectFileEncoding, ENCODING_OPTIONS } from '@/utils/fileTypeHelper'
 import { createViewerBlockRenderer, highlightText, searchMatches, nextMatch, interceptFind } from '@/utils/fileViewerText'
 import { createViewerTail } from '@/composables/useViewerTail'
+import { createViewerSession, isViewerSessionError } from '@/composables/useViewerSession'
 import { useViewerFilter } from '@/composables/useViewerFilter'
 import { useTheme } from '@/composables/useTheme'
 
-const props = defineProps({ sessionToken: String, path: String, name: String, size: { type: Number, default: 0 }, encoding: { type: String, default: '' }, standalone: Boolean })
+const props = defineProps({ sessionToken: String, accountId: Number, path: String, name: String, size: { type: Number, default: 0 }, encoding: { type: String, default: '' }, standalone: Boolean })
 const emit = defineEmits(['close', 'standalone', 'edit'])
 const { effectiveDark, setPreference } = useTheme()
 const rootRef = ref(null), viewerBodyRef = ref(null), searchInputRef = ref(null)
@@ -89,14 +94,22 @@ const jumpPercent = ref(100)
 const chunkSize = 256 * 1024, maxChunks = 16
 let requestGeneration = 0, tailStarted = false, disposed = false, originalScroll = 0, holdFollow = false
 let followAfterScan = false
-const tailStatus = ref('paused')
+const tailStatus = ref('paused'), recoveryNotice = ref(''), recovering = ref(false)
+let recoveryReason = null, recoveryTimer = null, recoveryRunning = false, recoveryVersion = 0, retryDelay = 1000
+const viewerSession = createViewerSession({ token: props.sessionToken, accountId: props.accountId,
+  api: { context: getSessionContext, open: openViewerSession, close: closeViewerSession }
+})
 const combinedText = computed(() => chunks.value.map(c => c.text).join(''))
 const rangeStart = computed(() => chunks.value[0]?.offset || 0)
 const rangeEnd = computed(() => { const c = chunks.value.at(-1); return c ? c.offset + c.length : 0 })
 const filter = useViewerFilter({
-  source: () => ({ sessionToken: props.sessionToken, path: props.path, encoding: selectedEncoding.value }),
-  api: { start: sftpFilterStart, next: (scanId, sessionToken) => sftpFilterNext({ scanId, sessionToken }), cancel: (scanId, sessionToken) => sftpFilterCancel({ scanId, sessionToken }) },
-  onError: message => { setFollowing(false); ElMessage.error(message) }
+  source: () => ({ sessionToken: viewerSession.token, path: props.path, encoding: selectedEncoding.value }),
+  api: { start: data => viewerSession.run(async token => ({ ...await sftpFilterStart({ ...data, sessionToken: token }), sessionToken: token })), next: (scanId, sessionToken) => sftpFilterNext({ scanId, sessionToken }), cancel: (scanId, sessionToken) => sftpFilterCancel({ scanId, sessionToken }) },
+  onError: message => {
+    const code = recoveryCode({ message })
+    if (code) requestRecovery({ code, message })
+    else if (!recovering.value) { setFollowing(false); ElMessage.error(message) }
+  }
 })
 const displayedText = computed(() => filter.active.value ? filter.rows.value.map(r => r.text).join('\n') : combinedText.value)
 const renderBlocks = createViewerBlockRenderer()
@@ -108,7 +121,7 @@ const filterStatus = computed(() => filter.error.value ? '筛选中断' : filter
 const renderedBlocks = computed(() => frozenHtml.value ?? contentBlocks.value)
 watch([searchKeyword, matchCount], () => { activeMatch.value = matchCount.value ? Math.min(Math.max(0, activeMatch.value), matchCount.value - 1) : -1 })
 watch(filter.readyForTail, async ready => {
-  if (ready && followAfterScan && !selectedText.value && !disposed) { holdFollow = false; setFollowing(true); await nextTick(); scrollToBottom() }
+  if (ready && !recovering.value && followAfterScan && !selectedText.value && !disposed) { holdFollow = false; setFollowing(true); await nextTick(); scrollToBottom() }
 })
 watch(filter.limited, value => { if (value) setFollowing(false) })
 
@@ -137,7 +150,7 @@ async function replaceChunk(fromEnd, offset = 0) {
   const gen = ++requestGeneration
   loading.value = true
   try {
-    const res = await sftpReadChunk(props.sessionToken, props.path, { offset, length: chunkSize, fromEnd })
+    const res = await viewerSession.run(token => sftpReadChunk(token, props.path, { offset, length: chunkSize, fromEnd }))
     if (disposed || gen !== requestGeneration || filter.active.value) return
     if (!chunks.value.length && !props.encoding) selectedEncoding.value = detectFileEncoding(base64ToUint8Array(res.contentBase64))
     chunks.value = [chunk(res, fromEnd)]; updateBounds(res)
@@ -161,7 +174,7 @@ async function loadAdjacent(earlier) {
   const offset = earlier ? Math.max(0, rangeStart.value - chunkSize) : rangeEnd.value
   loading.value = true
   try {
-    const res = await sftpReadChunk(props.sessionToken, props.path, { offset, length: earlier ? rangeStart.value - offset : chunkSize })
+    const res = await viewerSession.run(token => sftpReadChunk(token, props.path, { offset, length: earlier ? rangeStart.value - offset : chunkSize }))
     if (disposed || gen !== requestGeneration || filter.active.value) return
     if (earlier) chunks.value.unshift(chunk(res)); else chunks.value.push(chunk(res))
     if (chunks.value.length > maxChunks) { if (earlier) chunks.value.pop(); else chunks.value.shift() }
@@ -183,6 +196,7 @@ async function goBottom() {
 const tail = createViewerTail({
   url: buildFileTailWsUrl,
   onStatus: value => { tailStatus.value = value },
+  onRecover: requestRecovery,
   onError: message => {
     tailStarted = false; autoFollow.value = false
     if (filter.active.value) filter.error.value = message.includes('重新筛选') ? message : `${message}；请重新筛选`
@@ -198,7 +212,7 @@ const tail = createViewerTail({
     } else {
       if (typeof page.content !== 'string') throw new Error('实时追踪文本无效，请刷新文件')
       const offset = rangeEnd.value
-      if (page.offset < offset || page.totalSize < offset) throw new Error('文件已改变或截断，请刷新文件')
+      if (page.offset < offset || page.totalSize < offset) throw Object.assign(new Error('文件已改变或截断，正在重新读取'), { code: 'FILE_CHANGED' })
       if (page.offset > offset) {
         // An empty initial HTTP read shares its offset with the first pushed batch.
         if (chunks.value.at(-1)?.length === 0) chunks.value.pop()
@@ -212,16 +226,83 @@ const tail = createViewerTail({
     return true
   }
 })
-function stopTail() { tail.close(); tailStarted = false; autoFollow.value = false }
+function cancelRecovery() {
+  ++recoveryVersion; recoveryReason = null; recovering.value = false; recoveryNotice.value = ''
+  if (recoveryTimer != null) clearTimeout(recoveryTimer)
+  recoveryTimer = null
+}
+function stopTail() { cancelRecovery(); tail.close(); tailStarted = false; autoFollow.value = false }
+function recoveryCode(error) {
+  if (isViewerSessionError(error)) return 'SESSION_EXPIRED'
+  if (/文件.*(?:截断|替换|改变|不一致)/.test(error?.message || '')) return 'FILE_CHANGED'
+  if (/(?:Tail|筛选任务).*(?:过期|失效|不存在)/.test(error?.message || '')) return 'TAIL_EXPIRED'
+  return null
+}
+function requestRecovery(frame) {
+  tailStarted = false
+  if (followAfterScan && !selectedText.value) autoFollow.value = true
+  recoveryReason = frame
+  recoveryNotice.value = frame.code === 'FILE_CHANGED' ? '文件已重置，正在重新读取并继续追踪…' : '会话已失效，正在重新连接并恢复文件追踪…'
+  recovering.value = true
+  void recoverTail()
+}
+async function recoverTail() {
+  if (disposed || recoveryRunning || !recoveryReason || !autoFollow.value || selectedText.value) return
+  if (recoveryTimer != null) clearTimeout(recoveryTimer)
+  recoveryTimer = null; recoveryRunning = true
+  const version = recoveryVersion, reason = recoveryReason
+  const current = () => !disposed && version === recoveryVersion && autoFollow.value && !selectedText.value
+  loading.value = true
+  try {
+    if (['SESSION_EXPIRED', 'SSH_DISCONNECTED'].includes(reason.code) && !reason.reconnected) { await viewerSession.reconnect(); reason.reconnected = true }
+    if (!current()) return
+    if (filter.active.value) {
+      followAfterScan = true
+      await filter.start({ keyword: filterKeyword.value, caseSensitive: caseSensitive.value, contextLines: withContext.value ? 2 : 0 })
+      if (filter.error.value) throw new Error(filter.error.value)
+    } else {
+      let offset = reason.code === 'FILE_CHANGED' ? 0 : rangeStart.value
+      let page = await viewerSession.run(token => sftpReadChunk(token, props.path, { offset, length: chunkSize, fromEnd: false }))
+      if (!current()) return
+      if (page.totalSize < offset) {
+        page = await viewerSession.run(token => sftpReadChunk(token, props.path, { offset: 0, length: chunkSize, fromEnd: false }))
+        if (!current()) return
+      }
+      chunks.value = [chunk(page, true)]; updateBounds(page)
+    }
+    if (!current()) return
+    recoveryReason = null; recovering.value = false; retryDelay = 1000
+    recoveryNotice.value = reason.code === 'FILE_CHANGED' ? '文件已重置，已重新加载并继续追踪' : '连接已恢复，继续追踪'
+    loading.value = false; setFollowing(true)
+    void nextTick(() => { if (current()) scrollToBottom() })
+  } catch (error) {
+    if (current()) {
+      recoveryNotice.value = `恢复暂未成功，稍后自动重试：${error.message || '连接不可用'}`
+      recoveryTimer = setTimeout(() => { recoveryTimer = null; void recoverTail() }, retryDelay)
+      retryDelay = Math.min(30000, retryDelay * 2)
+    }
+  } finally {
+    recoveryRunning = false
+    if (version === recoveryVersion) loading.value = false
+    // A pause/resume may have invalidated an in-flight reload. Never commit that result.
+    if (version !== recoveryVersion && recoveryReason && autoFollow.value && !disposed) void recoverTail()
+  }
+}
 function setFollowing(value) {
-  const next = Boolean(value) && !selectedText.value && (!filter.active.value || canFilterTail.value)
-  if (!next) { autoFollow.value = false; if (tailStarted) tail.pause(); return }
+  const next = Boolean(value) && !selectedText.value && (!filter.active.value || canFilterTail.value || recoveryReason)
+  if (!next) {
+    autoFollow.value = false
+    if (recoveryReason) { ++recoveryVersion; filter.pause(true); loading.value = false; if (recoveryTimer != null) clearTimeout(recoveryTimer); recoveryTimer = null }
+    if (tailStarted) tail.pause()
+    return
+  }
+  if (recoveryReason) { autoFollow.value = true; void recoverTail(); return }
   if (autoFollow.value && tailStarted) return
   autoFollow.value = true
   if (tailStarted) tail.resume()
   else {
     tailStarted = true
-    tail.start({ sessionToken: props.sessionToken, path: props.path, encoding: selectedEncoding.value,
+    tail.start({ sessionToken: viewerSession.token, path: props.path, encoding: selectedEncoding.value,
       offset: filter.active.value ? filter.offset.value : rangeEnd.value, ...(filter.active.value ? filter.tailSource() : {}) })
   }
 }
@@ -278,7 +359,7 @@ function copySelection() { return copyText(selectedText.value) }
 function copyDisplayed() { return copyText(displayedText.value) }
 async function downloadFile() {
   downloading.value = true
-  try { await sftpDownload(props.sessionToken, props.path, props.name) }
+  try { await viewerSession.run(token => sftpDownload(token, props.path, props.name)) }
   catch (err) { ElMessage.error(err.message || '下载失败') }
   finally { downloading.value = false }
 }
@@ -308,7 +389,7 @@ onMounted(() => {
   void jumpToTail()
 })
 onBeforeUnmount(() => {
-  disposed = true; ++requestGeneration; stopTail(); void filter.close()
+  disposed = true; ++requestGeneration; stopTail(); viewerSession.close(); void filter.close()
   document.removeEventListener('keydown', onDocumentKeydown, true)
   document.removeEventListener('selectionchange', onSelectionChange)
 })

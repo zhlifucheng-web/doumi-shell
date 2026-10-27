@@ -85,3 +85,17 @@ test('a result-limit batch is acknowledged then closed without reconnecting', as
   assert.deepEqual(s.sockets[0].sent.slice(-2).map(frame => frame.type), ['ack', 'close'])
   s.sockets[0].onclose(); assert.equal(s.timers.length, 0); assert.deepEqual(s.errors, [])
 })
+
+
+test('recoverable file and session errors hand off once without terminal error notifications', async () => {
+  const sockets = [], recovery = [], errors = []
+  const tail = createViewerTail({ url: () => 'ws://local', onData: () => true,
+    connect: () => { const socket = { readyState: 1, send() {}, close() {} }; sockets.push(socket); return socket },
+    onRecover: frame => recovery.push(frame.code), onError: message => errors.push(message) })
+  tail.start({ sessionToken: 'token', path: '/app.log', offset: 10 })
+  const message = { data: JSON.stringify({ type: 'error', code: 'FILE_CHANGED', message: 'changed' }) }
+  sockets[0].onmessage(message); sockets[0].onmessage(message)
+  assert.deepEqual(recovery, ['FILE_CHANGED'])
+  assert.deepEqual(errors, [])
+  tail.close()
+})

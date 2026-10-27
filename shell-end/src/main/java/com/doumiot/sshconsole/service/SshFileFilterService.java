@@ -1,5 +1,6 @@
 package com.doumiot.sshconsole.service;
 
+import com.doumiot.sshconsole.sftp.FileTailRecoveryException;
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
 import com.doumiot.sshconsole.sftp.SshFileFilterScanner;
 import lombok.Value;
@@ -147,7 +148,7 @@ public class SshFileFilterService {
         }
         return bytes;
     }
-    private static IOException changed() { return new IOException("文件已改变或截断，请重新筛选"); }
+    private static IOException changed() { return new FileTailRecoveryException("FILE_CHANGED", "文件已改变或截断，正在重新筛选"); }
     private static final class Scan {
         final String token, path;
         final SshFileFilterScanner scanner;

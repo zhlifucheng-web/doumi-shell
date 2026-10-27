@@ -1,5 +1,6 @@
 package com.doumiot.sshconsole.ws;
 
+import com.doumiot.sshconsole.sftp.FileTailRecoveryException;
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
 import com.doumiot.sshconsole.service.SshFileFilterService;
 import com.doumiot.sshconsole.service.SshSftpService;
@@ -114,9 +115,9 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
         String token=required(frame,"sessionToken"), id=required(frame,"tailId");
         validateSession(token);
         Tail tail=tails.get(id);
-        if(tail==null || !tail.token.equals(token)) throw new IOException("Tail 已失效，请重新读取文件后启动");
+        if(tail==null || !tail.token.equals(token)) throw new FileTailRecoveryException("TAIL_EXPIRED", "Tail 订阅已失效，正在恢复");
         synchronized(tail) {
-            if(tails.get(id)!=tail || (tail.control.disconnected && clock.millis()-tail.control.disconnectedAt>=RESUME_MS)) throw new IOException("Tail 已过期，请重新启动");
+            if(tails.get(id)!=tail || (tail.control.disconnected && clock.millis()-tail.control.disconnectedAt>=RESUME_MS)) throw new FileTailRecoveryException("TAIL_EXPIRED", "Tail 订阅已过期，正在恢复");
             long applied=sequence(frame);
             if(applied<tail.acknowledged || applied>tail.sequence || (tail.pending==null && applied!=tail.acknowledged))
                 throw new IOException("Tail 序号不一致，请重新读取文件");
@@ -231,8 +232,10 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
         }
     }
     private void validateSession(String token) throws IOException {
-        SshSessionRegistry.SessionEntry entry=registry.get(token);
-        if(entry.getClient()==null || !entry.getClient().isConnected()) throw new IOException("SSH 连接已断开，请重新连接后启动 Tail");
+        final SshSessionRegistry.SessionEntry entry;
+        try {entry=registry.get(token);}
+        catch(com.doumiot.spring.exception.BusinessRuntimeException expired) {throw new FileTailRecoveryException("SESSION_EXPIRED", "SSH 会话已过期，正在重新连接");}
+        if(entry.getClient()==null || !entry.getClient().isConnected()) throw new FileTailRecoveryException("SSH_DISCONNECTED", "SSH 连接已断开，正在重新连接");
     }
     private boolean open(Tail tail) throws IOException {
         Control control=tail.control;
@@ -264,7 +267,7 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
         if(handle!=null)try {handle.close();} catch(IOException ignored) {}
     }
     private void sendError(WebSocketSession socket,Throwable error) {
-        try { ObjectNode node=json.createObjectNode(); node.put("type","error"); node.put("message",error.getMessage()==null?"文件 Tail 已结束，请重新启动":error.getMessage()); send(socket,json.writeValueAsString(node)); }
+        try { ObjectNode node=json.createObjectNode(); node.put("type","error"); if(error instanceof FileTailRecoveryException) node.put("code",((FileTailRecoveryException)error).getCode()); node.put("message",error.getMessage()==null?"文件 Tail 已结束，请重新启动":error.getMessage()); send(socket,json.writeValueAsString(node)); }
         catch(IOException ignored) {} finally { closeSocket(socket); }
     }
     private void send(WebSocketSession socket,String message) throws IOException {
@@ -378,5 +381,5 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
         while(read<length) {int n=handle.read(offset+read,bytes,read,length-read);if(n<=0) throw changed();read+=n;}
         return bytes;
     }
-    private static IOException changed() {return new IOException("文件已截断、替换或改变，请重新读取后启动 Tail");}
+    private static IOException changed() {return new FileTailRecoveryException("FILE_CHANGED", "文件已截断、替换或改变，正在重新读取");}
 }

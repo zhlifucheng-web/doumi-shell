@@ -2,6 +2,7 @@ package com.doumiot.sshconsole.service;
 
 import com.doumiot.common.exception.enums.ParamExceptionEnum;
 import com.doumiot.spring.exception.BusinessRuntimeException;
+import com.doumiot.sshconsole.sftp.FileTailRecoveryException;
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
 import com.doumiot.sshconsole.config.SshConsoleProperties;
 import com.doumiot.sshconsole.sftp.SshSftpAttributeFormatter;
@@ -244,7 +245,14 @@ public class SshSftpService {
         private ReadFileHandle(String path, SFTPClient sftp, RemoteFile remote) { this.path=path; this.sftp=sftp; this.remote=remote; }
         public String path() { return path; }
         public long length() throws IOException { return remote.length(); }
-        public FileAttributes attributes() throws IOException { return sftp.stat(path); }
+        public FileAttributes attributes() throws IOException {
+            try { return sftp.stat(path); }
+            catch (SFTPException error) {
+                if (error.getStatusCode() == net.schmizz.sshj.sftp.Response.StatusCode.NO_SUCH_FILE || error.getStatusCode() == net.schmizz.sshj.sftp.Response.StatusCode.NO_SUCH_PATH)
+                    throw new FileTailRecoveryException("FILE_CHANGED", "文件路径暂时不存在，等待轮转后的文件");
+                throw error;
+            }
+        }
         /** Retry a racing append; consistently read the smaller observed snapshot while a writer remains active. */
         public ReadSnapshot snapshot() throws IOException {
             FileAttributes attrs = attributes(); long remoteSize = length();
@@ -253,7 +261,7 @@ public class SshSftpService {
             if (!stable) {
                 divergentReads = remoteSize == divergentRemoteSize ? divergentReads + 1 : 1;
                 divergentRemoteSize = remoteSize;
-                if (divergentReads >= 3) throw new IOException("文件路径与打开的文件不一致，请重新读取后启动 Tail");
+                if (divergentReads >= 3) throw new FileTailRecoveryException("FILE_CHANGED", "文件路径与打开的文件不一致，正在重新读取");
             } else { divergentReads = 0; divergentRemoteSize = -1; }
             return new ReadSnapshot(Math.min(attrs.getSize(), remoteSize), attrs.getMtime(), stable);
         }

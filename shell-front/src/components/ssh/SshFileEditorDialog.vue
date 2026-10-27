@@ -190,6 +190,7 @@ import { css } from '@codemirror/legacy-modes/mode/css'
 import { diff } from '@codemirror/legacy-modes/mode/diff'
 
 const props = defineProps({
+  accountId: Number,
   modelValue: { type: Boolean, default: false },
   file: { type: Object, default: () => null },
   dir: { type: String, default: '/' },
@@ -287,6 +288,7 @@ function openInStandaloneWindow() {
     path: '/file-viewer',
     query: {
       token,
+      accountId: props.accountId,
       path: filePath,
       name: fileName,
       size: fileSize,

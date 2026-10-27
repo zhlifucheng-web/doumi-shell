@@ -272,6 +272,7 @@
       :file="editorFile"
       :dir="loadedPath || currentPath || defaultCwd || '/'"
       :session-token="sessionToken"
+      :account-id="accountId"
       @saved="refresh"
       @switch-to-stream="openLargeFileViewer"
     />
@@ -281,6 +282,7 @@
       :file="largeViewerFile"
       :dir="loadedPath || currentPath || defaultCwd || '/'"
       :session-token="sessionToken"
+      :account-id="accountId"
       @switch-to-editor="openFullEditor"
     />
   </div>
@@ -662,6 +664,7 @@ function openStandaloneViewer(row) {
     path: '/file-viewer',
     query: {
       token: props.sessionToken,
+      accountId: props.accountId,
       path: filePath,
       name: row.name,
       size: row.size

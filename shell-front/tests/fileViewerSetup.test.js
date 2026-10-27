@@ -5,9 +5,10 @@ import { mountSfcSetup } from './helpers/mountSfcSetup.js'
 import * as text from '../src/utils/fileViewerText.js'
 import * as helpers from '../src/utils/fileTypeHelper.js'
 import { createViewerTail } from '../src/composables/useViewerTail.js'
+import { createViewerSession, isViewerSessionError } from '../src/composables/useViewerSession.js'
 import { useViewerFilter } from '../src/composables/useViewerFilter.js'
 
-function mountViewer({ read, standalone = true, encoding = 'UTF-8' } = {}) {
+function mountViewer({ read, api = {}, standalone = true, encoding = 'UTF-8' } = {}) {
   const listeners = {}, timers = new Map(), copied = [], messages = [], sockets = []
   let selected = ''; let sequence = 0
   const body = { scrollTop: 100, scrollHeight: 200, clientHeight: 100, querySelector: () => null, contains: () => true }
@@ -22,17 +23,20 @@ function mountViewer({ read, standalone = true, encoding = 'UTF-8' } = {}) {
     '@/api/sshConsole': {
       sftpReadChunk: read || (async () => ({ offset: 0, length: 6, totalSize: 6, hasMoreBefore: false, hasMoreAfter: false, contentBase64: btoa('hello\n') })),
       buildFileTailWsUrl: () => 'ws://localhost/ws/ssh-console/file-tail',
-      sftpFilterStart: async () => ({ scanId: 'a' }), sftpFilterNext: async () => ({ rows: [], offset: 6, totalSize: 6, eof: true }), sftpFilterCancel: async () => {}
+      sftpFilterStart: async () => ({ scanId: 'a' }), sftpFilterNext: async () => ({ rows: [], offset: 6, totalSize: 6, eof: true }), sftpFilterCancel: async () => {},
+      getSessionContext: async () => ({ accountId: 57 }), openViewerSession: async () => ({ sessionToken: 'renewed' }), closeViewerSession: async () => {}, ...api
     },
     '@/utils/fileViewerText': text, '@/utils/fileTypeHelper': helpers,
     '@/composables/useViewerFilter': { useViewerFilter },
+    '@/composables/useViewerSession': { createViewerSession, isViewerSessionError },
     '@/composables/useViewerTail': { createViewerTail: options => createViewerTail({ ...options, connect: () => { const socket = { readyState: 1, sent: [], send(v) { this.sent.push(JSON.parse(v)) }, close() {}, frame(v) { this.onmessage({ data: JSON.stringify(v) }) } }; sockets.push(socket); queueMicrotask(() => { socket.onopen(); socket.frame({ type: 'ready', tailId: 't' }) }); return socket } }) },
     '@/composables/useTheme': { useTheme: () => ({ effectiveDark: vue.ref(false), setPreference: () => {} }) }
   }
   const mounted = mountSfcSetup(new URL('../src/components/ssh/SshFileViewer.vue', import.meta.url), {
     modules, props: { sessionToken: 'token', path: '/app.log', name: 'app.log', standalone, encoding },
     globals: { document: doc, window: { getSelection: doc.getSelection }, navigator: { clipboard: { writeText: async s => copied.push(s) } },
-      setInterval: fn => { const id = ++sequence; timers.set(id, fn); return id }, clearInterval: id => timers.delete(id) },
+      setInterval: fn => { const id = ++sequence; timers.set(id, fn); return id }, clearInterval: id => timers.delete(id),
+      setTimeout: fn => { const id = ++sequence; timers.set(id, fn); return id }, clearTimeout: id => timers.delete(id) },
     onSetup: state => { state.viewerBodyRef.value = body; state.rootRef.value = { contains: () => true } }
   })
   return { ...mounted, sockets, listeners, timers, body, copied, messages, select: s => { selected = s; listeners.selectionchange?.() } }
@@ -203,4 +207,150 @@ test('first Tail append to an empty file creates one unique keyed content block'
     assert.equal(new Set(blocks.map(b => b.key)).size, blocks.length)
     assert.equal(viewer.state.combinedText.value, 'first')
   } finally { viewer.unmount() }
+})
+
+
+test('an expired initial session reconnects once and reads using the renewed token without error toasts', async () => {
+  const tokens = []
+  const viewer = mountViewer({ read: async token => {
+    tokens.push(token)
+    if (token === 'token') throw new Error('入参不能为空: 会话不存在或已过期')
+    return { offset: 0, length: 4, totalSize: 4, contentBase64: btoa('new\n') }
+  } })
+  try {
+    await flush(); await flush()
+    assert.equal(viewer.state.combinedText.value, 'new\n')
+    assert.deepEqual(tokens, ['token', 'renewed'])
+    assert.equal(viewer.sockets.at(-1).sent[0].sessionToken, 'renewed')
+    assert.deepEqual(viewer.messages, [])
+  } finally { viewer.unmount() }
+})
+
+test('a reset file reloads from the beginning and continues Tail with fresh sequence state', async () => {
+  let value = 'hello\n'; const reads = []
+  const viewer = mountViewer({ read: async (token, path, options) => {
+    reads.push(options)
+    return { offset: 0, length: value.length, totalSize: value.length, contentBase64: btoa(value) }
+  } })
+  try {
+    await flush(); value = 'reset\n'
+    viewer.sockets[0].frame({ type: 'error', code: 'FILE_CHANGED', message: '文件已截断' })
+    await flush(); await flush()
+    assert.equal(viewer.state.combinedText.value, 'reset\n')
+    assert.equal(reads.at(-1).fromEnd, false)
+    assert.equal(reads.at(-1).offset, 0)
+    assert.equal(viewer.state.autoFollow.value, true)
+    viewer.sockets.at(-1).frame({ type: 'data', sequence: 1, offset: 11, totalSize: 11, content: 'next\n' })
+    await flush()
+    assert.equal(viewer.state.combinedText.value, 'reset\nnext\n')
+    assert.deepEqual(viewer.messages, [])
+  } finally { viewer.unmount() }
+})
+
+test('file reset while selected preserves text and scroll until explicit following resumes', async () => {
+  let value = 'hello\n', reads = 0
+  const viewer = mountViewer({ read: async () => {
+    reads++; return { offset: 0, length: value.length, totalSize: value.length, contentBase64: btoa(value) }
+  } })
+  try {
+    await flush(); viewer.select('hello'); const top = viewer.body.scrollTop
+    value = 'reset\n'; viewer.sockets[0].frame({ type: 'error', code: 'FILE_CHANGED', message: '文件已截断' })
+    await flush()
+    assert.equal(reads, 1)
+    assert.equal(viewer.state.combinedText.value, 'hello\n')
+    assert.equal(viewer.body.scrollTop, top)
+    viewer.select(''); viewer.state.setFollowing(true); await flush(); await flush()
+    assert.equal(viewer.state.combinedText.value, 'reset\n')
+    assert.equal(viewer.state.autoFollow.value, true)
+  } finally { viewer.unmount() }
+})
+
+test('filtered Tail reset rescans the same keyword and resumes a new filter subscription', async () => {
+  let scan = 0; const keywords = []
+  const viewer = mountViewer({ api: {
+    sftpFilterStart: async data => { keywords.push(data.keyword); return { scanId: `scan-${++scan}` } },
+    sftpFilterNext: async ({scanId}) => ({ scanId, rows: [{ lineNumber: 1, text: scanId, matched: true }], offset: 6, totalSize: 6, eof: true })
+  } })
+  try {
+    await flush(); viewer.state.filterKeyword.value = 'hit'; await viewer.state.startFilter(); await flush()
+    viewer.sockets.at(-1).frame({ type: 'error', code: 'FILE_CHANGED', message: '文件已改变或截断' })
+    await flush(); await flush()
+    assert.deepEqual(keywords, ['hit', 'hit'])
+    assert.equal(viewer.state.filter.rows.value[0].text, 'scan-2')
+    assert.equal(viewer.state.autoFollow.value, true)
+    assert.equal(viewer.sockets.at(-1).sent[0].scanId, 'scan-2')
+    assert.deepEqual(viewer.messages, [])
+  } finally { viewer.unmount() }
+})
+
+
+test('pausing an in-flight reset reload rejects its late result and resumes without duplicates', async () => {
+  let resolve, reads = 0
+  const viewer = mountViewer({ read: async () => {
+    if (++reads === 2) return new Promise(done => { resolve = done })
+    return { offset: 0, length: 6, totalSize: 6, contentBase64: btoa(reads === 1 ? 'hello\n' : 'fresh\n') }
+  } })
+  try {
+    await flush(); viewer.sockets[0].frame({ type: 'error', code: 'FILE_CHANGED' }); await flush()
+    viewer.select('hello'); const top = viewer.body.scrollTop
+    resolve({ offset: 0, length: 5, totalSize: 5, contentBase64: btoa('late\n') }); await flush()
+    assert.equal(viewer.state.combinedText.value, 'hello\n'); assert.equal(viewer.body.scrollTop, top)
+    viewer.select(''); viewer.state.setFollowing(true); await flush(); await flush()
+    assert.equal(viewer.state.combinedText.value, 'fresh\n')
+    assert.equal(viewer.state.autoFollow.value, true)
+  } finally { viewer.unmount() }
+})
+
+test('closing while a recovered session is opening releases it without reading or creating a new tail', async () => {
+  let resolve; const released = []; let reads = 0
+  const viewer = mountViewer({ read: async () => { reads++; return { offset: 0, length: 6, totalSize: 6, contentBase64: btoa('hello\n') } },
+    api: { openViewerSession: () => new Promise(done => { resolve = done }), closeViewerSession: async token => released.push(token) } })
+  await flush(); viewer.sockets[0].frame({ type: 'error', code: 'SESSION_EXPIRED' }); await flush()
+  viewer.unmount(); resolve({ sessionToken: 'late-token' }); await flush()
+  assert.deepEqual(released, ['late-token']); assert.equal(reads, 1); assert.equal(viewer.sockets.length, 1)
+})
+
+test('expired Tail state rebuilds content and resumes without retaining the obsolete tail ID', async () => {
+  const viewer = mountViewer()
+  try {
+    await flush(); viewer.sockets[0].frame({ type: 'error', code: 'TAIL_EXPIRED' }); await flush(); await flush()
+    assert.equal(viewer.sockets.length, 2)
+    assert.equal(viewer.sockets[1].sent[0].type, 'start')
+    assert.equal(viewer.state.combinedText.value, 'hello\n')
+    assert.equal(viewer.state.autoFollow.value, true)
+  } finally { viewer.unmount() }
+})
+
+
+test('client-side truncation bounds trigger the same reload path as server file-change events', async () => {
+  let content = 'hello\n'
+  const viewer = mountViewer({ read: async () => ({ offset: 0, length: content.length, totalSize: content.length, contentBase64: btoa(content) }) })
+  try {
+    await flush(); content = 'new\n'
+    viewer.sockets[0].frame({ type: 'data', sequence: 1, offset: 4, totalSize: 4, content: 'new\n' })
+    await flush(); await flush()
+    assert.equal(viewer.state.combinedText.value, 'new\n')
+    assert.equal(viewer.state.autoFollow.value, true)
+    assert.deepEqual(viewer.messages, [])
+  } finally { viewer.unmount() }
+})
+
+
+test('transient recovery failure schedules one retry and pause cancels it until explicit resume', async () => {
+  let reads = 0
+  const viewer = mountViewer({ read: async () => {
+    if (++reads === 2) throw new Error('No such file')
+    return { offset: 0, length: 6, totalSize: 6, contentBase64: btoa(reads === 1 ? 'hello\n' : 'fresh\n') }
+  } })
+  try {
+    await flush(); viewer.sockets[0].frame({ type: 'error', code: 'FILE_CHANGED' }); await flush()
+    assert.equal(viewer.timers.size, 1)
+    assert.equal(viewer.state.combinedText.value, 'hello\n')
+    viewer.state.setFollowing(false); assert.equal(viewer.timers.size, 0)
+    viewer.state.setFollowing(true); await flush(); await flush()
+    assert.equal(viewer.state.combinedText.value, 'fresh\n')
+    assert.equal(viewer.state.autoFollow.value, true)
+    assert.deepEqual(viewer.messages, [])
+  } finally { viewer.unmount() }
+  assert.equal(viewer.timers.size, 0)
 })
