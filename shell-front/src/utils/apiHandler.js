@@ -66,14 +66,14 @@ export async function handleApiResponse(apiPromise, options = {}) {
         if (success !== true || code !== 200) {
             const extInfo = externMessage ? (": " + externMessage) : "";
             const errorMsg = (message + extInfo) || '操作失败'
-            if (!silent && showFailure) {
-                ElMessage.error(errorMsg)
-            }
             if (throwOnError) {
                 const error = new Error(errorMsg)
                 error.code = code
                 error.exceptionType = exceptionType
                 throw error
+            }
+            if (!silent && showFailure) {
+                ElMessage.error(errorMsg)
             }
             return null
         }

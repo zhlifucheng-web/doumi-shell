@@ -186,7 +186,7 @@ export function sftpChown(sessionToken, path, owner, group, recursive = false) {
 }
 
 export function sftpGetUsersAndGroups(sessionToken) {
-  return get(`${BASE}/sftp/users-and-groups`, { sessionToken }, { showSuccess: false })
+  return get(`${BASE}/sftp/users-and-groups`, { sessionToken }, { showSuccess: false, showFailure: false })
 }
 
 export function killHostProcess(sessionToken, pid, signal = 'TERM') {

@@ -21,6 +21,8 @@
 
 后端在 `shell-end` 中执行 `mvn verify`，使用 Java 17 运行生成的 JAR。首次启动初始化完整表结构，不迁移开发阶段的旧数据库。
 
+目录扫描面向 GNU/Linux。两个真实扫描测试会先检测本机是否具备 Bash、GNU timeout/du/find/sort，以及支持 NUL 分隔记录的 awk；缺少这些工具时明确跳过，解析器等其他测试照常运行。macOS 自带的 BSD 工具不满足条件，发布前应在具备上述工具的 Linux 环境运行这两个测试，无需排除测试方法。
+
 | 环境变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | `DOUMI_PORT` | `80` | 网页、HTTP 和 WebSocket 端口 |
@@ -31,6 +33,8 @@
 配置键使用 `doumi.storage`、`doumi.ssh-console`。端口、数据目录等示例见 `shell-end/config/application.yml.example`。
 
 Linux 终端默认使用由账户 ID 和终端 ID 确定的 tmux 会话。相同终端 ID 重连会重新附着并保留现场，不同标签使用独立会话。普通终端在目标主机未安装 tmux 或配置 `doumi.ssh-console.tmux-enabled: false` 时使用普通 SSH；此时断开连接会结束交互现场。
+
+终端工具栏和分屏标题栏提供“断开连接”：关闭该标签的连接并停止监控，保留标签、当前屏幕和 SFTP 路径，不删除远端 tmux 会话。断开后点击“重新连接”会沿用原终端 ID；手动断开的标签在当前页面切换或重新挂载分屏时不会自动连接。普通 SSH 仍遵循上述断开后结束交互现场的行为。
 
 ## tmux 启动与故障处理
 

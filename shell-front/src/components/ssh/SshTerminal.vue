@@ -75,7 +75,7 @@
     </transition>
 
     <div v-if="disconnected" class="reconnect-bar">
-      <span>会话已断开</span>
+      <span>{{ manuallyDisconnected ? (connectionMode.includes('tmux') ? '已手动断开，远端 tmux 会话保留' : '已手动断开') : '会话已断开' }}</span>
       <el-button size="small" type="primary" @click="reconnect">重新连接</el-button>
       <el-button v-if="!shareToken" size="small" @click="reconnectPlainSsh">改用普通 SSH</el-button>
     </div>
@@ -115,7 +115,8 @@ const props = defineProps({
   fontSize: { type: Number, default: 14 },
   lightTone: { type: String, default: 'paper' }, // 'paper' | 'hybrid'
   encoding: { type: String, default: 'UTF-8' },
-  currentPath: { type: String, default: '' }
+  currentPath: { type: String, default: '' },
+  paused: { type: Boolean, default: false }
 })
 
 const emit = defineEmits([
@@ -167,6 +168,7 @@ const termContainer = ref(null)
 const scrollTarget = shallowRef(null)
 const statusMessage = ref('连接中…')
 const disconnected = ref(false)
+const manuallyDisconnected = ref(false)
 const connectionMode = ref('')
 const tmuxVersion = ref('')
 const tmuxVersionSource = ref('unknown')
@@ -495,15 +497,8 @@ function activateSession(frame) {
   })
 }
 
-function disposeTerminal() {
-  terminalSelection?.dispose()
-  terminalSelection = null
+function closeConnection() {
   cancelHistory()
-  historyText.value = ''
-  searchScope.value = 'connection'
-  scrollTarget.value = null
-  resizeObserver?.disconnect()
-  resizeObserver = null
   connectionGuard?.dispose()
   connectionGuard = null
   dataBound = false
@@ -517,6 +512,17 @@ function disposeTerminal() {
     }
     ws = null
   }
+}
+
+function disposeTerminal() {
+  terminalSelection?.dispose()
+  terminalSelection = null
+  closeConnection()
+  historyText.value = ''
+  searchScope.value = 'connection'
+  scrollTarget.value = null
+  resizeObserver?.disconnect()
+  resizeObserver = null
   if (terminal) {
     terminal.dispose()
     terminal = null
@@ -591,6 +597,7 @@ function connect() {
   const gen = ++connectGen
   disposeTerminal()
   disconnected.value = false
+  manuallyDisconnected.value = false
   connectionMode.value = ''
   tmuxVersion.value = ''
   tmuxVersionSource.value = 'unknown'
@@ -694,6 +701,17 @@ function connect() {
   resizeObserver.observe(termContainer.value)
 }
 
+function disconnect() {
+  if (manuallyDisconnected.value) return
+  ++connectGen
+  manuallyDisconnected.value = true
+  disconnected.value = true
+  statusMessage.value = ''
+  closeContextMenu()
+  closeConnection()
+  emit('disconnected', { manual: true })
+}
+
 function reconnect() {
   connect()
 }
@@ -730,11 +748,13 @@ defineExpose({
   sendInput,
   clearScreen,
   focusTerminal,
+  disconnect,
   reconnect
 })
 
 onMounted(() => {
-  connect()
+  if (props.paused) disconnect()
+  else connect()
 })
 
 onBeforeUnmount(() => {
@@ -744,9 +764,13 @@ onBeforeUnmount(() => {
 watch(
   () => props.accountId,
   () => {
-    reconnect()
+    if (!props.paused) reconnect()
   }
 )
+
+watch(() => props.paused, paused => {
+  if (paused) disconnect()
+})
 </script>
 
 <style scoped>

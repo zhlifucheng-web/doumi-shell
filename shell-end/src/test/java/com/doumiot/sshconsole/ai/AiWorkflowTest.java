@@ -33,10 +33,22 @@ class AiWorkflowTest {
         do{status=chats.status(id,0);if(!status.path("running").asBoolean())return status;Thread.sleep(10);}while(System.currentTimeMillis()<until);
         fail("AI worker did not finish");return null;
     }
-    @Test void allFivePagesHaveToolsAndNoVendorSpecificImporter() {
+    @Test void allFivePagesHaveToolsIncludingGenericAndFinalShellImporters() {
         Set<String> pages=new HashSet<>();tools.catalog().forEach(t->pages.add(t.path("page").asText()));
         assertEquals(new HashSet<>(Arrays.asList("terminal","scripts","processes","disk-usage","data-management")),pages);
-        assertTrue(tools.catalog().size()>=45);assertFalse(tools.catalog().toString().toLowerCase().contains("finalshell"));
+        assertTrue(tools.catalog().size()>=45);
+        for(String name:Arrays.asList("configuration_import","finalshell_import")) {
+            JsonNode importer=catalogTool(name);
+            assertEquals("data-management",importer.path("page").asText());
+            assertTrue(importer.path("writes").asBoolean());
+            assertTrue(importer.path("requiresConfirmation").asBoolean());
+        }
+    }
+    @Test void finalShellImportWaitsForApprovalBeforeReadingLocalFiles() throws Exception {
+        JsonNode result=tools.call("owner","finalshell_import",AiJson.object("localPath","/not-read-before-approval"));
+        assertTrue(result.path("requiresConfirmation").asBoolean());
+        assertFalse(result.path("actionId").asText().isEmpty());
+        assertTrue(tools.confirm("owner",result.path("actionId").asText(),false).path("cancelled").asBoolean());
     }
     @Test void conversationOrderingUsesLatestEventTimeAndFallsBackToCreationTime() {
         JsonNode events=AiJson.JSON.createArrayNode().add(AiJson.object("role","user","timestamp",200L)).add(AiJson.object("role","assistant","timestamp",350L));

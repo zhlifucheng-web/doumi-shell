@@ -823,28 +823,28 @@ async function doRename() {
 }
 
 async function loadSystemUsersAndGroups() {
-  if (!props.sessionToken) {
-    canChown.value = false
-    return
-  }
+  const token = props.sessionToken
+  if (!token) return
   try {
-    const res = await sftpGetUsersAndGroups(props.sessionToken)
+    const res = await sftpGetUsersAndGroups(token)
+    if (disposed || token !== props.sessionToken) return
     // 如果当前用户无法查看到其他用户或无权限，关闭此选项
     canChown.value = !!(res?.canViewOtherUsers && res?.canChown)
     if (res?.users) systemUsers.value = res.users
     if (res?.groups) systemGroups.value = res.groups
   } catch (err) {
+    if (disposed || token !== props.sessionToken) return
     canChown.value = false
+    if (isSessionExpiredError(err)) emit('session-invalid')
   }
 }
 
 watch(() => props.sessionToken, token => {
+  canChown.value = false
+  systemUsers.value = []
+  systemGroups.value = []
   if (token) {
     void loadSystemUsersAndGroups()
-  } else {
-    canChown.value = false
-    systemUsers.value = []
-    systemGroups.value = []
   }
 }, { immediate: true })
 

@@ -5,7 +5,7 @@ import * as vue from 'vue'
 
 const filename = new URL('../src/components/ssh/SshFilePanel.vue', import.meta.url)
 
-function mountPanel(props = {}, listDirectory, fileLocation = vue.ref(null)) {
+function mountPanel(props = {}, listDirectory, fileLocation = vue.ref(null), loadUsers) {
   const requests = []
   const events = []
   const pathEvents = []
@@ -25,7 +25,7 @@ function mountPanel(props = {}, listDirectory, fileLocation = vue.ref(null)) {
         if (listDirectory) return listDirectory(token, path)
         return { path: path || '/home/demo', items: [{ name: 'docs', dir: true }] }
       },
-      sftpGetUsersAndGroups: async () => ({ canViewOtherUsers: false, canChown: false, users: [], groups: [] })
+      sftpGetUsersAndGroups: loadUsers || (async () => ({ canViewOtherUsers: false, canChown: false, users: [], groups: [] }))
     }
   }
   const mounted = mountSfcSetup(filename, {
@@ -64,6 +64,47 @@ test('SFTP panel loads its initial directory and reports subsequent directory na
 })
 
 const flush = async () => { await new Promise(setImmediate); await vue.nextTick() }
+
+test('expired background user lookup invalidates the current session without a popup', async () => {
+  const panel = mountPanel({ sessionToken: 'expired' }, undefined, vue.ref(null), async () => { throw new Error('会话不存在或已过期') })
+  try {
+    await flush()
+    assert.equal(panel.invalid.length, 1)
+    assert.equal(panel.state.canChown.value, false)
+    assert.deepEqual(panel.errors, [])
+  } finally { panel.unmount() }
+})
+
+test('a late user lookup cannot replace permissions from a new session', async () => {
+  let resolveOld
+  const panel = mountPanel({ sessionToken: 'old' }, undefined, vue.ref(null), token => token === 'old'
+    ? new Promise(resolve => { resolveOld = resolve })
+    : Promise.resolve({ canViewOtherUsers: false, canChown: false, users: ['new-user'], groups: ['new-group'] }))
+  try {
+    panel.props.sessionToken = 'new'
+    await flush()
+    resolveOld({ canViewOtherUsers: true, canChown: true, users: ['old-user'], groups: ['old-group'] })
+    await flush()
+    assert.equal(panel.state.canChown.value, false)
+    assert.deepEqual(panel.state.systemUsers.value, ['new-user'])
+    assert.deepEqual(panel.state.systemGroups.value, ['new-group'])
+  } finally { panel.unmount() }
+})
+
+test('a late expired user lookup cannot invalidate a new session', async () => {
+  let rejectOld
+  const panel = mountPanel({ sessionToken: 'old' }, undefined, vue.ref(null), token => token === 'old'
+    ? new Promise((resolve, reject) => { rejectOld = reject })
+    : Promise.resolve({ canViewOtherUsers: true, canChown: true, users: ['new-user'], groups: ['new-group'] }))
+  try {
+    panel.props.sessionToken = 'new'
+    await flush()
+    rejectOld(new Error('会话不存在或已过期'))
+    await flush()
+    assert.deepEqual(panel.invalid, [])
+    assert.equal(panel.state.canChown.value, true)
+  } finally { panel.unmount() }
+})
 
 test('a restored SFTP directory is used by the first request and identified by terminal tab', async () => {
   const panel = mountPanel({ sessionToken: 'test-session', accountId: 1, tabId: 'tab-a', savedPath: '/var/log', defaultCwd: '/home/demo' })

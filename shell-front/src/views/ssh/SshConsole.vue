@@ -435,6 +435,8 @@
                         </template>
                       </el-dropdown>
                       <TerminalToolbar
+                        :allow-disconnect="!!activeTerminalTab"
+                        :disconnect-disabled="!!activeTerminalTab?.manuallyDisconnected"
                         :snippet-visible="snippetBarVisible"
                         :is-split="isSplit"
                         :allow-split="terminalTabs.length > 1"
@@ -442,6 +444,7 @@
                         :terminal-tone="terminalLightTone"
                         :encoding="activeTerminalTab?.encoding || terminalEncoding"
                         @clear="onClearActiveTerminal"
+                        @disconnect="disconnectTerminalTab(activeTerminalId)"
                         @toggle-snippets="snippetBarVisible = !snippetBarVisible"
                         @toggle-split="isSplit = !isSplit"
                         @change-font-size="size => terminalFontSize = size"
@@ -467,6 +470,7 @@
                       <div class="terminal-pane main-pane">
                         <div v-for="tab in terminalTabs" :key="`terminal-${tab.tabId}`" v-show="activeTerminalId === tab.tabId" class="terminal-tab-content">
                           <SshTerminal :account-id="tab.accountId"
+                            :paused="!!tab.manuallyDisconnected"
                             :terminal-id="tab.terminalId || tab.tabId"
                             :ref="el => setTerminalRef(tab.tabId, el)"
                             :font-size="terminalFontSize"
@@ -475,7 +479,7 @@
                             :current-path="tab.sftpPath || tab.defaultCwd || ''"
                             @drop-files="onTerminalDropFiles"
                             @ready="payload => onTerminalReady(tab.tabId, payload)"
-                            @disconnected="() => onTerminalDisconnected(tab.tabId)"
+                            @disconnected="payload => onTerminalDisconnected(tab.tabId, payload)"
                             @size-change="onTerminalSizeChange"
                             @change-encoding="enc => onChangeEncoding(enc, tab.tabId)"
                             @ask-ai="handleTerminalAskAi" />
@@ -486,10 +490,13 @@
                         <div class="split-pane-header">
                           <span class="split-badge">分屏会话</span>
                           <span class="split-label">{{ splitTerminalTab.label }}</span>
+                          <button type="button" class="split-close-btn" :disabled="!!splitTerminalTab.manuallyDisconnected"
+                            title="断开此会话的连接，保留远端 tmux 会话" @click="disconnectTerminalTab(splitTerminalTab.tabId)">断开连接</button>
                           <button type="button" class="split-close-btn" title="关闭分屏" @click="isSplit = false">✕</button>
                         </div>
                         <div class="split-pane-content">
                           <SshTerminal :account-id="splitTerminalTab.accountId"
+                            :paused="!!splitTerminalTab.manuallyDisconnected"
                             :terminal-id="splitTerminalTab.terminalId || splitTerminalTab.tabId"
                             :ref="el => setTerminalRef(`split-${splitTerminalTab.tabId}`, el)"
                             :font-size="terminalFontSize"
@@ -498,7 +505,7 @@
                             :current-path="splitTerminalTab.sftpPath || splitTerminalTab.defaultCwd || ''"
                             @drop-files="onTerminalDropFiles"
                             @ready="payload => onTerminalReady(splitTerminalTab.tabId, payload)"
-                            @disconnected="() => onTerminalDisconnected(splitTerminalTab.tabId)"
+                            @disconnected="payload => onTerminalDisconnected(splitTerminalTab.tabId, payload)"
                             @change-encoding="enc => onChangeEncoding(enc, splitTerminalTab.tabId)" />
                         </div>
                       </div>
@@ -1070,6 +1077,12 @@ function onRunSnippet(cmd) {
 function onClearActiveTerminal() {
   const term = terminalRefs.get(activeTerminalId.value)
   if (term) term.clearScreen()
+}
+
+function disconnectTerminalTab(tabId) {
+  // A split tab also has a mounted primary view; detach both clients.
+  terminalRefs.get(tabId)?.disconnect()
+  terminalRefs.get(`split-${tabId}`)?.disconnect()
 }
 
 function toggleTerminalFullscreen() {
@@ -2017,6 +2030,7 @@ function closeTerminalTab(tabId) {
 function onTerminalReady(tabId, payload) {
   const tab = terminalTabs.value.find(item => item.tabId === tabId)
   if (!tab) return
+  tab.manuallyDisconnected = false
   tab.token = payload?.sessionToken || ''
   tab.connectionMode = payload?.connectionMode || ''
   tab.tmuxVersion = payload?.tmuxVersion || ''
@@ -2024,8 +2038,9 @@ function onTerminalReady(tabId, payload) {
   if (activeTerminalId.value === tabId) sessionToken.value = tab.token
 }
 
-function onTerminalDisconnected(tabId) {
+function onTerminalDisconnected(tabId, payload) {
   const tab = terminalTabs.value.find(item => item.tabId === tabId)
+  if (tab && payload?.manual) tab.manuallyDisconnected = true
   if (tab) { tab.token = ''; tab.connectionMode = ''; tab.tmuxVersion = ''; tab.tmuxVersionSource = 'unknown' }
   if (activeTerminalId.value === tabId) sessionToken.value = ''
 }
@@ -3605,8 +3620,12 @@ async function isHostInsideGroup(hostId, groupId) {
   padding: 2px 4px;
   border-radius: 3px;
 }
-.split-close-btn:hover {
+.split-close-btn:hover:not(:disabled) {
   color: var(--ws-color-danger);
+}
+.split-close-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .split-pane-content {
   flex: 1;
