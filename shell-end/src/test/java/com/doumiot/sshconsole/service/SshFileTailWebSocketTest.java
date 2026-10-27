@@ -44,7 +44,7 @@ class SshFileTailWebSocketTest {
             if(blockOnOpen.compareAndSet(true,false)){blocked.countDown();release.await(5,java.util.concurrent.TimeUnit.SECONDS);}
             opened++;
             SFTPClient sftp = mock(SFTPClient.class); RemoteFile remote = mock(RemoteFile.class);
-            when(sftp.type(anyString())).thenReturn(FileMode.Type.REGULAR); when(sftp.open(anyString())).thenReturn(remote);
+            when(sftp.type(anyString())).thenAnswer(c -> {if(pathMissing) throw new SFTPException(Response.StatusCode.NO_SUCH_FILE,"No such file");return FileMode.Type.REGULAR;}); when(sftp.open(anyString())).thenReturn(remote);
             when(sftp.stat(anyString())).thenAnswer(c -> {
                 if(pathMissing) throw new SFTPException(Response.StatusCode.NO_SUCH_FILE,"No such file");
                 FileAttributes attrs=new FileAttributes.Builder().withSize(bytes.length).withAtimeMtime(mtime,mtime).build();
@@ -132,6 +132,10 @@ class SshFileTailWebSocketTest {
     }
     @Test void temporarilyMissingRotatedPathRequestsReloadInsteadOfEndingTail() throws Exception {
         start(2,null); pathMissing=true; check();
+        assertEquals("FILE_CHANGED",last().path("code").asText()); assertEquals(opened,closed);
+    }
+    @Test void pathMissingBeforeHandleOpenIsAlsoRecoverable() throws Exception {
+        pathMissing=true; start(2,null);
         assertEquals("FILE_CHANGED",last().path("code").asText()); assertEquals(opened,closed);
     }
     @Test void quietAndPausedStreamsSendHeartbeatWithoutReopeningSftp() throws Exception {

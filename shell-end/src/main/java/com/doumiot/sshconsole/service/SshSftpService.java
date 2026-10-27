@@ -221,8 +221,14 @@ public class SshSftpService {
         } catch (IOException | RuntimeException error) {
             if (remote != null) try { remote.close(); } catch (IOException cleanup) { error.addSuppressed(cleanup); }
             try { sftp.close(); } catch (IOException cleanup) { error.addSuppressed(cleanup); }
+            if (error instanceof SFTPException && missingPath((SFTPException)error))
+                throw new FileTailRecoveryException("FILE_CHANGED", "文件路径暂时不存在，等待轮转后的文件");
             throw error;
         }
+    }
+
+    private static boolean missingPath(SFTPException error) {
+        return error.getStatusCode() == net.schmizz.sshj.sftp.Response.StatusCode.NO_SUCH_FILE || error.getStatusCode() == net.schmizz.sshj.sftp.Response.StatusCode.NO_SUCH_PATH;
     }
 
     <T> T withReadFile(String token, String path, ReadFileAction<T> action) throws IOException {
@@ -248,7 +254,7 @@ public class SshSftpService {
         public FileAttributes attributes() throws IOException {
             try { return sftp.stat(path); }
             catch (SFTPException error) {
-                if (error.getStatusCode() == net.schmizz.sshj.sftp.Response.StatusCode.NO_SUCH_FILE || error.getStatusCode() == net.schmizz.sshj.sftp.Response.StatusCode.NO_SUCH_PATH)
+                if (missingPath(error))
                     throw new FileTailRecoveryException("FILE_CHANGED", "文件路径暂时不存在，等待轮转后的文件");
                 throw error;
             }
