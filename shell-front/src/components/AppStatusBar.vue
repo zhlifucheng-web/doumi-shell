@@ -29,11 +29,11 @@
         type="button"
         class="status-btn"
         :class="{ 'has-transfers': activeTransferCount > 0 }"
-        title="查看传输中心"
+        :title="activeTransferCount > 0 ? `查看传输中心 (${activeTransferCount} 项进行中 · ${overallPercent}%)` : '查看传输中心'"
         @click="$emit('open-transfers')"
       >
         <el-icon><Upload /></el-icon>
-        <span>传输: {{ activeTransferCount > 0 ? `${activeTransferCount} 进行中` : '就绪' }}</span>
+        <span>传输: {{ activeTransferCount > 0 ? `${activeTransferCount} 进行中 · ${overallPercent}%` : '就绪' }}</span>
       </button>
 
       <span class="status-sep">|</span>
@@ -74,6 +74,18 @@ const { managedServer } = storeToRefs(workspaceStore)
 const transferStore = useTransferStore()
 const activeTransferCount = computed(() => {
   return transferStore.transfers.filter(isTransferActive).length
+})
+
+const overallPercent = computed(() => {
+  const active = transferStore.transfers.filter(isTransferActive)
+  if (!active.length) return 0
+  let loaded = 0
+  let total = 0
+  for (const t of active) {
+    loaded += Math.max(0, Number(t.loaded) || 0)
+    total += Math.max(0, Number(t.total) || 0)
+  }
+  return total > 0 ? Math.min(99, Math.floor((loaded / total) * 100)) : 0
 })
 
 const isConnected = computed(() => {
