@@ -1495,7 +1495,14 @@ async function refreshTree(targetNode = null) {
   }
   defaultExpandedKeys.value = Array.from(expandedSet)
   treeVersion.value += 1
-  detail.value = { type: null, raw: null }
+  // Keep the current account workspace mounted while its tree/detail data is
+  // refreshed. Clearing detail here unmounts the terminal, which closes its
+  // WebSocket and invalidates the session token; the next render could then
+  // reuse that stale token and issue "session does not exist" requests.
+  const sameDetail = current?.nodeType === detail.value.type
+    && current?.id != null
+    && Number(current.id) === Number(detail.value.raw?.id)
+  if (!sameDetail) detail.value = { type: null, raw: null }
   nextTick(async () => {
     if (current?.nodeType && current.id != null) {
       await loadDetail(current)
