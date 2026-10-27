@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mountSfcSetup } from './helpers/mountSfcSetup.js'
 import * as vue from 'vue'
+import * as fileTypes from '../src/utils/fileTypeHelper.js'
 
 const filename = new URL('../src/components/ssh/SshFilePanel.vue', import.meta.url)
 
@@ -13,6 +14,7 @@ function mountPanel(props = {}, listDirectory, fileLocation = vue.ref(null), loa
   const errors = []
   const invalid = []
   const modules = {
+    '@/utils/fileTypeHelper': fileTypes,
     'element-plus': { ElMessage: { warning: message => warnings.push(message), error: message => errors.push(message) } },
     'vue-router': { useRouter: () => ({}) },
     '@/composables/useAiChanges': { useAiChanges: () => {} },
@@ -64,6 +66,29 @@ test('SFTP panel loads its initial directory and reports subsequent directory na
 })
 
 const flush = async () => { await new Promise(setImmediate); await vue.nextTick() }
+
+test('double-click opens text files read-only regardless of extension or size', () => {
+  const panel = mountPanel()
+  try {
+    for (const row of [{ name: 'notes.txt', size: 3 }, { name: 'app.20261027', size: 100 }, { name: 'large.log', size: 12 * 1024 * 1024 }]) {
+      panel.state.onRowDblClick(row)
+      assert.equal(panel.state.showLargeViewer.value, true)
+      assert.equal(panel.state.largeViewerFile.value.name, row.name)
+      assert.equal(panel.state.showEditor.value, false)
+      panel.state.showLargeViewer.value = false
+    }
+  } finally { panel.unmount() }
+})
+
+test('double-click of binary files only explains preview support and never downloads', () => {
+  const panel = mountPanel()
+  try {
+    panel.state.onRowDblClick({ name: 'archive.zip', size: 50 })
+    assert.equal(panel.warnings.length, 1)
+    assert.equal(panel.state.showLargeViewer.value, false)
+    assert.equal(panel.state.showEditor.value, false)
+  } finally { panel.unmount() }
+})
 
 test('expired background user lookup invalidates the current session without a popup', async () => {
   const panel = mountPanel({ sessionToken: 'expired' }, undefined, vue.ref(null), async () => { throw new Error('会话不存在或已过期') })

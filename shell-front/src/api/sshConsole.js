@@ -435,6 +435,18 @@ export function sftpReadChunk(sessionToken, path, { offset = 0, length = 262144,
   return get(`${BASE}/sftp/read-chunk`, { sessionToken, path, offset, length, fromEnd }, { showSuccess: false })
 }
 
+export function sftpFilterStart(data) {
+  return post(`${BASE}/sftp/filter/start`, data, { showSuccess: false, showFailure: false })
+}
+
+export function sftpFilterNext(data) {
+  return post(`${BASE}/sftp/filter/next`, data, { showSuccess: false, showFailure: false })
+}
+
+export function sftpFilterCancel(data) {
+  return post(`${BASE}/sftp/filter/cancel`, data, { showSuccess: false, showFailure: false })
+}
+
 export const startExecution = (scriptId, accountId) => post(`${BASE}/executions`, {scriptId,accountId}, {showSuccess:false})
 export const listExecutions = params => get(`${BASE}/executions`, params, {showSuccess:false})
 export const getExecution = id => get(`${BASE}/executions/${id}`, {}, {showSuccess:false})
@@ -443,3 +455,9 @@ export const stopExecution = id => post(`${BASE}/executions/${id}/stop`, {}, {sh
 export const cleanupTables = () => get(`${BASE}/data-cleanup/tables`, {}, {showSuccess:false})
 export const previewCleanup = body => post(`${BASE}/data-cleanup/preview`, body, {showSuccess:false})
 export const clearData = token => post(`${BASE}/data-cleanup/clear`, {token}, {showSuccess:false})
+
+export function buildFileTailWsUrl() {
+  const url = new URL(`${API_BASE}/ws/ssh-console/file-tail`, window.location.origin)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  return url.toString()
+}
