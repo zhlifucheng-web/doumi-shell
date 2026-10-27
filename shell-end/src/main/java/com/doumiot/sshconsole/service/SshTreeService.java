@@ -124,6 +124,25 @@ public class SshTreeService {
         private List<Long> sourceOrderedIds;
     }
 
+    public List<Map<String, Object>> listSearchTargets() {
+        return jdbc.queryForList("SELECT "
+                + "h.id AS hostId, "
+                + "h.name AS hostName, "
+                + "h.host AS hostAddress, "
+                + "h.port AS hostPort, "
+                + "h.remark AS hostRemark, "
+                + "h.group_id AS groupId, "
+                + "g.name AS groupName, "
+                + "a.id AS accountId, "
+                + "a.username AS username, "
+                + "a.remark AS accountRemark "
+                + "FROM ssh_host h "
+                + "LEFT JOIN ssh_account a ON a.host_id=h.id AND a.enabled=1 "
+                + "LEFT JOIN ssh_group g ON h.group_id=g.id "
+                + "WHERE h.enabled=1 "
+                + "ORDER BY CASE WHEN g.name IS NULL THEN 1 ELSE 0 END, g.name, h.name, a.username");
+    }
+
     public List<TreeNodeVO> listChildren(String parentType, Long parentId) {
         if (!StringUtils.hasText(parentType)) {
             throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "parentType 必填");

@@ -435,6 +435,8 @@
                         </template>
                       </el-dropdown>
                       <TerminalToolbar
+                        :allow-disconnect="!!activeTerminalTab"
+                        :disconnect-disabled="!!activeTerminalTab?.manuallyDisconnected"
                         :snippet-visible="snippetBarVisible"
                         :is-split="isSplit"
                         :allow-split="terminalTabs.length > 1"
@@ -442,6 +444,7 @@
                         :terminal-tone="terminalLightTone"
                         :encoding="activeTerminalTab?.encoding || terminalEncoding"
                         @clear="onClearActiveTerminal"
+                        @disconnect="disconnectTerminalTab(activeTerminalId)"
                         @toggle-snippets="snippetBarVisible = !snippetBarVisible"
                         @toggle-split="isSplit = !isSplit"
                         @change-font-size="size => terminalFontSize = size"
@@ -467,15 +470,16 @@
                       <div class="terminal-pane main-pane">
                         <div v-for="tab in terminalTabs" :key="`terminal-${tab.tabId}`" v-show="activeTerminalId === tab.tabId" class="terminal-tab-content">
                           <SshTerminal :account-id="tab.accountId"
+                            :paused="!!tab.manuallyDisconnected"
                             :terminal-id="tab.terminalId || tab.tabId"
                             :ref="el => setTerminalRef(tab.tabId, el)"
                             :font-size="terminalFontSize"
                             :light-tone="terminalLightTone"
                             :encoding="tab.encoding || terminalEncoding"
-                            :current-path="currentSftpPath || tab.defaultCwd || ''"
+                            :current-path="tab.sftpPath || tab.defaultCwd || ''"
                             @drop-files="onTerminalDropFiles"
                             @ready="payload => onTerminalReady(tab.tabId, payload)"
-                            @disconnected="() => onTerminalDisconnected(tab.tabId)"
+                            @disconnected="payload => onTerminalDisconnected(tab.tabId, payload)"
                             @size-change="onTerminalSizeChange"
                             @change-encoding="enc => onChangeEncoding(enc, tab.tabId)"
                             @ask-ai="handleTerminalAskAi" />
@@ -486,19 +490,22 @@
                         <div class="split-pane-header">
                           <span class="split-badge">分屏会话</span>
                           <span class="split-label">{{ splitTerminalTab.label }}</span>
+                          <button type="button" class="split-close-btn" :disabled="!!splitTerminalTab.manuallyDisconnected"
+                            title="断开此会话的连接，保留远端 tmux 会话" @click="disconnectTerminalTab(splitTerminalTab.tabId)">断开连接</button>
                           <button type="button" class="split-close-btn" title="关闭分屏" @click="isSplit = false">✕</button>
                         </div>
                         <div class="split-pane-content">
                           <SshTerminal :account-id="splitTerminalTab.accountId"
+                            :paused="!!splitTerminalTab.manuallyDisconnected"
                             :terminal-id="splitTerminalTab.terminalId || splitTerminalTab.tabId"
                             :ref="el => setTerminalRef(`split-${splitTerminalTab.tabId}`, el)"
                             :font-size="terminalFontSize"
                             :light-tone="terminalLightTone"
                             :encoding="splitTerminalTab.encoding || terminalEncoding"
-                            :current-path="currentSftpPath || splitTerminalTab.defaultCwd || ''"
+                            :current-path="splitTerminalTab.sftpPath || splitTerminalTab.defaultCwd || ''"
                             @drop-files="onTerminalDropFiles"
                             @ready="payload => onTerminalReady(splitTerminalTab.tabId, payload)"
-                            @disconnected="() => onTerminalDisconnected(splitTerminalTab.tabId)"
+                            @disconnected="payload => onTerminalDisconnected(splitTerminalTab.tabId, payload)"
                             @change-encoding="enc => onChangeEncoding(enc, splitTerminalTab.tabId)" />
                         </div>
                       </div>
@@ -507,7 +514,9 @@
                   <el-empty v-else description="从左侧选择账户以打开终端" />
                 </template>
                 <template #files>
-                  <SshFilePanel v-if="activeTerminalTab" ref="filePanelRef" :account-id="activeTerminalTab.accountId" :host-id="activeTerminalTab.hostId"
+                  <SshFilePanel v-if="activeTerminalTab" ref="filePanelRef"
+                    :tab-id="activeTerminalTab.tabId" :saved-path="activeTerminalTab.sftpPath || ''"
+                    :account-id="activeTerminalTab.accountId" :host-id="activeTerminalTab.hostId"
                     :active="accountTab === 'terminal'" embedded
                     :session-token="sessionToken" :default-cwd="activeTerminalTab.defaultCwd || ''"
                     :opening-session="openingFileSession" @request-session="establishFileSession"
@@ -818,6 +827,7 @@ import { tmuxCompatibility } from '@/utils/tmuxCompatibility'
 import TerminalShareDialog from '@/components/ssh/TerminalShareDialog.vue'
 import SnippetBar from '@/components/ssh/SnippetBar.vue'
 import TerminalFileLayout from '@/components/ssh/TerminalFileLayout.vue'
+import { useLayoutPreference } from '@/composables/useLayoutPreference'
 import SshFilePanel from '@/components/ssh/SshFilePanel.vue'
 import SshMonitorPanel from '@/components/ssh/SshMonitorPanel.vue'
 import ScriptManagement from '@/components/ssh/ScriptManagement.vue'
@@ -833,6 +843,7 @@ import {
   getAccount,
   getGroup,
   getHost,
+  fetchSearchTargets,
   fetchTreeChildren,
   moveTreeNode,
   openAccountSession,
@@ -861,25 +872,14 @@ import {
 
 const savedAccount = readSavedSshAccount()
 const { managedServer } = storeToRefs(useWorkspaceStore())
-const sidebarCollapsed = ref(false)
-try { sidebarCollapsed.value=localStorage.getItem('doumi-sidebar-collapsed')==='true' } catch { /* Default expanded. */ }
-watch(sidebarCollapsed, value=>{try{localStorage.setItem('doumi-sidebar-collapsed',String(value))}catch{/* Preference only. */}})
+const sidebarCollapsed = useLayoutPreference('sidebarCollapsed')
 
 const DEFAULT_SIDEBAR_WIDTH = 280
 const MIN_SIDEBAR_WIDTH = 220
 const MAX_SIDEBAR_WIDTH = 640
-const sidebarWidth = ref(DEFAULT_SIDEBAR_WIDTH)
+const sidebarWidth = useLayoutPreference('sidebarWidth')
 const isSidebarResizing = ref(false)
 let sidebarResizeOrigin = null
-
-try {
-  const savedWidth = Number(localStorage.getItem('doumi-sidebar-width'))
-  if (savedWidth >= MIN_SIDEBAR_WIDTH && savedWidth <= MAX_SIDEBAR_WIDTH) {
-    sidebarWidth.value = savedWidth
-  }
-} catch {
-  // Use default
-}
 
 function onSidebarResizeStart(event) {
   if (event.button !== 0 || sidebarCollapsed.value) return
@@ -908,9 +908,6 @@ function onSidebarResizeEnd(event) {
   try {
     event.currentTarget.releasePointerCapture(event.pointerId)
   } catch {}
-  try {
-    localStorage.setItem('doumi-sidebar-width', String(sidebarWidth.value))
-  } catch {}
 }
 
 function resizeSidebarByKeyboard(event) {
@@ -920,17 +917,11 @@ function resizeSidebarByKeyboard(event) {
   else if (event.key === 'End') sidebarWidth.value = MAX_SIDEBAR_WIDTH
   else sidebarWidth.value = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH,
     sidebarWidth.value + (event.key === 'ArrowRight' ? 10 : -10)))
-  try {
-    localStorage.setItem('doumi-sidebar-width', String(sidebarWidth.value))
-  } catch { /* Preference only. */ }
 }
 
 function resetSidebarWidth() {
   if (sidebarCollapsed.value) return
   sidebarWidth.value = DEFAULT_SIDEBAR_WIDTH
-  try {
-    localStorage.setItem('doumi-sidebar-width', String(DEFAULT_SIDEBAR_WIDTH))
-  } catch {}
 }
 
 async function copyText(text, successMsg = '已复制到剪贴板') {
@@ -1050,15 +1041,14 @@ const splitTerminalTab = computed(() => {
 })
 
 const filePanelRef = ref(null)
-const currentSftpPath = ref('')
+const currentSftpPath = computed(() => activeTerminalTab.value?.sftpPath || '')
 
-function onFilePanelPathChange(path) {
-  currentSftpPath.value = path || ''
+function onFilePanelPathChange(path, tabId) {
+  const tab = terminalTabs.value.find(tab => tab.tabId === tabId)
+  if (!tab || !path) return
+  tab.sftpPath = path
+  persistTerminalTabs()
 }
-
-watch(activeTerminalId, () => {
-  currentSftpPath.value = ''
-})
 
 async function onTerminalDropFiles(dataTransfer) {
   if (!activeTerminalTab.value) return
@@ -1087,6 +1077,12 @@ function onRunSnippet(cmd) {
 function onClearActiveTerminal() {
   const term = terminalRefs.get(activeTerminalId.value)
   if (term) term.clearScreen()
+}
+
+function disconnectTerminalTab(tabId) {
+  // A split tab also has a mounted primary view; detach both clients.
+  terminalRefs.get(tabId)?.disconnect()
+  terminalRefs.get(`split-${tabId}`)?.disconnect()
 }
 
 function toggleTerminalFullscreen() {
@@ -1155,13 +1151,66 @@ if (savedAccount) {
   })
 }
 
-watch(filterText, (val) => {
+const searchTargetsCache = ref([])
+async function loadSearchTargets() {
+  try {
+    const list = await fetchSearchTargets()
+    if (Array.isArray(list)) {
+      searchTargetsCache.value = list
+    }
+  } catch {
+    /* fallback quietly */
+  }
+}
+
+const matchingGroupIds = computed(() => {
+  const q = filterText.value.trim().toLowerCase()
+  if (!q) return new Set()
+  const s = new Set()
+  for (const item of searchTargetsCache.value) {
+    const hostAddr = String(item.hostAddress || '').toLowerCase()
+    const hostName = String(item.hostName || '').toLowerCase()
+    const endpoint = `${hostAddr}:${item.hostPort || 22}`
+    const user = String(item.username || '').toLowerCase()
+    const accRemark = String(item.accountRemark || '').toLowerCase()
+    const hostRemark = String(item.hostRemark || '').toLowerCase()
+    if (
+      hostAddr.includes(q) ||
+      endpoint.includes(q) ||
+      hostName.includes(q) ||
+      user.includes(q) ||
+      accRemark.includes(q) ||
+      hostRemark.includes(q)
+    ) {
+      if (item.groupId != null) {
+        s.add(item.groupId)
+      }
+    }
+  }
+  return s
+})
+
+watch(filterText, async (val) => {
+  if (val && searchTargetsCache.value.length === 0) {
+    await loadSearchTargets()
+  }
+  if (val) {
+    for (const gid of matchingGroupIds.value) {
+      const gKey = `g:${gid}`
+      if (!defaultExpandedKeys.value.includes(gKey)) {
+        defaultExpandedKeys.value.push(gKey)
+      }
+    }
+  }
   treeRef.value?.filter(val)
 })
 
 onMounted(() => {
   restoreSavedAccount()
+  void loadSearchTargets()
   window.addEventListener('doumi-configuration-imported', refreshTree)
+  window.addEventListener('doumi-open-account', onGlobalOpenAccount)
+  window.addEventListener('doumi-terminal-action', onGlobalTerminalAction)
   window.addEventListener('click', closeContextMenu)
   window.addEventListener('blur', closeContextMenu)
   window.addEventListener('resize', checkScrollOverflow)
@@ -1172,6 +1221,8 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   window.removeEventListener('doumi-configuration-imported', refreshTree)
+  window.removeEventListener('doumi-open-account', onGlobalOpenAccount)
+  window.removeEventListener('doumi-terminal-action', onGlobalTerminalAction)
   window.removeEventListener('click', closeContextMenu)
   window.removeEventListener('blur', closeContextMenu)
   window.removeEventListener('resize', checkScrollOverflow)
@@ -1313,8 +1364,12 @@ function filterNode(value, data) {
   if (!value) return true
   const v = String(value).trim().toLocaleLowerCase()
   if (!v) return true
-  const host = data.nodeType === 'HOST' ? data.extra?.host || '' : ''
-  const endpoint = data.nodeType === 'HOST' ? data.extra?.endpoint || '' : ''
+  if (data.nodeType === 'GROUP') {
+    if (matchingGroupIds.value.has(data.id)) return true
+    return [data.label, data.remark].some(field => String(field || '').toLocaleLowerCase().includes(v))
+  }
+  const host = data.extra?.host || ''
+  const endpoint = data.extra?.endpoint || ''
   return [data.label, data.remark, host, endpoint]
     .some(field => String(field || '').toLocaleLowerCase().includes(v))
 }
@@ -1383,7 +1438,9 @@ async function loadNode(node, resolve) {
         extra: {
           ...child.extra,
           hostId: child.extra?.hostId ?? data.id,
-          groupId: child.extra?.groupId ?? data.extra?.groupId ?? null
+          groupId: child.extra?.groupId ?? data.extra?.groupId ?? null,
+          host: data.extra?.host || '',
+          endpoint: data.extra?.endpoint || ''
         }
       }))
       resolve(mapped)
@@ -1503,6 +1560,7 @@ async function refreshTree(targetNode = null) {
     && current?.id != null
     && Number(current.id) === Number(detail.value.raw?.id)
   if (!sameDetail) detail.value = { type: null, raw: null }
+  void loadSearchTargets()
   nextTick(async () => {
     if (current?.nodeType && current.id != null) {
       await loadDetail(current)
@@ -1530,8 +1588,8 @@ async function connectHostAccount(acc) {
     leaf: true,
     extra: {
       ...(acc.extra || {}),
-      hostId: detail.value.raw?.id,
-      groupId: detail.value.raw?.groupId ?? null
+      hostId: acc.hostId ?? detail.value.raw?.id,
+      groupId: acc.groupId ?? detail.value.raw?.groupId ?? null
     }
   }
   selectedNode.value = node
@@ -1540,6 +1598,48 @@ async function connectHostAccount(acc) {
   await loadDetail(node)
   if (route.meta.panel !== 'terminal') {
     router.push('/terminal')
+  }
+}
+
+async function onGlobalOpenAccount(e) {
+  const target = e.detail
+  if (!target) return
+  if (target.accountId) {
+    const acc = {
+      id: target.accountId,
+      username: target.username,
+      hostId: target.hostId,
+      groupId: target.groupId,
+      label: target.username ? `${target.username}@${target.hostName || target.hostAddress}` : (target.hostName || target.hostAddress)
+    }
+    await connectHostAccount(acc)
+  } else if (target.hostId) {
+    const node = {
+      nodeType: 'HOST',
+      id: target.hostId,
+      key: `h:${target.hostId}`,
+      label: target.hostName || target.hostAddress,
+      extra: {
+        host: target.hostAddress,
+        port: target.hostPort || 22,
+        groupId: target.groupId
+      }
+    }
+    selectedNode.value = node
+    treeCurrentNodeKey.value = node.key
+    treeRef.value?.setCurrentKey?.(node.key, false)
+    await loadDetail(node)
+  }
+}
+
+function onGlobalTerminalAction(e) {
+  const act = e.detail
+  if (act === 'clear') {
+    onClearActiveTerminal()
+  } else if (act === 'split') {
+    isSplit.value = !isSplit.value
+  } else if (act === 'snippets') {
+    snippetBarVisible.value = !snippetBarVisible.value
   }
 }
 
@@ -1858,6 +1958,7 @@ function activateTerminalForAccount(account) {
       account,
       hostId: account.hostId,
       defaultCwd: account.defaultCwd || '',
+      sftpPath: '',
       label: terminalTabLabel(account),
       customTitle: '',
       subIndex: subIndex || 1,
@@ -1936,6 +2037,7 @@ function closeTerminalTab(tabId) {
 function onTerminalReady(tabId, payload) {
   const tab = terminalTabs.value.find(item => item.tabId === tabId)
   if (!tab) return
+  tab.manuallyDisconnected = false
   tab.token = payload?.sessionToken || ''
   tab.connectionMode = payload?.connectionMode || ''
   tab.tmuxVersion = payload?.tmuxVersion || ''
@@ -1943,8 +2045,9 @@ function onTerminalReady(tabId, payload) {
   if (activeTerminalId.value === tabId) sessionToken.value = tab.token
 }
 
-function onTerminalDisconnected(tabId) {
+function onTerminalDisconnected(tabId, payload) {
   const tab = terminalTabs.value.find(item => item.tabId === tabId)
+  if (tab && payload?.manual) tab.manuallyDisconnected = true
   if (tab) { tab.token = ''; tab.connectionMode = ''; tab.tmuxVersion = ''; tab.tmuxVersionSource = 'unknown' }
   if (activeTerminalId.value === tabId) sessionToken.value = ''
 }
@@ -2099,6 +2202,7 @@ async function openNewAccountTerminal(data) {
       account,
       hostId: account.hostId,
       defaultCwd: account.defaultCwd || '',
+      sftpPath: '',
       label,
       customTitle: '',
       subIndex,
@@ -3307,6 +3411,20 @@ async function isHostInsideGroup(hostId, groupId) {
   padding-top: 3px;
 }
 
+:global(.terminal-tab-popper.el-popper) {
+  background: var(--ws-bg-card, #0f1523) !important;
+  color: var(--ws-text-primary, #f8fafc) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7) !important;
+  border-radius: 8px !important;
+  padding: 8px 10px !important;
+}
+
+:global(.terminal-tab-popper.el-popper .el-popper__arrow::before) {
+  background: var(--ws-bg-card, #0f1523) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+}
+
 /* 下拉终端列表 */
 .terminal-tabs-dropdown-menu {
   min-width: 260px;
@@ -3509,8 +3627,12 @@ async function isHostInsideGroup(hostId, groupId) {
   padding: 2px 4px;
   border-radius: 3px;
 }
-.split-close-btn:hover {
+.split-close-btn:hover:not(:disabled) {
   color: var(--ws-color-danger);
+}
+.split-close-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .split-pane-content {
   flex: 1;

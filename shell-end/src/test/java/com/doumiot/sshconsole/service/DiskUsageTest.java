@@ -11,9 +11,25 @@ import static com.doumiot.sshconsole.service.SshDiskUsageService.*;
 
 class DiskUsageTest {
     @TempDir Path temp;
-    @Test void realGnuScanHandlesQuotedPathsAndHomeAndSizeThreshold() throws Exception {
+
+    private String requireGnuScanTools() throws Exception {
         String bash=Files.exists(Paths.get("D:/dev/Git/bin/bash.exe"))?"D:/dev/Git/bin/bash.exe":"/bin/bash";
-        org.junit.jupiter.api.Assumptions.assumeTrue(Files.exists(Paths.get(bash)));
+        org.junit.jupiter.api.Assumptions.assumeTrue(Files.isExecutable(Paths.get(bash)),"真实目录扫描测试需要 Bash");
+        // Probe host prerequisites independently of command(); do not turn scan regressions into skips.
+        String probe="export PATH=/usr/bin:/bin:$PATH\n"
+                +"for tool in timeout du find sort; do \"$tool\" --version >/dev/null 2>&1 || exit 1; done\n"
+                +"command -v mktemp >/dev/null 2>&1 || exit 1\n"
+                +"printf 'a\\000b\\000' | LC_ALL=C awk 'BEGIN { RS=\"\\0\" } END { exit (NR!=2) }'";
+        Process process=new ProcessBuilder(bash,"--noprofile","--norc","-c",probe).start();
+        boolean finished=process.waitFor(5,TimeUnit.SECONDS);
+        if(!finished)process.destroyForcibly();
+        org.junit.jupiter.api.Assumptions.assumeTrue(finished&&process.exitValue()==0,
+                "真实目录扫描测试需要 GNU timeout/du/find/sort 及支持 NUL 记录的 awk；请在 Linux 环境运行");
+        return bash;
+    }
+
+    @Test void realGnuScanHandlesQuotedPathsAndHomeAndSizeThreshold() throws Exception {
+        String bash=requireGnuScanTools();
         Path root=Files.createDirectory(temp.resolve("space ' and $HOME"));
         Files.createDirectory(root.resolve("sub folder"));
         Files.write(root.resolve("large file.bin"),new byte[2*1024*1024]);
@@ -45,8 +61,7 @@ class DiskUsageTest {
         assertTrue(error.getMessage().contains("du: unrecognized option '--null'"));
     }
     @Test void realScanSupportsOldHeadAndKeepsRootWhenZeroSizeDirectoriesTie() throws Exception {
-        String bash=Files.exists(Paths.get("D:/dev/Git/bin/bash.exe"))?"D:/dev/Git/bin/bash.exe":"/bin/bash";
-        org.junit.jupiter.api.Assumptions.assumeTrue(Files.exists(Paths.get(bash)));
+        String bash=requireGnuScanTools();
         Path root=Files.createDirectory(temp.resolve("zero-space"));
         Path bin=Files.createDirectory(temp.resolve("bin"));
         // Model filesystems with zero allocated bytes for empty directories; the root sorts last.

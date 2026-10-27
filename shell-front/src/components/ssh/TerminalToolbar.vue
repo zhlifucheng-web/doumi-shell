@@ -1,5 +1,16 @@
 <template>
   <div class="terminal-toolbar" role="toolbar" aria-label="终端工具栏">
+    <button
+      v-if="allowDisconnect"
+      type="button"
+      class="tool-btn"
+      title="断开当前连接，保留远端 tmux 会话"
+      :disabled="disconnectDisabled"
+      @click="$emit('disconnect')"
+    >
+      <el-icon><SwitchButton /></el-icon>
+      <span class="tool-btn-text">断开连接</span>
+    </button>
     <!-- 清屏 -->
     <button
       type="button"
@@ -133,12 +144,14 @@
 </template>
 
 <script setup>
-import { ArrowDown, Delete, Document, FullScreen, MoreFilled, Rank, Share } from '@element-plus/icons-vue'
+import { ArrowDown, Delete, Document, FullScreen, MoreFilled, Rank, Share, SwitchButton } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 
 const { effectiveDark: isDark } = useTheme()
 
 defineProps({
+  allowDisconnect: { type: Boolean, default: false },
+  disconnectDisabled: { type: Boolean, default: false },
   snippetVisible: { type: Boolean, default: false },
   isSplit: { type: Boolean, default: false },
   allowSplit: { type: Boolean, default: true },
@@ -148,6 +161,7 @@ defineProps({
 })
 
 const emit = defineEmits([
+  'disconnect',
   'clear',
   'toggle-snippets',
   'toggle-split',

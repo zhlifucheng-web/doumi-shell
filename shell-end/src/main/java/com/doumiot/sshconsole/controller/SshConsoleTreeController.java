@@ -30,6 +30,11 @@ public class SshConsoleTreeController {
         return sshTreeService.listChildren(parentType, parentId);
     }
 
+    @GetMapping("/tree/search-targets")
+    public List<java.util.Map<String, Object>> searchTargets() {
+        return sshTreeService.listSearchTargets();
+    }
+
     @PatchMapping("/tree/reorder")
     public void moveAndReorder(@RequestBody SshTreeService.ReorderRequest request) {
         sshTreeService.moveAndReorder(request);

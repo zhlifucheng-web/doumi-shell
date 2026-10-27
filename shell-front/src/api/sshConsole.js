@@ -88,6 +88,10 @@ export function fetchTreeChildren(parentType, parentId) {
   return get(`${BASE}/tree/children`, params, { showSuccess: false })
 }
 
+export function fetchSearchTargets() {
+  return get(`${BASE}/tree/search-targets`, {}, { showSuccess: false })
+}
+
 export function moveTreeNode(body) {
   return patch(`${BASE}/tree/reorder`, body)
 }
@@ -182,7 +186,7 @@ export function sftpChown(sessionToken, path, owner, group, recursive = false) {
 }
 
 export function sftpGetUsersAndGroups(sessionToken) {
-  return get(`${BASE}/sftp/users-and-groups`, { sessionToken }, { showSuccess: false })
+  return get(`${BASE}/sftp/users-and-groups`, { sessionToken }, { showSuccess: false, showFailure: false })
 }
 
 export function killHostProcess(sessionToken, pid, signal = 'TERM') {

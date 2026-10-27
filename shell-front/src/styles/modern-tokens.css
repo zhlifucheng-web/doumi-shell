@@ -93,6 +93,7 @@ html.dark, :root[data-theme='dark'] {
   --el-mask-color: rgba(0, 0, 0, 0.65);
   --el-box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
   --el-box-shadow-light: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+  --el-popper-bg-color-dark: #0f1523;
 }
 
 /* ========================================================
@@ -325,6 +326,32 @@ html:not(.dark) ::-webkit-scrollbar-thumb:hover {
   border-radius: var(--ws-radius-md) !important;
   box-shadow: var(--el-box-shadow) !important;
   padding: 4px !important;
+}
+
+/* 修复 Tooltip (is-dark) 在深色模式下因 Element Plus 变量反转导致的“白底白字”缺陷 */
+.el-popper.is-dark {
+  background: var(--ws-bg-card, #0f1523) !important;
+  color: var(--ws-text-primary, #f8fafc) !important;
+  border: 1px solid var(--ws-border, rgba(255, 255, 255, 0.12)) !important;
+  box-shadow: var(--el-box-shadow, 0 8px 24px rgba(0, 0, 0, 0.6)) !important;
+}
+
+.el-popper.is-dark .el-popper__arrow::before {
+  background: var(--ws-bg-card, #0f1523) !important;
+  border: 1px solid var(--ws-border, rgba(255, 255, 255, 0.12)) !important;
+}
+
+/* 终端会话 Tab 悬浮卡片专属质感优化 */
+.terminal-tab-popper.el-popper {
+  background: var(--ws-bg-card, #0f1523) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: var(--ws-radius-md, 8px) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7) !important;
+  padding: 8px 10px !important;
+}
+.terminal-tab-popper.el-popper .el-popper__arrow::before {
+  background: var(--ws-bg-card, #0f1523) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
 }
 .el-dropdown-menu__item {
   border-radius: var(--ws-radius-xs) !important;
