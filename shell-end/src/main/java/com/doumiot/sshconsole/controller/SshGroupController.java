@@ -26,6 +26,11 @@ public class SshGroupController {
         return sshGroupService.update(id, req);
     }
 
+    @GetMapping
+    public java.util.List<SshGroup> listAll() {
+        return sshGroupService.listAll();
+    }
+
     @GetMapping("/{id}")
     public SshGroup getById(@PathVariable long id) {
         return sshGroupService.getById(id);

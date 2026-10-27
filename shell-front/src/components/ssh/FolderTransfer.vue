@@ -36,7 +36,17 @@ watch(busy, value => {
 onBeforeUnmount(()=>window.removeEventListener('beforeunload',warnBeforeLeave))
 const join=(base,name)=>`${base.replace(/\/$/,'')}/${name}`
 function openDownload(row){if(busy.value)return;downloadTarget.value={name:row.name,path:join(props.path,row.name)};showDownload.value=true}
-defineExpose({openDownload})
+async function uploadFolderEntries(entries) {
+  if (!entries || !entries.length) return
+  try {
+    await upload(entries, props.sessionToken, props.path, compressed.value)
+  } catch (e) {
+    ElMessage.error(e.message || '文件夹上传失败')
+  } finally {
+    busy.value = false
+  }
+}
+defineExpose({openDownload, uploadFolderEntries})
 async function chooseUpload(){
   if(!canPick){folderInput.value.value='';folderInput.value.click();return}
   const token=props.sessionToken,path=props.path,zip=compressed.value

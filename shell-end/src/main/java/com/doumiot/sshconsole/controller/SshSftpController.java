@@ -153,6 +153,16 @@ public class SshSftpController {
         sshSftpService.rename(body.getSessionToken(), body.getPath(), body.getNewName());
     }
 
+    @PostMapping("/chown")
+    public void chown(@RequestBody @Validated ChownRequest body) throws IOException {
+        sshSftpService.chown(body.getSessionToken(), body.getPath(), body.getOwner(), body.getGroup(), body.isRecursive());
+    }
+
+    @GetMapping("/users-and-groups")
+    public SshSftpService.SystemUsersAndGroups usersAndGroups(@RequestParam @NotBlank String sessionToken) throws IOException {
+        return sshSftpService.systemUsersAndGroups(sessionToken);
+    }
+
     @Data
     public static class MkdirRequest {
         @NotBlank
@@ -177,5 +187,16 @@ public class SshSftpController {
         private String path;
         @NotBlank
         private String newName;
+    }
+
+    @Data
+    public static class ChownRequest {
+        @NotBlank
+        private String sessionToken;
+        @NotBlank
+        private String path;
+        private String owner;
+        private String group;
+        private boolean recursive;
     }
 }

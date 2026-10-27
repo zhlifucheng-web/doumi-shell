@@ -31,7 +31,9 @@ public class AiTools {
     @Resource private SshProcessService processes;
     @Resource private SshDiskUsageService disks;
     @Resource private SshConfigurationService configuration;
+    @Resource private SshRemoteBackupService remoteBackup;
     @Resource private SshDataCleanupService cleanup;
+    @Resource private FinalShellImportService finalShellImport;
     @Resource private AiConnections connections;
     @Resource private AiFiles files;
     private final Map<String,Operation> operations = new LinkedHashMap<>();
@@ -150,6 +152,15 @@ public class AiTools {
         add("configuration_import","data-management","通用配置导入，追加到新分组并暂停定时任务，不覆盖现有数据。data 可为 doumi-backup 备份，或标准快照 {groups:[{id,name,parentId?}],hosts:[{id,groupId,name,host,port}],accounts:[{id,hostId,username,authType,secret:{password?,privateKeyPem?,passphrase?},enabled?}],scripts:[]}；各ID为临时正整数且引用一致。缺少凭据时传secret:{}和enabled:0，明确提示用户补填。不要将第三方密文当作明文密码",true,true,
                 (a,o)->{JsonNode data=a.get("data");ConfigurationArchive.Archive archive=data.has("format")?AiJson.JSON.treeToValue(data,ConfigurationArchive.Archive.class):ConfigurationArchive.plain(AiJson.JSON.writeValueAsBytes(data));return configuration.importAll(archive,optionalText(a,"password"));},
                 "data!:object:标准配置快照或doumi-backup备份","password:string:加密备份的密码");
+        add("remote_backup_get","data-management","读取远程定时备份（MinIO/SFTP）的配置与最近执行状态",false,false,
+                (a,o)->remoteBackup.getConfig());
+        add("remote_backup_save","data-management","保存远程定时备份配置。data包含{enabled,targetType(MINIO/SFTP),cron,zone,encrypted,backupPassword?,minioEndpoint?,minioBucket?,minioAccessKey?,minioSecretKey?,minioRegion?,minioPath?,sftpHost?,sftpPort?,sftpUsername?,sftpAuthType?,sftpPassword?,sftpPrivateKeyPem?,sftpPassphrase?,sftpRemoteDir?}",true,true,
+                (a,o)->{remoteBackup.saveConfig(body(a,SshRemoteBackupService.RemoteBackupConfigDTO.class));return remoteBackup.getConfig();},"data!:object:远程备份配置对象");
+        add("remote_backup_execute","data-management","立即执行一次远程备份至 MinIO 或 SFTP 服务器",true,true,
+                (a,o)->remoteBackup.executeBackupNow());
+        add("finalshell_import","data-management","从 FinalShell 导出的本地目录或文件（ZIP/JSON）导入主机、账号与分组层级，并自动解密密码",true,true,
+                (a,o)->finalShellImport.importFromLocalPath(AiJson.text(a,"localPath"),optionalId(a,"targetGroupId"),a.path("overwrite").asBoolean(false)),
+                "localPath!:string:FinalShell 导出的本地目录或文件绝对路径","targetGroupId:integer:目标分组 ID（可选）","overwrite:boolean:若已存在是否覆盖更新");
     }
     private String token(JsonNode args) { return connections.token(AiJson.id(args,"accountId")); }
     private static Object ok() { return AiJson.object("success",true); }

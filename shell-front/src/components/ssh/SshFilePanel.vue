@@ -1,5 +1,19 @@
 <template>
-  <div class="ssh-file-panel" :class="{ embedded }">
+  <div
+    class="ssh-file-panel"
+    :class="{ embedded, 'is-dragover': isDragOver }"
+    @dragenter="handleDragEnter"
+    @dragover.prevent="handleDragOver"
+    @dragleave="handleDragLeave"
+    @drop.prevent="handleDrop"
+  >
+    <!-- 拖拽上传覆盖层 -->
+    <div v-if="isDragOver" class="drop-upload-overlay">
+      <el-icon class="drop-upload-ico"><Upload /></el-icon>
+      <div class="drop-upload-text">松开鼠标立即上传到当前目录</div>
+      <div class="drop-upload-path font-mono-code">{{ currentPath || pathInput || '当前目录' }}</div>
+    </div>
+
     <div v-if="!sessionToken" class="no-session">
       <el-empty description="尚未建立 SSH 会话">
         <el-button type="primary" :loading="openingSession" @click="$emit('request-session')">
@@ -81,17 +95,7 @@
         </div>
       </div>
 
-      <div
-        class="file-table-container"
-        :class="{ 'is-dragover': isDragOver }"
-        @dragover.prevent="isDragOver = true"
-        @dragleave.prevent="isDragOver = false"
-        @drop.prevent="onDropFiles"
-      >
-        <div v-if="isDragOver" class="drop-upload-overlay">
-          <el-icon class="drop-upload-ico"><Upload /></el-icon>
-          <span>松开鼠标立即上传到当前目录 ({{ currentPath }})</span>
-        </div>
+      <div class="file-table-container">
 
         <SshVirtualTable
           :items="sortedItems"
@@ -102,6 +106,7 @@
           :sort-order="sortOrder"
           :current-path="loadedPath || currentPath"
           :empty-description="filterKeyword ? '未匹配到相关文件' : '当前目录为空'"
+          :can-chown="canChown"
           @sort-change="onSortChange"
           @row-dblclick="onRowDblClick"
           @edit-file="openFileEditor"
@@ -111,6 +116,7 @@
           @open="enterDir"
           @folder-download="folderTransfer?.openDownload($event)"
           @rename="openRename"
+          @chown="openChown"
           @delete="confirmDelete"
         />
       </div>
@@ -153,6 +159,71 @@
       </template>
     </el-dialog>
 
+    <el-dialog
+      v-model="showChown"
+      title="修改归属用户"
+      width="440px"
+      destroy-on-close
+      @closed="resetChown"
+    >
+      <el-form label-position="top" size="default">
+        <el-form-item label="目标对象">
+          <div class="chown-target-preview font-mono-code">
+            <el-icon class="mr-1"><component :is="chownTarget?.dir ? Folder : Document" /></el-icon>
+            <span class="chown-target-name" :title="chownTarget?.name">{{ chownTarget?.name }}</span>
+          </div>
+        </el-form-item>
+
+        <el-form-item label="归属用户 (所有者)">
+          <el-select
+            v-model="chownOwner"
+            filterable
+            allow-create
+            default-first-option
+            placeholder="请选择或输入用户名 (如 root, www-data)"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="u in systemUsers"
+              :key="u"
+              :label="u"
+              :value="u"
+            />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="归属用户组 (可选)">
+          <el-select
+            v-model="chownGroup"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+            placeholder="请选择或输入用户组名 (如 root, www-data)"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="g in systemGroups"
+              :key="g"
+              :label="g"
+              :value="g"
+            />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item v-if="chownTarget?.dir">
+          <el-checkbox v-model="chownRecursive">
+            同时递归应用到所有子文件和子目录 (-R)
+          </el-checkbox>
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="showChown = false">取消</el-button>
+        <el-button type="primary" :loading="chownLoading" @click="doChown">确定</el-button>
+      </template>
+    </el-dialog>
+
     <SshFileEditorDialog
       v-model="showEditor"
       :file="editorFile"
@@ -177,7 +248,16 @@ import { computed, onDeactivated, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Document, Folder, Search, Sort, Upload } from '@element-plus/icons-vue'
-import { sftpDelete, sftpDownloadLarge, sftpList, sftpMkdir, sftpRename, sftpUploadLarge } from '@/api/sshConsole'
+import {
+  sftpChown,
+  sftpDelete,
+  sftpDownloadLarge,
+  sftpGetUsersAndGroups,
+  sftpList,
+  sftpMkdir,
+  sftpRename,
+  sftpUploadLarge
+} from '@/api/sshConsole'
 import { useTransfers } from '@/composables/useTransfers'
 import { storeToRefs } from 'pinia'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -204,7 +284,7 @@ const { transfers, transferHistoryWarning, enqueueTransfer, delegateBrowserDownl
 const { fileLocation } = storeToRefs(useWorkspaceStore())
 const transferNotice = '切换页面可继续传输。刷新或关闭页面会中断页面内传输，重开后仅保留最近 200 条历史记录和最后进度，无法自动续传。SSH 断开后需重新发起。浏览器接管的下载请在浏览器下载列表查看。'
 
-const emit = defineEmits(['request-session', 'session-invalid'])
+const emit = defineEmits(['request-session', 'session-invalid', 'path-change'])
 
 watch(() => [props.accountId, props.hostId], ([accountId, hostId]) => {
   // Old records predate host metadata; assign only when the account's actual server is known.
@@ -224,6 +304,10 @@ function clearVisibleTransfers() {
 }
 
 const currentPath = ref('')
+watch(currentPath, val => {
+  if (val) emit('path-change', val)
+})
+
 const loadedPath = ref('')
 const pathInput = ref('')
 const items = ref([])
@@ -238,6 +322,15 @@ const showRename = ref(false)
 const renameName = ref('')
 const renameTarget = ref(null)
 const renameLoading = ref(false)
+const canChown = ref(false)
+const showChown = ref(false)
+const chownTarget = ref(null)
+const chownOwner = ref('')
+const chownGroup = ref('')
+const chownRecursive = ref(false)
+const chownLoading = ref(false)
+const systemUsers = ref([])
+const systemGroups = ref([])
 const isDragOver = ref(false)
 const showEditor = ref(false)
 const editorFile = ref(null)
@@ -528,26 +621,132 @@ function navigateToQuickPath(target) {
   void navigateToPath()
 }
 
-function onDropFiles(event) {
+let dragDepth = 0
+
+function handleDragEnter(event) {
+  if (!event.dataTransfer?.types?.includes('Files')) return
+  dragDepth++
+  isDragOver.value = true
+}
+
+function handleDragOver(event) {
+  if (!event.dataTransfer?.types?.includes('Files')) return
+  event.preventDefault()
+  event.dataTransfer.dropEffect = 'copy'
+  isDragOver.value = true
+}
+
+function handleDragLeave(event) {
+  dragDepth--
+  if (dragDepth <= 0) {
+    dragDepth = 0
+    isDragOver.value = false
+  }
+}
+
+async function handleDrop(event) {
+  dragDepth = 0
   isDragOver.value = false
-  const files = Array.from(event.dataTransfer?.files || [])
-  if (!files.length || !props.sessionToken) return
-  const dir = currentPath.value || pathInput.value || ''
+  event.preventDefault()
+  if (!event.dataTransfer) return
+  await processDroppedDataTransfer(event.dataTransfer)
+}
+
+async function readDirectoryEntryRecursively(entry, basePath = '') {
+  const relPath = basePath ? `${basePath}/${entry.name}` : entry.name
+  if (entry.isFile) {
+    const file = await new Promise((resolve, reject) => entry.file(resolve, reject))
+    return [{ name: relPath, file, dir: false }]
+  } else if (entry.isDirectory) {
+    const dirReader = entry.createReader()
+    const readBatch = () => new Promise((resolve, reject) => dirReader.readEntries(resolve, reject))
+    let entries = []
+    let batch
+    do {
+      batch = await readBatch()
+      if (batch && batch.length) {
+        entries = entries.concat(batch)
+      }
+    } while (batch && batch.length > 0)
+
+    const list = [{ name: relPath, dir: true }]
+    for (const child of entries) {
+      const children = await readDirectoryEntryRecursively(child, relPath)
+      list.push(...children)
+    }
+    return list
+  }
+  return []
+}
+
+async function processDroppedDataTransfer(dataTransfer, targetDir = null) {
+  if (!props.sessionToken) {
+    ElMessage.warning('SFTP 会话尚未建立，请先建立连接')
+    emit('request-session')
+    return
+  }
+  const dir = targetDir || currentPath.value || pathInput.value || ''
   const token = props.sessionToken
   const accountId = props.accountId, hostId = props.hostId
-  for (const file of files) enqueueTransfer({
-    name: file.name,
-    direction: '上传',
-    path: dir,
-    total: file.size,
-    accountId,
-    hostId,
-    run: async transferOptions => {
-      await sftpUploadLarge(token, dir, file, transferOptions)
-      if (props.sessionToken === token && currentPath.value === dir) void refresh()
+
+  const items = dataTransfer?.items
+  let hasDirectory = false
+  const folderEntries = []
+  const regularFiles = []
+
+  if (items && items.length && items[0].webkitGetAsEntry) {
+    for (let i = 0; i < items.length; i++) {
+      const entry = items[i].webkitGetAsEntry?.()
+      if (entry) {
+        if (entry.isDirectory) {
+          hasDirectory = true
+          const sub = await readDirectoryEntryRecursively(entry)
+          folderEntries.push(...sub)
+        } else if (entry.isFile) {
+          const file = items[i].getAsFile()
+          if (file) regularFiles.push(file)
+        }
+      } else {
+        const file = items[i].getAsFile?.()
+        if (file) regularFiles.push(file)
+      }
     }
-  })
+  } else {
+    regularFiles.push(...Array.from(dataTransfer?.files || []))
+  }
+
+  // Upload folder entries if any
+  if (hasDirectory && folderEntries.length > 0) {
+    if (folderTransfer.value?.uploadFolderEntries) {
+      await folderTransfer.value.uploadFolderEntries(folderEntries)
+    }
+  }
+
+  // Upload regular files if any
+  if (regularFiles.length > 0) {
+    for (const file of regularFiles) {
+      enqueueTransfer({
+        name: file.name,
+        direction: '上传',
+        path: dir,
+        total: file.size,
+        accountId,
+        hostId,
+        run: async transferOptions => {
+          await sftpUploadLarge(token, dir, file, transferOptions)
+          if (props.sessionToken === token && currentPath.value === dir) void refresh()
+        }
+      })
+    }
+    ElMessage.success(`已开始上传 ${regularFiles.length} 个文件至 ${dir || '当前目录'}`)
+  }
 }
+
+defineExpose({
+  currentPath,
+  refresh,
+  processDroppedDataTransfer
+})
 
 function uploadFiles(event) {
   const files = Array.from(event.target.files || [])
@@ -593,6 +792,73 @@ async function doRename() {
     await refresh()
   } finally {
     renameLoading.value = false
+  }
+}
+
+async function loadSystemUsersAndGroups() {
+  if (!props.sessionToken) {
+    canChown.value = false
+    return
+  }
+  try {
+    const res = await sftpGetUsersAndGroups(props.sessionToken)
+    // 如果当前用户无法查看到其他用户或无权限，关闭此选项
+    canChown.value = !!(res?.canViewOtherUsers && res?.canChown)
+    if (res?.users) systemUsers.value = res.users
+    if (res?.groups) systemGroups.value = res.groups
+  } catch (err) {
+    canChown.value = false
+  }
+}
+
+watch(() => props.sessionToken, token => {
+  if (token) {
+    void loadSystemUsersAndGroups()
+  } else {
+    canChown.value = false
+    systemUsers.value = []
+    systemGroups.value = []
+  }
+}, { immediate: true })
+
+function openChown(row) {
+  chownTarget.value = row
+  chownOwner.value = row.owner || ''
+  chownGroup.value = row.group || ''
+  chownRecursive.value = false
+  showChown.value = true
+}
+
+function resetChown() {
+  chownTarget.value = null
+  chownOwner.value = ''
+  chownGroup.value = ''
+  chownRecursive.value = false
+}
+
+async function doChown() {
+  const row = chownTarget.value
+  if (!row) return
+  const owner = chownOwner.value.trim()
+  const group = chownGroup.value.trim()
+  if (!owner && !group) {
+    ElMessage.warning('请至少指定归属用户或用户组')
+    return
+  }
+  chownLoading.value = true
+  try {
+    await sftpChown(
+      props.sessionToken,
+      remotePathForRow(row),
+      owner,
+      group,
+      row.dir ? chownRecursive.value : false
+    )
+    ElMessage.success('已修改归属用户')
+    showChown.value = false
+    await refresh()
+  } finally {
+    chownLoading.value = false
   }
 }
 
@@ -652,6 +918,7 @@ function formatMtime(sec) {
   min-height: 0;
   gap: 8px;
   overflow: hidden;
+  position: relative;
 }
 .no-session {
   padding: 24px;
@@ -790,6 +1057,21 @@ html.dark .bookmark-pill {
 .drop-upload-ico {
   font-size: 32px;
 }
+.drop-upload-text {
+  font-size: 14px;
+  font-weight: 600;
+}
+.drop-upload-path {
+  font-size: 12px;
+  opacity: 0.9;
+  background: rgba(0, 0, 0, 0.08);
+  padding: 2px 10px;
+  border-radius: 4px;
+}
+html.dark .drop-upload-path,
+:root[data-theme='dark'] .drop-upload-path {
+  background: rgba(255, 255, 255, 0.1);
+}
 .file-name-cell {
   display: inline-flex;
   align-items: center;
@@ -833,5 +1115,24 @@ html.dark .bookmark-pill {
 .file-name-text.is-dir {
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+.chown-target-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--el-fill-color-light, #f5f7fa);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  width: 100%;
+}
+.chown-target-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html.dark .chown-target-preview,
+:root[data-theme='dark'] .chown-target-preview {
+  background: rgba(255, 255, 255, 0.05);
 }
 </style>

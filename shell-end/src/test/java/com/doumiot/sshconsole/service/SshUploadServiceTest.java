@@ -95,6 +95,17 @@ class SshUploadServiceTest {
         order.verify(sftp).chmod(temp(id), 0750);
         order.verify(sftp).rename(eq(temp(id)), eq("/tmp/script"), anySet());
     }
+    @Test void preservesExistingUidGidAndPermissionsBeforeReplacement() throws Exception {
+        String id = service.start("token", "/tmp", "service.conf", 0);
+        when(sftp.statExistence("/tmp/service.conf")).thenReturn(new FileAttributes.Builder()
+                .withType(FileMode.Type.REGULAR).withPermissions(0640).withUIDGID(1001, 1002).build());
+        service.complete("token", id);
+        verify(sftp).setattr(eq(temp(id)), argThat(attrs ->
+                attrs.getMode().getPermissionsMask() == 0640
+                        && attrs.getUID() == 1001
+                        && attrs.getGID() == 1002));
+        verify(sftp).rename(eq(temp(id)), eq("/tmp/service.conf"), anySet());
+    }
     @Test void unsupportedOverwriteNeverDeletesOriginal() throws Exception {
         String id = service.start("token", "/tmp", "file", 0);
         when(sftp.version()).thenReturn(3);

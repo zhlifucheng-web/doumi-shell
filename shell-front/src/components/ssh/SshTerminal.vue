@@ -1,10 +1,22 @@
 <template>
   <div
     class="ssh-terminal-wrap"
+    :class="{ 'is-dragover': isDragOver }"
     tabindex="-1"
+    @dragenter="handleDragEnter"
+    @dragover.prevent="handleDragOver"
+    @dragleave="handleDragLeave"
+    @drop.prevent="handleDrop"
     @keydown.ctrl.f.prevent.stop="openSearch"
     @keydown.meta.f.prevent.stop="openSearch"
   >
+    <!-- 拖拽上传覆盖层 -->
+    <div v-if="isDragOver" class="terminal-drop-overlay">
+      <el-icon class="terminal-drop-ico"><Upload /></el-icon>
+      <div class="terminal-drop-title">松开鼠标立即上传到当前目录</div>
+      <div v-if="currentPath" class="terminal-drop-path font-mono-code">{{ currentPath }}</div>
+    </div>
+
     <div v-if="statusMessage" class="status-overlay">{{ statusMessage }}</div>
     <div v-if="contextMenu.visible" class="terminal-context-menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @mousedown.stop>
       <button type="button" @click="copyTerminalSelection(); closeContextMenu()">复制 <kbd>Ctrl+C</kbd></button>
@@ -75,6 +87,7 @@ import { createTerminalConnectionGuard } from '@/utils/terminalConnectionGuard'
 import { bindTerminalInput, encodeTerminalText } from '@/utils/terminalInput'
 import { bindTerminalSelection } from '@/utils/terminalSelection'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { Upload } from '@element-plus/icons-vue'
 import EditorScrollbar from '@/components/EditorScrollbar.vue'
 import TerminalHistory from './TerminalHistory.vue'
 import { createHistoryRequest, TERMINAL_SCROLLBACK } from '@/utils/terminalHistory'
@@ -101,7 +114,8 @@ const props = defineProps({
   readOnly: { type: Boolean, default: false },
   fontSize: { type: Number, default: 14 },
   lightTone: { type: String, default: 'paper' }, // 'paper' | 'hybrid'
-  encoding: { type: String, default: 'UTF-8' }
+  encoding: { type: String, default: 'UTF-8' },
+  currentPath: { type: String, default: '' }
 })
 
 const emit = defineEmits([
@@ -110,8 +124,44 @@ const emit = defineEmits([
   'connection-error',
   'size-change',
   'ask-ai',
-  'change-encoding'
+  'change-encoding',
+  'drop-files'
 ])
+
+const isDragOver = ref(false)
+let dragDepth = 0
+
+function handleDragEnter(event) {
+  if (props.readOnly) return
+  if (!event.dataTransfer?.types?.includes('Files')) return
+  dragDepth++
+  isDragOver.value = true
+}
+
+function handleDragOver(event) {
+  if (props.readOnly) return
+  if (!event.dataTransfer?.types?.includes('Files')) return
+  event.preventDefault()
+  event.dataTransfer.dropEffect = 'copy'
+  isDragOver.value = true
+}
+
+function handleDragLeave(event) {
+  dragDepth--
+  if (dragDepth <= 0) {
+    dragDepth = 0
+    isDragOver.value = false
+  }
+}
+
+function handleDrop(event) {
+  dragDepth = 0
+  isDragOver.value = false
+  event.preventDefault()
+  if (props.readOnly) return
+  if (!event.dataTransfer) return
+  emit('drop-files', event.dataTransfer)
+}
 
 const termContainer = ref(null)
 const scrollTarget = shallowRef(null)
@@ -700,6 +750,48 @@ watch(
   position: relative;
   overflow: hidden;
   outline: none;
+}
+.terminal-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  background: rgba(99, 102, 241, 0.16);
+  backdrop-filter: blur(5px);
+  border: 2px dashed var(--el-color-primary, #6366f1);
+  border-radius: var(--ws-radius-md, 8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--el-color-primary, #6366f1);
+  font-weight: 600;
+  pointer-events: none;
+  animation: drop-fade-in 0.15s ease-out;
+}
+@keyframes drop-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.terminal-drop-ico {
+  font-size: 36px;
+}
+.terminal-drop-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.terminal-drop-path {
+  font-size: 12px;
+  opacity: 0.9;
+  background: rgba(0, 0, 0, 0.15);
+  padding: 3px 12px;
+  border-radius: 4px;
+  color: var(--el-color-primary, #6366f1);
+}
+html.dark .terminal-drop-path,
+:root[data-theme='dark'] .terminal-drop-path {
+  background: rgba(255, 255, 255, 0.12);
 }
 .terminal-context-menu { position:absolute; z-index:8; min-width:170px; padding:4px; border:1px solid var(--el-border-color); border-radius:6px; background:var(--el-bg-color); box-shadow:var(--el-box-shadow); }
 .terminal-context-menu button { display:flex; justify-content:space-between; width:100%; padding:7px 9px; border:0; background:transparent; color:var(--el-text-color-primary); cursor:pointer; text-align:left; }
