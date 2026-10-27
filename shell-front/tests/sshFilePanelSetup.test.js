@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mountSfcSetup } from './helpers/mountSfcSetup.js'
 import * as vue from 'vue'
 import * as fileTypes from '../src/utils/fileTypeHelper.js'
+import * as transferHistory from '../src/composables/transferHistory.js'
 
 const filename = new URL('../src/components/ssh/SshFilePanel.vue', import.meta.url)
 
@@ -15,6 +16,7 @@ function mountPanel(props = {}, listDirectory, fileLocation = vue.ref(null), loa
   const invalid = []
   const modules = {
     '@/utils/fileTypeHelper': fileTypes,
+    '@/composables/transferHistory': transferHistory,
     'element-plus': { ElMessage: { warning: message => warnings.push(message), error: message => errors.push(message) } },
     'vue-router': { useRouter: () => ({}) },
     '@/composables/useAiChanges': { useAiChanges: () => {} },
