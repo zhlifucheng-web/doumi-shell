@@ -2,6 +2,7 @@ package com.doumiot.sshconsole.service;
 
 import com.doumiot.common.exception.enums.ParamExceptionEnum;
 import com.doumiot.spring.exception.BusinessRuntimeException;
+import com.doumiot.sshconsole.sftp.FileTailRecoveryException;
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
 import com.doumiot.sshconsole.config.SshConsoleProperties;
 import com.doumiot.sshconsole.sftp.SshSftpAttributeFormatter;
@@ -204,6 +205,80 @@ public class SshSftpService {
             }
         }
     }
+
+    /** Authenticated regular-file reader, owned and closed by one HTTP request or file Tail. */
+    public ReadFileHandle openReadHandle(String token, String path) throws IOException {
+        SshSessionRegistry.SessionEntry entry = sessionRegistry.get(token);
+        SFTPClient sftp = openSftp(entry);
+        RemoteFile remote = null;
+        try {
+            if (sftp.getSFTPEngine() != null) sftp.getSFTPEngine().setTimeoutMs(5000);
+            String home = needHome(path) ? resolveHomeDir(sftp, entry) : entry.getHomeDir();
+            String resolved = SshSftpPathResolver.resolve(path, entry.getDefaultCwd(), home);
+            if (sftp.type(resolved) != FileMode.Type.REGULAR) throw new IOException("仅支持读取普通文件");
+            remote = sftp.open(resolved);
+            return new ReadFileHandle(resolved, sftp, remote);
+        } catch (IOException | RuntimeException error) {
+            if (remote != null) try { remote.close(); } catch (IOException cleanup) { error.addSuppressed(cleanup); }
+            try { sftp.close(); } catch (IOException cleanup) { error.addSuppressed(cleanup); }
+            if (error instanceof SFTPException && missingPath((SFTPException)error))
+                throw new FileTailRecoveryException("FILE_CHANGED", "文件路径暂时不存在，等待轮转后的文件");
+            throw error;
+        }
+    }
+
+    private static boolean missingPath(SFTPException error) {
+        return error.getStatusCode() == net.schmizz.sshj.sftp.Response.StatusCode.NO_SUCH_FILE || error.getStatusCode() == net.schmizz.sshj.sftp.Response.StatusCode.NO_SUCH_PATH;
+    }
+
+    <T> T withReadFile(String token, String path, ReadFileAction<T> action) throws IOException {
+        try (ReadFileHandle handle = openReadHandle(token, path)) {
+            T result = action.read(handle.path, handle.remote, handle.attributes());
+            sessionRegistry.touchSession(token);
+            return result;
+        }
+    }
+    interface ReadFileAction<T> {
+        T read(String resolvedPath, RemoteFile remote, FileAttributes attrs) throws IOException;
+    }
+    public static final class ReadFileHandle implements java.io.Closeable {
+        private final String path;
+        private final SFTPClient sftp;
+        private final RemoteFile remote;
+        private boolean closed;
+        private long divergentRemoteSize = -1;
+        private int divergentReads;
+        private ReadFileHandle(String path, SFTPClient sftp, RemoteFile remote) { this.path=path; this.sftp=sftp; this.remote=remote; }
+        public String path() { return path; }
+        public long length() throws IOException { return remote.length(); }
+        public FileAttributes attributes() throws IOException {
+            try { return sftp.stat(path); }
+            catch (SFTPException error) {
+                if (missingPath(error))
+                    throw new FileTailRecoveryException("FILE_CHANGED", "文件路径暂时不存在，等待轮转后的文件");
+                throw error;
+            }
+        }
+        /** Retry a racing append; consistently read the smaller observed snapshot while a writer remains active. */
+        public ReadSnapshot snapshot() throws IOException {
+            FileAttributes attrs = attributes(); long remoteSize = length();
+            if (attrs.getSize() != remoteSize) { attrs = attributes(); remoteSize = length(); }
+            boolean stable = attrs.getSize() == remoteSize;
+            if (!stable) {
+                divergentReads = remoteSize == divergentRemoteSize ? divergentReads + 1 : 1;
+                divergentRemoteSize = remoteSize;
+                if (divergentReads >= 3) throw new FileTailRecoveryException("FILE_CHANGED", "文件路径与打开的文件不一致，正在重新读取");
+            } else { divergentReads = 0; divergentRemoteSize = -1; }
+            return new ReadSnapshot(Math.min(attrs.getSize(), remoteSize), attrs.getMtime(), stable);
+        }
+        public int read(long offset, byte[] bytes, int begin, int length) throws IOException { return remote.read(offset,bytes,begin,length); }
+        @Override public synchronized void close() throws IOException {
+            if (closed) return; closed=true;
+            try { remote.close(); } finally { sftp.close(); }
+        }
+    }
+
+    @lombok.Value public static class ReadSnapshot { long size; long mtime; boolean stable; }
 
     public void upload(String sessionToken, String path, MultipartFile file) throws IOException {
         if (file == null || !StringUtils.hasText(file.getOriginalFilename())) {

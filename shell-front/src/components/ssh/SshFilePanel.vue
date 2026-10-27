@@ -21,7 +21,24 @@
         </el-button>
       </el-empty>
       <p class="hint">也可先在「终端」Tab 连接，连接成功后会自动复用 sessionToken。</p>
-      <el-button size="small" @click="showTransfers = true">{{ transferButtonLabel }}</el-button>
+      <el-popover
+        trigger="hover"
+        :width="350"
+        placement="bottom-end"
+        :disabled="activeTransferCount === 0"
+        popper-class="transfer-hover-popper"
+        :show-after="200"
+        :hide-after="150"
+      >
+        <template #reference>
+          <el-button size="small" :type="activeTransferCount ? 'primary' : 'default'" plain :title="activeTransferCount ? '' : transferButtonTitle" @click="showTransfers = true">{{ transferButtonLabel }}</el-button>
+        </template>
+        <TransferHoverCard
+          :transfers="activeTransfers"
+          :overall-progress="activeOverallProgress"
+          @open-list="showTransfers = true"
+        />
+      </el-popover>
     </div>
     <template v-else>
       <div class="toolbar">
@@ -86,7 +103,24 @@
               <el-icon><Search /></el-icon>
             </template>
           </el-input>
-          <el-button size="small" :type="activeTransferCount ? 'primary' : 'default'" plain @click="showTransfers = true">{{ transferButtonLabel }}</el-button>
+          <el-popover
+            trigger="hover"
+            :width="350"
+            placement="bottom-end"
+            :disabled="activeTransferCount === 0"
+            popper-class="transfer-hover-popper"
+            :show-after="200"
+            :hide-after="150"
+          >
+            <template #reference>
+              <el-button size="small" :type="activeTransferCount ? 'primary' : 'default'" plain :title="activeTransferCount ? '' : transferButtonTitle" @click="showTransfers = true">{{ transferButtonLabel }}</el-button>
+            </template>
+            <TransferHoverCard
+              :transfers="activeTransfers"
+              :overall-progress="activeOverallProgress"
+              @open-list="showTransfers = true"
+            />
+          </el-popover>
           <el-button v-if="embedded" size="small" :aria-pressed="showDetails" @click="showDetails=!showDetails">{{ showDetails ? '精简列表' : '详细信息' }}</el-button>
           <el-button size="small" type="primary" @click="showMkdir = true">新建目录</el-button>
           <input ref="uploadInput" type="file" hidden multiple @change="uploadFiles" />
@@ -124,7 +158,16 @@
 
     <el-dialog v-model="showTransfers" title="文件传输 · 当前服务器" width="min(1080px, 94vw)" top="8vh" append-to-body destroy-on-close>
       <p v-if="transferHistoryWarning" role="alert" class="transfer-error">{{ transferHistoryWarning }}</p>
-      <div class="transfer-heading"><strong>共 {{ visibleTransfers.length }} 项<span v-if="activeTransferCount"> · {{ activeTransferCount }} 项进行中</span></strong><el-button text size="small" @click="clearVisibleTransfers">清除已结束</el-button></div>
+      <div class="transfer-heading">
+        <strong>共 {{ visibleTransfers.length }} 项<span v-if="activeTransferCount"> · {{ activeTransferCount }} 项进行中 ({{ activeTransferPercent }}%)</span></strong>
+        <el-button text size="small" @click="clearVisibleTransfers">清除已结束</el-button>
+      </div>
+      <el-progress
+        v-if="activeTransferCount"
+        :percentage="activeTransferPercent"
+        :stroke-width="5"
+        style="margin: 4px 0 10px;"
+      />
       <p class="transfer-hint">关闭弹窗不影响传输。{{ transferNotice }}</p>
       <el-table :data="visibleTransfers" size="small" max-height="55vh" empty-text="当前服务器暂无传输记录">
         <el-table-column prop="direction" label="方向" width="65" />
@@ -229,6 +272,7 @@
       :file="editorFile"
       :dir="loadedPath || currentPath || defaultCwd || '/'"
       :session-token="sessionToken"
+      :account-id="accountId"
       @saved="refresh"
       @switch-to-stream="openLargeFileViewer"
     />
@@ -238,6 +282,7 @@
       :file="largeViewerFile"
       :dir="loadedPath || currentPath || defaultCwd || '/'"
       :session-token="sessionToken"
+      :account-id="accountId"
       @switch-to-editor="openFullEditor"
     />
   </div>
@@ -266,8 +311,10 @@ import FolderTransfer from './FolderTransfer.vue'
 import SshVirtualTable from './SshVirtualTable.vue'
 import SshFileEditorDialog from './SshFileEditorDialog.vue'
 import SshLargeFileViewerDialog from './SshLargeFileViewerDialog.vue'
-import { isDefaultEditableFile, isBinaryFile, isTextFile } from '@/utils/fileTypeHelper'
+import { isBinaryFile } from '@/utils/fileTypeHelper'
 import { sortFileList } from '@/utils/fileSorter'
+import { formatSize } from '@/utils/transferFormat'
+import TransferHoverCard from './TransferHoverCard.vue'
 import { useAiChanges } from '@/composables/useAiChanges'
 useAiChanges(/^(file_|ssh_command)/, () => { if (props.sessionToken) return refresh() })
 
@@ -294,10 +341,77 @@ watch(() => [props.accountId, props.hostId], ([accountId, hostId]) => {
 }, { immediate: true })
 const visibleTransfers = computed(() => transfersForServer(transfers?.value || transfers, props.hostId))
 const showTransfers = ref(false)
-const activeTransferCount = computed(() => visibleTransfers.value.filter(isTransferActive).length)
-const transferButtonLabel = computed(() => activeTransferCount.value
-  ? `传输列表（${activeTransferCount.value} 项进行中）`
-  : `传输列表（${visibleTransfers.value.length}）`)
+const activeTransfers = computed(() => visibleTransfers.value.filter(isTransferActive))
+const activeTransferCount = computed(() => activeTransfers.value.length)
+
+let activeBatchStart = null
+watch(activeTransferCount, (count) => {
+  if (count > 0) {
+    if (activeBatchStart === null) {
+      const earliest = Math.min(...activeTransfers.value.map(t => t.createdAt || Date.now()))
+      activeBatchStart = Number.isFinite(earliest) ? earliest : Date.now()
+    }
+  } else {
+    activeBatchStart = null
+  }
+}, { immediate: true })
+
+const activeOverallProgress = computed(() => {
+  if (activeTransferCount.value <= 0) {
+    return { loaded: 0, total: 0, percent: 0 }
+  }
+
+  const batchTasks = visibleTransfers.value.filter(task => {
+    if (isTransferActive(task)) return true
+    if (activeBatchStart !== null && task.status === '已完成') {
+      const time = task.updatedAt || task.createdAt || 0
+      return time >= activeBatchStart
+    }
+    return false
+  })
+
+  let totalLoaded = 0
+  let totalSize = 0
+  for (const t of batchTasks) {
+    const tTotal = Math.max(0, Number(t.total) || 0)
+    const tLoaded = t.status === '已完成'
+      ? tTotal
+      : Math.min(tTotal > 0 ? tTotal : Infinity, Math.max(0, Number(t.loaded) || 0))
+    totalLoaded += tLoaded
+    totalSize += tTotal
+  }
+
+  const percent = totalSize > 0
+    ? Math.min(99, Math.floor((totalLoaded / totalSize) * 100))
+    : 0
+
+  return {
+    loaded: totalLoaded,
+    total: totalSize,
+    percent
+  }
+})
+
+const activeTransferPercent = computed(() => activeOverallProgress.value.percent)
+
+const transferButtonLabel = computed(() => {
+  if (activeTransferCount.value > 0) {
+    const pct = activeOverallProgress.value.total > 0 ? ` · ${activeTransferPercent.value}%` : ''
+    return `传输列表（${activeTransferCount.value} 项进行中${pct}）`
+  }
+  return `传输列表（${visibleTransfers.value.length}）`
+})
+
+const transferButtonTitle = computed(() => {
+  if (activeTransferCount.value > 0) {
+    const { loaded, total, percent } = activeOverallProgress.value
+    if (total > 0) {
+      return `文件传输：${activeTransferCount.value} 项进行中 · 综合进度 ${percent}% (${formatSize(loaded)} / ${formatSize(total)})`
+    }
+    return `文件传输：${activeTransferCount.value} 项进行中`
+  }
+  return `文件传输列表（共 ${visibleTransfers.value.length} 项记录）`
+})
 watch(() => props.active, active => { if (!active) showTransfers.value = false })
 onDeactivated(() => { showTransfers.value = false })
 function clearVisibleTransfers() {
@@ -526,13 +640,10 @@ async function refresh() {
 function onRowDblClick(row) {
   if (row.dir) {
     enterDir(row.name)
-  } else if (row.size > 5 * 1024 * 1024 && !isBinaryFile(row.name)) {
-    // Large text / log files (> 5MB): open with dynamic chunk streaming viewer
-    openLargeFileViewer(row)
-  } else if (isDefaultEditableFile(row.name, row.size)) {
-    openFileEditor(row)
+  } else if (isBinaryFile(row.name)) {
+    ElMessage.warning('该文件不支持文本预览，请使用下载操作')
   } else {
-    downloadRow(row)
+    openLargeFileViewer(row)
   }
 }
 
@@ -553,6 +664,7 @@ function openStandaloneViewer(row) {
     path: '/file-viewer',
     query: {
       token: props.sessionToken,
+      accountId: props.accountId,
       path: filePath,
       name: row.name,
       size: row.size
@@ -922,13 +1034,6 @@ async function doMkdir() {
   }
 }
 
-function formatSize(n) {
-  const v = Number(n) || 0
-  if (v < 1024) return `${v} B`
-  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`
-  if (v < 1024 * 1024 * 1024) return `${(v / 1024 / 1024).toFixed(1)} MB`
-  return `${(v / 1024 / 1024 / 1024).toFixed(2)} GB`
-}
 
 function formatMtime(sec) {
   const s = Number(sec) || 0

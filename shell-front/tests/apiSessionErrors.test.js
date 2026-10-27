@@ -15,7 +15,7 @@ function loadApi(response) {
   const api = new Function('axios', 'ElMessage', `${source}; return { get, handleApiResponse }`)(axios, { error: message => errors.push(message) })
   const sshSource = readFileSync(new URL('../src/api/sshConsole.js', import.meta.url), 'utf8')
     .replace(/^import .* from .*$/gm, '').replace(/export /g, '')
-  const ssh = new Function('get', `${sshSource}; return { sftpGetUsersAndGroups }`)(api.get)
+  const ssh = new Function('get', `${sshSource}; return { sftpGetUsersAndGroups, sftpReadChunk }`)(api.get)
   return { ...api, ...ssh, errors }
 }
 
@@ -37,5 +37,12 @@ test('background SFTP user lookup still returns successful permission data', asy
   const data = { canViewOtherUsers: true, canChown: true, users: ['root'], groups: ['root'] }
   const api = loadApi({ data: { code: 200, success: true, data } })
   assert.deepEqual(await api.sftpGetUsersAndGroups('current'), data)
+  assert.deepEqual(api.errors, [])
+})
+
+
+test('file chunk reads leave session recovery notifications to the viewer', async () => {
+  const api = loadApi(expiredResponse())
+  await assert.rejects(api.sftpReadChunk('expired', '/app.log'), /会话不存在或已过期/)
   assert.deepEqual(api.errors, [])
 })

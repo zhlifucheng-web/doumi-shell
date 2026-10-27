@@ -432,7 +432,19 @@ export async function sftpDownload(sessionToken, path, filename, options={}) {
  * 分块动态读取大文件片段
  */
 export function sftpReadChunk(sessionToken, path, { offset = 0, length = 262144, fromEnd = false } = {}) {
-  return get(`${BASE}/sftp/read-chunk`, { sessionToken, path, offset, length, fromEnd }, { showSuccess: false })
+  return get(`${BASE}/sftp/read-chunk`, { sessionToken, path, offset, length, fromEnd }, { showSuccess: false, showFailure: false })
+}
+
+export function sftpFilterStart(data) {
+  return post(`${BASE}/sftp/filter/start`, data, { showSuccess: false, showFailure: false })
+}
+
+export function sftpFilterNext(data) {
+  return post(`${BASE}/sftp/filter/next`, data, { showSuccess: false, showFailure: false })
+}
+
+export function sftpFilterCancel(data) {
+  return post(`${BASE}/sftp/filter/cancel`, data, { showSuccess: false, showFailure: false })
 }
 
 export const startExecution = (scriptId, accountId) => post(`${BASE}/executions`, {scriptId,accountId}, {showSuccess:false})
@@ -443,3 +455,20 @@ export const stopExecution = id => post(`${BASE}/executions/${id}/stop`, {}, {sh
 export const cleanupTables = () => get(`${BASE}/data-cleanup/tables`, {}, {showSuccess:false})
 export const previewCleanup = body => post(`${BASE}/data-cleanup/preview`, body, {showSuccess:false})
 export const clearData = token => post(`${BASE}/data-cleanup/clear`, {token}, {showSuccess:false})
+
+export function buildFileTailWsUrl() {
+  const url = new URL(`${API_BASE}/ws/ssh-console/file-tail`, window.location.origin)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  return url.toString()
+}
+
+
+export function getSessionContext(sessionToken) {
+  return get(`${BASE}/accounts/sessions/${encodeURIComponent(sessionToken)}`, {}, { showSuccess: false, showFailure: false })
+}
+export function openViewerSession(accountId) {
+  return post(`${BASE}/accounts/${accountId}/viewer-session`, {}, { showSuccess: false, showFailure: false })
+}
+export function closeViewerSession(sessionToken) {
+  return del(`${BASE}/accounts/viewer-sessions/${encodeURIComponent(sessionToken)}`, { showSuccess: false, showFailure: false })
+}
