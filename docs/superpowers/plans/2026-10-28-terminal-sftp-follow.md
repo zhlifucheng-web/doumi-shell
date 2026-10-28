@@ -45,10 +45,14 @@ Interfaces: API context payload Task1; ownerUid/ownerGid and upload result Task2
 ## Task 4: Integration and review (root)
 
 - [x] Run all frontend and backend tests, inspect diff and request independent review. Frontend: 280 passed; backend: 253 total, 0 failures/errors, 2 skipped; Python: 6 passed. Both independent reviews found no confirmed defects.
-- [ ] Real SSH: disposable tmux/plain-shell cwd changes, nested su and exit, same-user prompt detection, root SFTP upload with optional target uid/gid, overwrite preserves attributes, ownership failure warning.
-- [ ] Build package with exact static match, commit/push main under existing authorization, deploy with backup and configuration/database/Docker baseline checks.
-- [ ] Verify runtime assets/service and report tested platforms and limits honestly.
+- [x] Real available platform: disposable plain-shell cd/su/exit and HTTPS/WSS context API, root SFTP with optional uid/gid, fixed upload destination/ownership, attribute-preserving overwrite, folder/ZIP ownership passed. Real tmux and restricted-user ownership failure remain platform/test limits; corresponding unit/HTTP contract coverage passed.
+- [x] Build package with exact static match, commit/push main under existing authorization, deploy with backup and configuration/database/Docker baseline checks. Functional commit `52cd541`; release `local-20261028-104812-terminal-follow`.
+- [x] Verify runtime assets/service and report tested platforms and limits honestly. Both services active/enabled; JAR and HTTPS static match; startup ERROR count 0. Context API observations: 1351/968/979/362 ms with a 550 ms test poll; no browser paint measurement. See ignored release artifacts `live-integration.json` and `post-deploy-health.json`.
 
 ## Verification status before release
 
 Real plain SSH: exact connection matching, cd with spaces, su nobody, switched-user cd, exit, foreground noninteractive script all passed. Target has no tmux, so tmux adapter has unit coverage only. Permission-denied ownership warnings have service and HTTP contract coverage; a real restricted-user SFTP session is unavailable. Deployment and live HTTPS/SFTP results are recorded with the release artifacts.
+
+## Release verification
+
+Deployed to the existing backend and HTTPS service with backup retained. SQLite quick_check and configuration counts, service/env/nginx/certificate/master-key hashes, Docker container states/start times and Dify network all passed baseline comparison. Remote test sessions and directories were disposable and cleaned after validation. This verification-only documentation commit does not change the deployed JAR bytes.
