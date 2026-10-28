@@ -78,7 +78,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { sftpReadChunk, sftpDownload, sftpFilterStart, sftpFilterNext, sftpFilterCancel, buildFileTailWsUrl, getSessionContext, openViewerSession, closeViewerSession } from '@/api/sshConsole'
+import { sftpReadChunk, sftpDownload, sftpFilterStart, sftpFilterCancel, buildFileTailWsUrl, getSessionContext, openViewerSession, closeViewerSession } from '@/api/sshConsole'
 import { base64ToUint8Array, decodeFileBuffer, detectFileEncoding, ENCODING_OPTIONS } from '@/utils/fileTypeHelper'
 import { createViewerBlockRenderer, highlightText, searchMatches, nextMatch, interceptFind } from '@/utils/fileViewerText'
 import { createViewerTail } from '@/composables/useViewerTail'
@@ -112,10 +112,10 @@ const rangeStart = computed(() => chunks.value[0]?.offset || 0)
 const rangeEnd = computed(() => { const c = chunks.value.at(-1); return c ? c.offset + c.length : 0 })
 const filter = useViewerFilter({
   source: () => ({ sessionToken: viewerSession.token, path: props.path, encoding: selectedEncoding.value }),
-  api: { start: data => viewerSession.run(async token => ({ ...await sftpFilterStart({ ...data, sessionToken: token }), sessionToken: token })), next: (scanId, sessionToken) => sftpFilterNext({ scanId, sessionToken }), cancel: (scanId, sessionToken) => sftpFilterCancel({ scanId, sessionToken }) },
-  onError: message => {
-    const code = recoveryCode({ message })
-    if (code) requestRecovery({ code, message })
+  api: { start: data => viewerSession.run(async token => ({ ...await sftpFilterStart({ ...data, sessionToken: token }), sessionToken: token })), stream: options => createViewerTail({ ...options, url: buildFileTailWsUrl }), cancel: (scanId, sessionToken) => sftpFilterCancel({ scanId, sessionToken }) },
+  onError: (message, frame) => {
+    const code = frame?.code || recoveryCode({ message })
+    if (['FILE_CHANGED', 'SESSION_EXPIRED', 'SSH_DISCONNECTED', 'TAIL_EXPIRED'].includes(code)) requestRecovery({ ...frame, code, message })
     else if (!recovering.value) { setFollowing(false); ElMessage.error(message) }
   }
 })
@@ -125,7 +125,7 @@ const contentBlocks = computed(() => renderBlocks(filter.active.value ? filter.d
 const matchCount = computed(() => searchKeyword.value ? contentBlocks.value.matchCount : 0)
 const canFilterTail = computed(() => filter.readyForTail.value && !filter.canceled.value && !filter.limited.value && !filter.error.value)
 const filterProgress = computed(() => filter.totalSize.value ? Math.min(100, Math.floor(100 * filter.offset.value / filter.totalSize.value)) : filter.eof.value ? 100 : 0)
-const filterStatus = computed(() => filter.error.value ? '筛选中断' : filter.limited.value ? '结果已截断' : filter.canceled.value ? '已取消（部分结果）' : filter.eof.value ? '已扫描到文件末尾' : filter.paused.value ? '选择文本中，扫描暂停' : filter.scanning.value ? '全文件扫描中' : '部分扫描结果')
+const filterStatus = computed(() => `${filter.mode.value === 'sftp' ? 'SFTP兼容扫描' : '远端扫描'} · ${filter.error.value ? '筛选中断' : filter.limited.value ? '结果已截断' : filter.canceled.value ? '已取消（部分结果）' : filter.eof.value ? '已扫描到文件末尾' : filter.paused.value ? '选择文本中，扫描暂停' : filter.scanning.value ? '全文件扫描中' : '部分扫描结果'}`)
 const renderedBlocks = computed(() => frozenHtml.value ?? contentBlocks.value)
 watch([searchKeyword, matchCount], () => { activeMatch.value = matchCount.value ? Math.min(Math.max(0, activeMatch.value), matchCount.value - 1) : -1 })
 watch(filter.readyForTail, async ready => {
@@ -199,8 +199,9 @@ async function goBottom() {
   holdFollow = false
   if (!filter.active.value) { await jumpToTail(); return }
   scrollToBottom()
+  if (recoveryReason) { filter.pause(false); setFollowing(true); return }
   if (canFilterTail.value) setFollowing(true)
-  else if (filter.scanning.value) followAfterScan = true
+  else if (filter.scanning.value) { followAfterScan = true; filter.pause(false) }
 }
 const tail = createViewerTail({
   url: buildFileTailWsUrl,
@@ -274,8 +275,11 @@ async function recoverTail() {
     if (!current()) return
     if (filter.active.value) {
       followAfterScan = true
-      await filter.start({ keyword: filterKeyword.value, caseSensitive: caseSensitive.value, contextLines: withContext.value ? 2 : 0 }, { preserveHistory: true, truncated: reason.code === 'FILE_CHANGED' })
-      if (filter.error.value) throw new Error(filter.error.value)
+      if (!reason.filterLoaded) {
+        await filter.start({ keyword: filterKeyword.value, caseSensitive: caseSensitive.value, contextLines: withContext.value ? 2 : 0 }, { preserveHistory: true, truncated: reason.code === 'FILE_CHANGED' })
+        if (filter.error.value) throw new Error(filter.error.value)
+        reason.filterLoaded = filter.readyForTail.value || filter.limited.value
+      }
     } else {
       let offset = reason.code === 'FILE_CHANGED' ? 0 : rangeStart.value
       let page = await viewerSession.run(token => sftpReadChunk(token, props.path, { offset, length: chunkSize, fromEnd: false }))
@@ -312,6 +316,7 @@ function setFollowing(value) {
   const next = Boolean(value) && !selectedText.value && (!filter.active.value || canFilterTail.value || recoveryReason)
   if (!next) {
     autoFollow.value = false
+    filter.pause(true)
     if (recoveryReason) { ++recoveryVersion; filter.pause(true); loading.value = false; if (recoveryTimer != null) clearTimeout(recoveryTimer); recoveryTimer = null }
     if (tailStarted) tail.pause()
     return
@@ -319,6 +324,7 @@ function setFollowing(value) {
   if (recoveryReason) { autoFollow.value = true; void recoverTail(); return }
   if (autoFollow.value && tailStarted) return
   autoFollow.value = true
+  filter.pause(false)
   if (tailStarted) tail.resume()
   else {
     tailStarted = true
@@ -333,10 +339,13 @@ function tailAnchor() {
 }
 function onViewerScroll() {
   const el = viewerBodyRef.value
-  if (!el || loading.value || selectedText.value) return
+  if (!el || (loading.value && !filter.scanning.value) || selectedText.value) return
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24
   if (!atBottom) { followAfterScan = false; setFollowing(false) }
-  else if (!holdFollow && (filter.active.value ? canFilterTail.value : chunks.value.length && !hasMoreAfter.value)) setFollowing(true)
+  else if (!holdFollow) {
+    if (filter.active.value && filter.scanning.value) { followAfterScan = true; filter.pause(false) }
+    else if (filter.active.value ? canFilterTail.value : chunks.value.length && !hasMoreAfter.value) setFollowing(true)
+  }
 }
 function onSelectionChange() {
   const selection = window.getSelection?.(), el = viewerBodyRef.value
@@ -346,7 +355,7 @@ function onSelectionChange() {
     if (!selectedText.value) frozenHtml.value = contentBlocks.value
     selectedText.value = text; pauseForReading(); filter.pause(true)
   } else {
-    selectedText.value = ''; frozenHtml.value = null; filter.pause(false)
+    selectedText.value = ''; frozenHtml.value = null; if (!holdFollow) filter.pause(false)
   }
 }
 async function openSearchTools() {

@@ -4,6 +4,9 @@ import com.doumiot.sshconsole.ssh.SshSessionRegistry;
 import net.schmizz.sshj.SSHClient;
 import net.schmizz.sshj.sftp.*;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
+import com.doumiot.sshconsole.ssh.SshFileFilterRemoteFactory;
+import com.doumiot.sshconsole.ssh.SshFileFilterRemoteCursor;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 import java.io.IOException;
@@ -22,6 +25,7 @@ class SshFileFilterServiceTest {
     private final RemoteFile remote = mock(RemoteFile.class);
     private byte[] bytes = "first\nhit".getBytes(StandardCharsets.UTF_8);
     private long mtime = 1;
+    private final SshFileFilterRemoteFactory remoteFactory=mock(SshFileFilterRemoteFactory.class);
     private int requestBytes;
     @BeforeEach void setup() throws Exception {
         SshSessionRegistry.SessionEntry entry = new SshSessionRegistry.SessionEntry(); entry.setClient(client); entry.setHomeDir("/home/u");
@@ -37,7 +41,25 @@ class SshFileFilterServiceTest {
             int count = Math.min(len, bytes.length - (int)pos); requestBytes += count;
             System.arraycopy(bytes, (int)pos, to, off, count); return count;
         });
-        ReflectionTestUtils.setField(files,"sessionRegistry",registry); ReflectionTestUtils.setField(service,"files",files);
+        ReflectionTestUtils.setField(files,"sessionRegistry",registry); ReflectionTestUtils.setField(service,"files",files); ReflectionTestUtils.setField(service,"remoteScans",remoteFactory);
+    }
+    @AfterEach void cleanup() {service.closeAll();}
+    @Test void remoteModeTransfersOnlyRowsAndRetainsCursorAcrossHistoryAndTail() throws Exception {
+        SshFileFilterRemoteCursor remoteCursor=mock(SshFileFilterRemoteCursor.class);
+        when(remoteFactory.open(eq("owner"),eq("/app.log"),eq("hit"),eq("UTF-8"),eq(true),eq(0))).thenReturn(remoteCursor);
+        when(remoteCursor.size()).thenReturn(600000L);
+        when(remoteCursor.next(anyString())).thenAnswer(c->new SshFileFilterService.Batch(c.getArgument(0),Collections.emptyList(),262144,600000,false,false))
+                .thenAnswer(c->new SshFileFilterService.Batch(c.getArgument(0),Collections.singletonList(new com.doumiot.sshconsole.sftp.SshFileFilterScanner.Row(9,"hit",true)),600000,600000,true,false))
+                .thenAnswer(c->new SshFileFilterService.Batch(c.getArgument(0),Collections.singletonList(new com.doumiot.sshconsole.sftp.SshFileFilterScanner.Row(10,"hit appended",true)),600013,600013,true,false));
+        SshFileFilterService.Started started=service.start("owner","/app.log","hit","UTF-8",true,0);
+        assertEquals("remote",started.getMode());
+        SshFileFilterService.TailLease history=service.claimStream("owner",started.getScanId(),true);
+        assertTrue(history.remote());assertFalse(service.nextTail(history,null).isEof());assertTrue(service.nextTail(history,null).isEof());
+        service.releaseTail(history);
+        SshFileFilterService.TailLease live=service.claimTail("owner",started.getScanId());
+        assertEquals("hit appended",service.nextTail(live,null).getRows().get(0).getText());
+        verify(remote,never()).read(anyLong(),any(byte[].class),anyInt(),anyInt());
+        verify(remoteCursor,never()).close();service.cancel("owner",started.getScanId());verify(remoteCursor).close();
     }
     @Test void scansResolvedFileAndUpdatesEofPartialLine() throws Exception {
         String id = service.start("owner", "~/app.log", "hit", "UTF-8", true, 0).getScanId();

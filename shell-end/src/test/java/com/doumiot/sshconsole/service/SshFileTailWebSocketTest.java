@@ -60,13 +60,43 @@ class SshFileTailWebSocketTest {
             doAnswer(c -> {closed++; return null;}).when(sftp).close();
             return sftp;
         });
-        ReflectionTestUtils.setField(files,"sessionRegistry",registry); ReflectionTestUtils.setField(filters,"files",files);
+        ReflectionTestUtils.setField(files,"sessionRegistry",registry); ReflectionTestUtils.setField(filters,"files",files); ReflectionTestUtils.setField(filters,"remoteScans",mock(com.doumiot.sshconsole.ssh.SshFileFilterRemoteFactory.class));
         handler = new SshFileTailWebSocketHandler(files,filters,registry);
         ReflectionTestUtils.setField(handler,"clock",clock);
         ReflectionTestUtils.setField(handler,"executor",(java.util.concurrent.Executor)Runnable::run);
         socket = socket("first",frames);
     }
-    @AfterEach void cleanup() {handler.closeAll();}
+    @AfterEach void cleanup() {handler.closeAll();filters.closeAll();}
+    @Test void historicalStreamCatchesUpOnAckAndCompletesOnlyAfterFinalAck() throws Exception {
+        bytes=new byte[600000];Arrays.fill(bytes,(byte)'\n');byte[] hit="hit\n".getBytes(StandardCharsets.UTF_8);System.arraycopy(hit,0,bytes,599996,4);
+        String scan=filters.start("owner","/app.log","hit","UTF-8",true,0).getScanId();
+        send(socket,"{\"type\":\"start\",\"sessionToken\":\"owner\",\"path\":\"/app.log\",\"offset\":0,\"scanId\":\""+scan+"\",\"historical\":true}");
+        check();assertFalse(last().path("eof").asBoolean());int readBefore=reads;check();assertEquals(readBefore,reads);
+        send(socket,"{\"type\":\"ack\",\"sequence\":1}");assertEquals(2,last().path("sequence").asLong());
+        send(socket,"{\"type\":\"ack\",\"sequence\":2}");assertTrue(last().path("eof").asBoolean());
+        assertThrows(IOException.class,()->filters.claimTail("owner",scan));
+        send(socket,"{\"type\":\"ack\",\"sequence\":3}");assertEquals("complete",last().path("type").asText());
+        SshFileFilterService.TailLease lease=filters.claimTail("owner",scan);filters.releaseTail(lease);
+    }
+    @Test void emptyHistoricalStreamStillSendsFinalProgressAndReplaysCompletion() throws Exception {
+        bytes=new byte[0];String scan=filters.start("owner","/app.log","hit","UTF-8",true,0).getScanId();
+        send(socket,"{\"type\":\"start\",\"sessionToken\":\"owner\",\"path\":\"/app.log\",\"offset\":0,\"scanId\":\""+scan+"\",\"historical\":true}");
+        String id=last().path("tailId").asText();check();assertEquals("data",last().path("type").asText());assertTrue(last().path("eof").asBoolean());
+        send(socket,"{\"type\":\"ack\",\"sequence\":1}");assertEquals("complete",last().path("type").asText());
+        handler.afterConnectionClosed(socket,CloseStatus.NORMAL);List<JsonNode> replay=new ArrayList<>();WebSocketSession replacement=socket("new",replay);
+        send(replacement,"{\"type\":\"resume\",\"sessionToken\":\"owner\",\"tailId\":\""+id+"\",\"sequence\":1}");
+        assertEquals("complete",replay.get(replay.size()-1).path("type").asText());assertEquals(0,replay.stream().filter(f->"data".equals(f.path("type").asText())).count());
+    }
+    @Test void completedHistoriesDoNotConsumeActiveTailSlotsAndReplayCacheIsBounded() throws Exception {
+        bytes=new byte[0];
+        for(int i=0;i<40;i++) {
+            String scan=filters.start("owner","/app.log","hit","UTF-8",true,0).getScanId();frames.clear();socket=socket("history-"+i,frames);
+            send(socket,"{\"type\":\"start\",\"sessionToken\":\"owner\",\"path\":\"/app.log\",\"offset\":0,\"scanId\":\""+scan+"\",\"historical\":true}");
+            assertEquals("ready",last().path("type").asText());check();send(socket,"{\"type\":\"ack\",\"sequence\":1}");
+            assertEquals("complete",last().path("type").asText());filters.cancel("owner",scan);
+        }
+        assertTrue(((Map<?,?>)ReflectionTestUtils.getField(handler,"completed")).size()<=32);
+    }
     @Test void reusesOneChannelAndWaitsForAckBeforeReadingAgain() throws Exception {
         start(2,null); assertEquals("ready",frames.get(0).path("type").asText());
         bytes="a\nhello\n".getBytes(StandardCharsets.UTF_8); mtime++;

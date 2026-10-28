@@ -8,7 +8,7 @@ import { createViewerTail } from '../src/composables/useViewerTail.js'
 import { createViewerSession, isViewerSessionError } from '../src/composables/useViewerSession.js'
 import { useViewerFilter } from '../src/composables/useViewerFilter.js'
 
-function mountViewer({ read, api = {}, standalone = true, encoding = 'UTF-8' } = {}) {
+function mountViewer({ read, api = {}, standalone = true, encoding = 'UTF-8', automaticHistory = true } = {}) {
   const listeners = {}, timers = new Map(), copied = [], messages = [], sockets = []
   let selected = ''; let sequence = 0
   const body = { scrollTop: 100, scrollHeight: 200, clientHeight: 100, querySelector: () => null, contains: () => true }
@@ -23,13 +23,27 @@ function mountViewer({ read, api = {}, standalone = true, encoding = 'UTF-8' } =
     '@/api/sshConsole': {
       sftpReadChunk: read || (async () => ({ offset: 0, length: 6, totalSize: 6, hasMoreBefore: false, hasMoreAfter: false, contentBase64: btoa('hello\n') })),
       buildFileTailWsUrl: () => 'ws://localhost/ws/ssh-console/file-tail',
-      sftpFilterStart: async () => ({ scanId: 'a' }), sftpFilterNext: async () => ({ rows: [], offset: 6, totalSize: 6, eof: true }), sftpFilterCancel: async () => {},
+      sftpFilterStart: async () => ({ scanId: 'a', mode: 'remote' }), sftpFilterNext: () => assert.fail('HTTP next must not be used'), sftpFilterCancel: async () => {},
       getSessionContext: async () => ({ accountId: 57 }), openViewerSession: async () => ({ sessionToken: 'renewed' }), closeViewerSession: async () => {}, ...api
     },
     '@/utils/fileViewerText': text, '@/utils/fileTypeHelper': helpers,
     '@/composables/useViewerFilter': { useViewerFilter },
     '@/composables/useViewerSession': { createViewerSession, isViewerSessionError },
-    '@/composables/useViewerTail': { createViewerTail: options => createViewerTail({ ...options, connect: () => { const socket = { readyState: 1, sent: [], send(v) { this.sent.push(JSON.parse(v)) }, close() {}, frame(v) { this.onmessage({ data: JSON.stringify(v) }) } }; sockets.push(socket); queueMicrotask(() => { socket.onopen(); socket.frame({ type: 'ready', tailId: 't' }) }); return socket } }) },
+    '@/composables/useViewerTail': { createViewerTail: options => createViewerTail({ ...options, connect: () => {
+      let source, terminal = false, pageSequence = 0
+      const socket = { readyState: 1, sent: [], send(v) {
+        const frame = JSON.parse(v); this.sent.push(frame)
+        if (frame.type === 'start') {
+          source = frame
+          if (source.historical && automaticHistory) queueMicrotask(async () => {
+            const page = await (api.historyPage?.(source) || { rows: [], offset: 6, totalSize: 6, eof: true })
+            terminal = page.eof || page.limited
+            socket.frame({ type: 'data', scanId: source.scanId, sequence: ++pageSequence, ...page })
+          })
+        } else if (source?.historical && frame.type === 'ack' && terminal) queueMicrotask(() => socket.frame({ type: 'complete' }))
+      }, close() { this.readyState = 3 }, frame(v) { this.onmessage({ data: JSON.stringify(v) }) } }
+      sockets.push(socket); queueMicrotask(() => { socket.onopen(); socket.frame({ type: 'ready', tailId: 't' }) }); return socket
+    } }) },
     '@/composables/useTheme': { useTheme: () => ({ effectiveDark: vue.ref(false), setPreference: () => {} }) }
   }
   const mounted = mountSfcSetup(new URL('../src/components/ssh/SshFileViewer.vue', import.meta.url), {
@@ -269,7 +283,7 @@ test('filtered Tail reset rescans the same keyword and resumes a new filter subs
   let scan = 0; const keywords = []
   const viewer = mountViewer({ api: {
     sftpFilterStart: async data => { keywords.push(data.keyword); return { scanId: `scan-${++scan}` } },
-    sftpFilterNext: async ({scanId}) => ({ scanId, rows: [{ lineNumber: 1, text: scanId, matched: true }], offset: 6, totalSize: 6, eof: true })
+    historyPage: async ({scanId}) => ({ scanId, rows: [{ lineNumber: 1, text: scanId, matched: true }], offset: 6, totalSize: 6, eof: true })
   } })
   try {
     await flush(); viewer.state.searchKeyword.value = 'hit'; await viewer.state.startFilter(); await flush()
@@ -388,7 +402,7 @@ test('filtered reset retains old results during failed reload and separates repe
   let scan = 0, fail = false
   const viewer = mountViewer({ api: {
     sftpFilterStart: async () => { if (fail) throw new Error('No such file'); return { scanId: `s${++scan}` } },
-    sftpFilterNext: async ({ scanId }) => ({ rows: [{ lineNumber: 1, text: scanId, matched: true }], offset: 3, totalSize: 3, eof: true })
+    historyPage: async ({ scanId }) => ({ rows: [{ lineNumber: 1, text: scanId, matched: true }], offset: 3, totalSize: 3, eof: true })
   } })
   try {
     await flush(); viewer.state.searchKeyword.value = 'x'; await viewer.state.startFilter(); await flush()
@@ -455,5 +469,71 @@ test('Ctrl+F inside the search input advances a match without invoking browser f
     await flush()
     assert.equal(viewer.state.activeMatch.value, 1)
     assert.deepEqual(calls, ['prevent', 'stop'])
+  } finally { viewer.unmount() }
+})
+
+
+test('historical filtering waits for complete before live Tail and upward reading resumes the same history socket at bottom', async () => {
+  const viewer = mountViewer({ automaticHistory: false })
+  try {
+    await flush(); viewer.state.searchKeyword.value = 'x'
+    const running = viewer.state.startFilter(); await flush()
+    const history = viewer.sockets.at(-1)
+    assert.equal(history.sent[0].historical, true)
+    viewer.body.scrollTop = 0; viewer.body.scrollHeight = 500; viewer.state.onViewerScroll()
+    history.frame({ type: 'data', sequence: 1, scanId: 'a', rows: [{ lineNumber: 1, text: 'x' }], offset: 2, totalSize: 2, eof: true }); await flush()
+    assert.deepEqual(viewer.state.filter.rows.value, []); assert.equal(history.sent.at(-1).type, 'pause')
+    await viewer.state.goBottom(); await flush()
+    assert.equal(viewer.sockets.at(-1), history); assert.deepEqual(history.sent.at(-1), { type: 'ack', sequence: 1 })
+    assert.equal(viewer.state.canFilterTail.value, false); assert.equal(viewer.state.autoFollow.value, false)
+    history.frame({ type: 'complete' }); await running; await flush()
+    assert.equal(viewer.state.autoFollow.value, true); assert.equal(viewer.sockets.at(-1).sent[0].historical, undefined)
+  } finally { viewer.unmount() }
+})
+
+test('canceling historical filtering resolves the awaiting viewer operation without a server response', async () => {
+  const viewer = mountViewer({ automaticHistory: false })
+  try {
+    await flush(); viewer.state.searchKeyword.value = 'x'
+    const running = viewer.state.startFilter(); await flush()
+    await viewer.state.cancelFilter(); await running
+    assert.equal(viewer.state.filter.canceled.value, true); assert.equal(viewer.state.autoFollow.value, false)
+  } finally { viewer.unmount() }
+})
+
+test('historical server errors preserve recovery codes and rebuild the filter before live Tail', async () => {
+  let scans = 0
+  const viewer = mountViewer({ automaticHistory: false, api: { sftpFilterStart: async () => ({ scanId: `s${++scans}`, mode: 'sftp' }) } })
+  try {
+    await flush(); viewer.state.searchKeyword.value = 'x'
+    const run = viewer.state.startFilter(); await flush()
+    assert.match(viewer.state.filterStatus.value, /SFTP兼容扫描/)
+    viewer.sockets.at(-1).frame({ type: 'error', code: 'FILE_CHANGED', message: 'changed' }); await run; await flush()
+    assert.equal(scans, 2); assert.equal(viewer.state.recovering.value, true)
+    const socket = viewer.sockets.at(-1)
+    socket.frame({ type: 'data', sequence: 1, scanId: 's2', rows: [{ lineNumber: 1, text: 'x' }], offset: 1, totalSize: 1, eof: true }); await flush()
+    assert.equal(viewer.state.autoFollow.value, true, 'recovery retains intent while waiting for complete')
+    assert.equal(viewer.state.canFilterTail.value, false)
+    socket.frame({ type: 'complete' }); await flush()
+    assert.equal(viewer.state.recovering.value, false); assert.equal(viewer.state.autoFollow.value, true)
+    assert.deepEqual(viewer.messages, [])
+  } finally { viewer.unmount() }
+})
+
+test('upward reading during historical recovery pauses and resumes its current scan without restarting', async () => {
+  let scans = 0
+  const viewer = mountViewer({ automaticHistory: false, api: { sftpFilterStart: async () => ({ scanId: `s${++scans}`, mode: 'remote' }) } })
+  try {
+    await flush(); viewer.state.searchKeyword.value = 'x'
+    const first = viewer.state.startFilter(); await flush()
+    viewer.sockets.at(-1).frame({ type: 'error', code: 'FILE_CHANGED', message: 'reset' }); await first; await flush()
+    const history = viewer.sockets.at(-1)
+    viewer.body.scrollTop = 0; viewer.body.scrollHeight = 500; viewer.state.onViewerScroll()
+    history.frame({ type: 'data', sequence: 1, scanId: 's2', rows: [{ lineNumber: 1, text: 'held' }], offset: 4, totalSize: 4, eof: true }); await flush()
+    assert.deepEqual(viewer.state.filter.rows.value, []); assert.equal(history.sent.at(-1).type, 'pause')
+    await viewer.state.goBottom(); await flush()
+    assert.equal(viewer.sockets.at(-1), history); assert.deepEqual(history.sent.at(-1), { type: 'ack', sequence: 1 })
+    history.frame({ type: 'complete' }); await flush(); await flush()
+    assert.equal(scans, 2); assert.equal(viewer.state.recovering.value, false); assert.equal(viewer.state.autoFollow.value, true)
   } finally { viewer.unmount() }
 })
