@@ -151,6 +151,7 @@
     <AiAssistant v-model="aiDialog" />
     <CommandPalette
       v-model="commandPaletteOpen"
+      :file-context="route.path === '/terminal' ? workspaceStore.fileSearchContext : null"
       @select-target="onSelectTargetFromPalette"
       @action="onPaletteAction"
       @ask-ai="onPaletteAskAi"

@@ -289,7 +289,7 @@
 </template>
 
 <script setup>
-import { computed, onDeactivated, onScopeDispose, ref, watch } from 'vue'
+import { computed, onActivated, onDeactivated, onScopeDispose, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Document, Folder, Search, Sort, Upload } from '@element-plus/icons-vue'
@@ -330,7 +330,7 @@ const props = defineProps({
   openingSession: { type: Boolean, default: false }
 })
 const { transfers, transferHistoryWarning, enqueueTransfer, delegateBrowserDownload, clearFinishedTransfers, assignTransferHost } = useTransfers()
-const { fileLocation } = storeToRefs(useWorkspaceStore())
+const { fileLocation, fileSearchContext } = storeToRefs(useWorkspaceStore())
 const transferNotice = '切换页面可继续传输。刷新或关闭页面会中断页面内传输，重开后仅保留最近 200 条历史记录和最后进度，无法自动续传。SSH 断开后需重新发起。浏览器接管的下载请在浏览器下载列表查看。'
 
 const emit = defineEmits(['request-session', 'session-invalid', 'path-change'])
@@ -530,6 +530,42 @@ watch(
     }
   },
   { immediate: true }
+)
+
+// The palette reuses the loaded listing; typing never starts another SFTP request.
+let publishedFileContext = null
+const fileSearchActive = ref(true)
+function clearFileSearchContext() {
+  if (publishedFileContext && fileSearchContext.value === publishedFileContext) fileSearchContext.value = null
+  publishedFileContext = null
+}
+onDeactivated(() => { fileSearchActive.value = false; clearFileSearchContext() })
+onActivated(() => { fileSearchActive.value = true })
+onScopeDispose(clearFileSearchContext)
+watch(
+  () => [props.sessionToken, props.active, props.accountId, props.tabId, loadedPath.value, currentPath.value, loading.value, items.value, fileSearchActive.value],
+  () => {
+    clearFileSearchContext()
+    if (disposed || !fileSearchActive.value || !props.active || !props.sessionToken || loading.value || !loadedPath.value || currentPath.value !== loadedPath.value) return
+    const token = props.sessionToken, accountId = props.accountId, tabId = props.tabId, path = loadedPath.value
+    const files = items.value.filter(row => !row.dir && !isBinaryFile(row.name))
+    let context
+    fileSearchContext.value = {
+      accountId, tabId, path, files,
+      openFile(row) {
+        if (disposed || !fileSearchActive.value || !props.active || loading.value ||
+            token !== props.sessionToken || accountId !== props.accountId || tabId !== props.tabId ||
+            path !== loadedPath.value || path !== currentPath.value || fileSearchContext.value !== context) return false
+        const file = files.find(file => file.name === row?.name)
+        if (!file) return false
+        openLargeFileViewer({ ...file, path: `${path.replace(/\/+$/, '')}/${file.name}` })
+        return true
+      }
+    }
+    context = fileSearchContext.value
+    publishedFileContext = context
+  },
+  { immediate: true, flush: 'post' }
 )
 
 const canGoParent = computed(() => {

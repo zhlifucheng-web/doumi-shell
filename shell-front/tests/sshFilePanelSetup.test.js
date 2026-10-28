@@ -8,6 +8,7 @@ import * as transferHistory from '../src/composables/transferHistory.js'
 const filename = new URL('../src/components/ssh/SshFilePanel.vue', import.meta.url)
 
 function mountPanel(props = {}, listDirectory, fileLocation = vue.ref(null), loadUsers) {
+  const fileSearchContext = vue.ref(null)
   const requests = []
   const events = []
   const pathEvents = []
@@ -22,7 +23,7 @@ function mountPanel(props = {}, listDirectory, fileLocation = vue.ref(null), loa
     '@/composables/useAiChanges': { useAiChanges: () => {} },
     '@/composables/useTransfers': { useTransfers: () => ({ transfers: vue.ref([]), assignTransferHost: () => {} }) },
     pinia: { storeToRefs: store => store },
-    '@/stores/workspace': { useWorkspaceStore: () => ({ fileLocation }) },
+    '@/stores/workspace': { useWorkspaceStore: () => ({ fileLocation, fileSearchContext }) },
     '@/api/sshConsole': {
       sftpList: async (token, path) => {
         requests.push({ token, path })
@@ -36,7 +37,7 @@ function mountPanel(props = {}, listDirectory, fileLocation = vue.ref(null), loa
     modules, globals: { localStorage: { getItem: () => null } },
     props: { ...props, onPathChange: (path, tabId) => { events.push(path); pathEvents.push({ path, tabId }) }, onSessionInvalid: () => invalid.push(true) }
   })
-  return { ...mounted, requests, events, pathEvents, warnings, errors, invalid }
+  return { ...mounted, fileSearchContext, requests, events, pathEvents, warnings, errors, invalid }
 }
 
 test('SFTP panel initializes before a session exists and does not request a directory', () => {
@@ -253,5 +254,56 @@ test('switching same-account tabs in the existing panel restores their own paths
     assert.deepEqual(panel.requests.map(r => r.path), ['/var/log', '/srv/app'])
     assert.equal(panel.state.loadedPath.value, '/srv/app')
     assert.deepEqual(panel.pathEvents, [{ path: '/srv/app', tabId: 'tab-b' }])
+  } finally { panel.unmount() }
+})
+
+
+test('current directory provider opens a viewable file through the existing viewer and rejects stale contexts', async () => {
+  const panel = mountPanel({ sessionToken: 'session', accountId: 7, tabId: 'tab-a' }, async () => ({ path: '/var/log', items: [{ name: 'app.log', size: 100 }, { name: 'folder', dir: true }, { name: 'archive.zip', size: 20 }] }))
+  try {
+    await flush()
+    const context = panel.fileSearchContext.value
+    assert.equal(context.path, '/var/log')
+    assert.deepEqual(context.files.map(f => f.name), ['app.log'])
+    assert.equal(context.openFile(context.files[0]), true)
+    assert.equal(panel.state.showLargeViewer.value, true)
+    assert.equal(panel.state.largeViewerFile.value.path, '/var/log/app.log')
+    panel.state.showLargeViewer.value = false
+    panel.props.tabId = 'tab-b'; panel.props.sessionToken = 'session-b'
+    await vue.nextTick() // Deliver parent props to the mounted child before invoking it.
+    assert.equal(context.openFile(context.files[0]), false)
+    await flush()
+    assert.equal(panel.state.showLargeViewer.value, false)
+    panel.props.active = false; await flush()
+    assert.equal(panel.fileSearchContext.value, null)
+  } finally { panel.unmount() }
+  assert.equal(panel.fileSearchContext.value, null)
+})
+
+
+test('directory navigation withdraws quick-open results until the new listing completes', async () => {
+  let complete
+  const panel = mountPanel({ sessionToken: 'session', tabId: 'tab-a' }, async (token, path) => {
+    if (path) return new Promise(resolve => { complete = resolve })
+    return { path: '/var/log', items: [{ name: 'app.log' }] }
+  })
+  try {
+    await flush()
+    const old = panel.fileSearchContext.value
+    panel.state.enterDir('other')
+    assert.equal(old.openFile(old.files[0]), false)
+    await flush()
+    assert.equal(panel.fileSearchContext.value, null)
+    complete({ path: '/var/log/other', items: [{ name: 'next.log' }] })
+    await flush()
+    const current = panel.fileSearchContext.value
+    assert.equal(current.path, '/var/log/other')
+    assert.equal(old.openFile(old.files[0]), false)
+    assert.equal(current.openFile({ name: 'unlisted.log', path: '/elsewhere' }), false)
+    assert.equal(current.openFile(current.files[0]), true)
+    assert.equal(panel.state.largeViewerFile.value.path, '/var/log/other/next.log')
+    panel.props.sessionToken = ''; await flush()
+    assert.equal(panel.fileSearchContext.value, null)
+    assert.equal(current.openFile(current.files[0]), false)
   } finally { panel.unmount() }
 })
