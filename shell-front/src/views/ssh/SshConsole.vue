@@ -479,6 +479,7 @@
                       <div class="terminal-pane main-pane">
                         <div v-for="tab in terminalTabs" :key="`terminal-${tab.tabId}`" v-show="activeTerminalId === tab.tabId" class="terminal-tab-content">
                           <SshTerminal :account-id="tab.accountId"
+                            :active="activeTerminalId === tab.tabId"
                             :paused="!!tab.manuallyDisconnected"
                             :terminal-id="tab.terminalId || tab.tabId"
                             :ref="el => setTerminalRef(tab.tabId, el)"
@@ -505,6 +506,7 @@
                         </div>
                         <div class="split-pane-content">
                           <SshTerminal :account-id="splitTerminalTab.accountId"
+                            :active="isSplit"
                             :paused="!!splitTerminalTab.manuallyDisconnected"
                             :terminal-id="splitTerminalTab.terminalId || splitTerminalTab.tabId"
                             :ref="el => setTerminalRef(`split-${splitTerminalTab.tabId}`, el)"
