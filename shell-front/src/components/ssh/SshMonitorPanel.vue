@@ -55,7 +55,7 @@
         <template v-else-if="item.type === 'value'"><div class="custom-script-value">{{ scriptValue(item).value }}<small>{{ scriptValue(item).unit }}</small></div></template>
         <template v-else-if="item.type === 'progress'"><el-progress :percentage="scriptValue(item).value" :color="level(scriptValue(item).value)" /><p class="hint">{{ scriptValue(item).label }}</p></template>
         <template v-else-if="item.type === 'json'"><table class="custom-script-table"><tbody><tr v-for="row in scriptValue(item).rows" :key="row.key"><th>{{ row.key }}</th><td>{{ row.value }}</td></tr></tbody></table></template>
-        <div v-else-if="['line','bar','pie'].includes(item.type)" :ref="el => setCustomChartRef(item.id, el)" class="custom-script-chart" :aria-label="`${item.name}图表`" />
+        <div v-else-if="['line','bar','pie'].includes(item.type)" :ref="el => setCustomChartRef(item.id, el)" class="custom-script-chart" :style="customChartStyle(item)" :aria-label="`${item.name}图表`" />
         <div v-else-if="item.type === 'text'" class="custom-script-text">{{ scriptValue(item).text }}</div>
         <pre v-else class="custom-script-output">{{ item.output || '暂无输出' }}</pre>
         <p v-if="item.exitStatus != null" class="hint">退出码 {{ item.exitStatus }}</p>
@@ -285,6 +285,19 @@ function customChartEmptyText(item,value,hasData){
   if(!hasData)return item.emptyText||'暂无有效数据'
   return ''
 }
+function customChartLayout(item){
+  const value=chartData(item)
+  const labels=Array.isArray(value?.labels)?value.labels:Array.isArray(value?.categories)?value.categories:[]
+  const data=value?.data||value?.values||value?.series?.[0]?.data||[]
+  const count=Math.max(labels.length,Array.isArray(data)?data.length:0)
+  const horizontalBar=item.type==='bar'&&count>6
+  const timeSeries=item.type==='line'&&readCustomHistory(item).some(row=>Number(row.timestamp)>=Date.now()-minutes.value*60*1000)
+  const categoryZoom=!horizontalBar&&item.type!=='pie'&&!timeSeries&&count>8
+  const horizontalZoom=horizontalBar&&count>18
+  const height=horizontalBar?horizontalZoom?650:Math.max(250,count*30+70):categoryZoom?300:250
+  return {horizontalBar,categoryZoom,horizontalZoom,height,count}
+}
+function customChartStyle(item){return {height:`${customChartLayout(item).height}px`}}
 function renderCustomCharts(){
   customScripts.value.filter(item=>item.enabled&&['line','bar','pie'].includes(item.type)).forEach(item=>{
     const el=customChartEls.get(item.id);if(!el)return
@@ -311,10 +324,20 @@ function renderCustomCharts(){
       return {name:row.name||item.name,type:item.type==='pie'?'pie':item.type==='bar'?'bar':'line',smooth:item.type==='line',showSymbol:item.type==='line',data,itemStyle:{color:palette[index%palette.length]}}
     })
     const hasData=normalized.some(row=>row.data.some(point=>Array.isArray(point)?point.length>1&&point[1]!=null:Number.isFinite(Number(point?.value??point))))
-    const axis=item.type==='pie'?{}:timeSeries?{type:'time',name:value?.xAxisName||'时间',nameLocation:'middle',nameGap:28,axisLabel:{color:effectiveDark.value?'#c7d0df':'#687488',fontSize:10,hideOverlap:true},axisLine:{show:true,lineStyle:{color:effectiveDark.value?'#687488':'#aeb7c5'}},splitLine:{show:true,lineStyle:{color:effectiveDark.value?'#394456':'#e9edf3'}}}:{type:'category',data:labels.length?labels:normalized[0]?.data.map((_,index)=>String(index+1))||[],name:value?.xAxisName||'项目',nameLocation:'middle',nameGap:28,axisLabel:{color:effectiveDark.value?'#c7d0df':'#687488',fontSize:10},axisLine:{show:true,lineStyle:{color:effectiveDark.value?'#687488':'#aeb7c5'}},splitLine:{show:true,lineStyle:{color:effectiveDark.value?'#394456':'#e9edf3'}}}
-    const valueAxis=item.type==='pie'?{}:{type:'value',name:value?.yAxisName||'数值',nameLocation:'middle',nameGap:38,axisLine:{show:true,lineStyle:{color:effectiveDark.value?'#687488':'#aeb7c5'}},axisLabel:{color:effectiveDark.value?'#c7d0df':'#687488',fontSize:10},splitLine:{show:true,lineStyle:{color:effectiveDark.value?'#394456':'#e9edf3'}}}
+    const layout=customChartLayout(item),categoryLabels=labels.length?labels:normalized[0]?.data.map((_,index)=>String(index+1))||[]
+    const axisColor=effectiveDark.value?'#c7d0df':'#687488',lineColor=effectiveDark.value?'#687488':'#aeb7c5',splitColor=effectiveDark.value?'#394456':'#e9edf3'
+    const categoryAxis={type:'category',data:categoryLabels,name:layout.horizontalBar?value?.yAxisName||'项目':value?.xAxisName||'项目',nameLocation:'middle',nameGap:layout.horizontalBar?8:28,axisLabel:{color:axisColor,fontSize:10,interval:0,hideOverlap:false,...(layout.horizontalBar?{width:112,overflow:'break'}:{rotate:categoryLabels.length>4?35:0,width:84,overflow:'break'})},axisLine:{show:true,lineStyle:{color:lineColor}},splitLine:{show:!layout.horizontalBar,lineStyle:{color:splitColor}}}
+    const numericAxis={type:'value',name:layout.horizontalBar?value?.xAxisName||'数值':value?.yAxisName||'数值',nameLocation:'middle',nameGap:layout.horizontalBar?28:38,axisLine:{show:true,lineStyle:{color:lineColor}},axisLabel:{color:axisColor,fontSize:10},splitLine:{show:true,lineStyle:{color:splitColor}}}
+    const axis=item.type==='pie'?undefined:timeSeries?{type:'time',name:value?.xAxisName||'时间',nameLocation:'middle',nameGap:28,axisLabel:{color:axisColor,fontSize:10,hideOverlap:true},axisLine:{show:true,lineStyle:{color:lineColor}},splitLine:{show:true,lineStyle:{color:splitColor}}}:layout.horizontalBar?numericAxis:categoryAxis
+    const valueAxis=item.type==='pie'?undefined:layout.horizontalBar?categoryAxis:numericAxis
     const emptyText=customChartEmptyText(item,value,hasData)
-    chart.setOption({animation:false,tooltip:{trigger:item.type==='pie'?'item':'axis'},legend:{show:normalized.length>1||item.type==='pie',textStyle:{color:effectiveDark.value?'#c7d0df':'#687488',fontSize:10}},grid:{left:56,right:14,top:30,bottom:48},xAxis:item.type==='pie'?undefined:axis,yAxis:item.type==='pie'?undefined:valueAxis,graphic:[{id:'custom-chart-empty-state',type:'text',left:'center',top:'middle',silent:true,invisible:!emptyText,style:{text:emptyText,fill:effectiveDark.value?'#aeb9cb':'#687488',fontSize:12,textAlign:'center'}}],series:normalized},{notMerge:true})
+    const showLegend=normalized.length>1||item.type==='pie'
+    const legendStyle={type:'scroll',show:showLegend,textStyle:{color:effectiveDark.value?'#c7d0df':'#687488',fontSize:10},pageTextStyle:{color:effectiveDark.value?'#c7d0df':'#687488'}}
+    const pie=item.type==='pie'
+    const legend=pie?{...legendStyle,orient:'vertical',right:4,top:8,bottom:8,width:'42%',pageIconSize:10}:{...legendStyle,orient:'horizontal',left:8,right:8,bottom:layout.categoryZoom?26:0,height:30,pageIconSize:10}
+    const chartSeries=pie?normalized.map(row=>({...row,center:['30%','50%'],radius:['0%','68%']})):layout.horizontalBar?normalized.map(row=>({...row,type:'bar',smooth:false,showSymbol:false})):normalized
+    const dataZoom=layout.horizontalZoom?[{type:'inside',yAxisIndex:0,filterMode:'none',moveOnMouseWheel:true},{type:'slider',yAxisIndex:0,width:12,right:0,top:24,bottom:showLegend?54:40,startValue:Math.max(0,layout.count-18),endValue:layout.count-1,showDetail:false,handleSize:8}]:layout.categoryZoom?[{type:'inside',xAxisIndex:0,filterMode:'none'},{type:'slider',xAxisIndex:0,height:12,bottom:0,startValue:Math.max(0,categoryLabels.length-8),endValue:categoryLabels.length-1,showDetail:false,handleSize:8}]:[]
+    chart.setOption({animation:false,tooltip:{trigger:pie?'item':'axis'},legend,grid:{left:layout.horizontalBar?132:56,right:layout.horizontalZoom?30:14,top:24,bottom:layout.categoryZoom?104:showLegend&&!pie?68:42},dataZoom,xAxis:pie?undefined:axis,yAxis:pie?undefined:valueAxis,graphic:[{id:'custom-chart-empty-state',type:'text',left:'center',top:'middle',silent:true,invisible:!emptyText,style:{text:emptyText,fill:effectiveDark.value?'#aeb9cb':'#687488',fontSize:12,textAlign:'center'}}],series:chartSeries},{notMerge:true})
     chart.resize()
   })
 }
@@ -602,7 +625,7 @@ onBeforeUnmount(()=>{disposed=true;generation++;clearTimeout(timer);clearTimeout
 .body{padding:12px;min-height:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));grid-auto-rows:min-content;align-content:start;gap:10px}.full-row{grid-column:1/-1}.controls,.status-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:32px}.status-row>span:last-child{font-size:11px;color:var(--el-text-color-secondary)}.notice-slot{min-height:18px}.notice-slot p{min-height:18px}.block{box-sizing:border-box;min-width:0;min-height:230px;background:var(--doumi-surface,var(--el-bg-color));border:1px solid var(--el-border-color);border-radius:8px;padding:12px;align-self:start;overflow:hidden;box-shadow:0 1px 3px #00000012}.block:hover{border-color:var(--el-color-primary-light-5);box-shadow:0 2px 8px #0000001c}.block-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;padding-bottom:7px;border-bottom:1px solid var(--el-border-color-lighter)}.value{font-size:22px;font-weight:600}.hint{font-size:11px;color:var(--el-text-color-secondary);line-height:1.7;margin:0}.block .hint{margin-top:7px}.warning{font-size:11px;line-height:1.6;margin:0;color:var(--el-color-warning)}.chart{height:150px;width:100%;margin:8px 0}.loads{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.loads div{display:flex;flex-direction:column;gap:5px}.loads b{font-size:17px}.loads span{font-size:10px;color:var(--el-text-color-secondary)}.net-values{display:flex;gap:16px;font-size:15px;font-weight:600;margin-top:12px}.chart-actions{display:flex;align-items:center;gap:2px}.gpu-row+.gpu-row{margin-top:12px;padding-top:10px;border-top:1px solid var(--el-border-color-lighter)}.gpu-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gpu-empty,.disk-empty{min-height:35px}.disk{min-width:0}.disk+.disk{margin-top:14px;padding-top:12px;border-top:1px solid var(--el-border-color-lighter)}.mount{min-width:0;overflow-wrap:anywhere;font-family:Consolas,monospace}.resize-handle{position:absolute;right:-4px;top:0;bottom:0;width:8px;cursor:col-resize;touch-action:none;z-index:5}.resize-handle:hover,.resize-handle:focus-visible{background:var(--el-color-primary-light-5);outline:none}
 .detail-summary{margin-bottom:10px;color:var(--el-text-color-secondary)}.detail-chart{height:min(55vh,480px);min-height:280px;width:100%}.detail-gpus{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:12px}.detail-gpus>div{display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid var(--el-border-color-lighter);border-radius:6px}.disk-block{height:280px}.disk-list{height:220px;overflow:auto}.gpu-block{min-height:250px}.gpu-row{max-height:150px;overflow:auto}
 .custom-script-output{margin:0;min-height:55px;max-height:150px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.5 Consolas,monospace;color:var(--el-text-color-primary);background:var(--el-fill-color-light);padding:8px;border-radius:4px}.script-editor-actions{display:flex;align-items:center;gap:8px;margin-bottom:10px}.script-setting-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--el-border-color-lighter)}.script-setting-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.custom-script-chart{height:180px;width:100%;min-width:0}
+.custom-script-chart{height:230px;width:100%;min-width:0}
 .custom-script-text{min-height:55px;padding:12px 0;font-size:18px;line-height:1.5;word-break:break-word}
 .custom-script-table{width:100%;border-collapse:collapse;font-size:12px}.custom-script-table th,.custom-script-table td{border-bottom:1px solid var(--el-border-color-lighter);padding:6px 8px;text-align:left;vertical-align:top;word-break:break-word}.custom-script-table th{width:34%;color:var(--el-text-color-secondary);font-weight:500;background:var(--el-fill-color-light)}
 .custom-script-value{font-size:30px;font-weight:600;line-height:1.2;padding:12px 0}.custom-script-value small{font-size:13px;font-weight:400;margin-left:6px;color:var(--el-text-color-secondary)}.custom-script-error{color:var(--el-color-danger)}.script-framework{margin:6px 0 0;color:var(--el-text-color-secondary);font:11px/1.5 Consolas,monospace;white-space:pre-wrap;background:var(--el-fill-color-light);padding:7px;border-radius:4px}
