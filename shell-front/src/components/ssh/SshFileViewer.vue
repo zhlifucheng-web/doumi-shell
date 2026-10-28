@@ -391,6 +391,11 @@ function onSelectionChange() {
     selectedText.value = ''; frozenHtml.value = null; if (!holdFollow) filter.pause(false)
   }
 }
+async function focusContent() {
+  await nextTick()
+  if (!disposed && !rootRef.value?.contains(document.activeElement)) viewerBodyRef.value?.focus?.({ preventScroll: true })
+}
+defineExpose({ focusContent })
 async function openSearchTools() {
   toolsVisible.value = true
   await nextTick()
@@ -473,6 +478,7 @@ async function changeEncoding() {
 onMounted(() => {
   document.addEventListener('keydown', onDocumentKeydown, true)
   document.addEventListener('selectionchange', onSelectionChange)
+  void focusContent()
   void jumpToTail()
 })
 onBeforeUnmount(() => {

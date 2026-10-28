@@ -11,7 +11,7 @@ import { useViewerLocalFilter } from '../src/composables/useViewerLocalFilter.js
 
 function mountViewer({ read, api = {}, standalone = true, encoding = 'UTF-8', automaticHistory = true } = {}) {
   const listeners = {}, timers = new Map(), copied = [], messages = [], sockets = []
-  let selected = ''; let sequence = 0
+  let selected = ''; let sequence = 0; const focusCalls = []
   const body = { scrollTop: 100, scrollHeight: 200, clientHeight: 100, querySelector: () => null, contains: () => true }
   const doc = {
     addEventListener: (name, handler) => { listeners[name] = handler },
@@ -19,6 +19,7 @@ function mountViewer({ read, api = {}, standalone = true, encoding = 'UTF-8', au
     getSelection: () => ({ toString: () => selected, rangeCount: selected ? 1 : 0, getRangeAt: () => ({ commonAncestorContainer: {} }) }),
     activeElement: null
   }
+  body.focus = options => { doc.activeElement = body; focusCalls.push(options) }
   const modules = {
     'element-plus': { ElMessage: { error: m => messages.push(m), success: () => {}, warning: () => {} } },
     '@/api/sshConsole': {
@@ -53,9 +54,9 @@ function mountViewer({ read, api = {}, standalone = true, encoding = 'UTF-8', au
     globals: { document: doc, window: { getSelection: doc.getSelection }, navigator: { clipboard: { writeText: async s => copied.push(s) } },
       setInterval: fn => { const id = ++sequence; timers.set(id, fn); return id }, clearInterval: id => timers.delete(id),
       setTimeout: fn => { const id = ++sequence; timers.set(id, fn); return id }, clearTimeout: id => timers.delete(id) },
-    onSetup: state => { state.viewerBodyRef.value = body; state.rootRef.value = { contains: () => true } }
+    onSetup: state => { state.viewerBodyRef.value = body; state.rootRef.value = { contains: target => Boolean(target) && (target === body || target === state.searchInputRef.value) } }
   })
-  return { ...mounted, sockets, listeners, timers, body, copied, messages, select: s => { selected = s; listeners.selectionchange?.() } }
+  return { ...mounted, sockets, listeners, timers, body, doc, focusCalls, copied, messages, select: s => { selected = s; listeners.selectionchange?.() } }
 }
 const flush = async () => { await new Promise(setImmediate); await vue.nextTick() }
 
@@ -106,6 +107,38 @@ test('viewer Ctrl+F captures default find and focuses its own search', async () 
     assert.equal(viewer.state.toolsVisible.value, true)
     assert.deepEqual(calls, ['prevent', 'stop', 'focus', 'select'])
   } finally { viewer.unmount() }
+})
+
+test('opening either viewer focuses content before file I/O finishes so find belongs to the viewer', async () => {
+  for (const standalone of [false, true]) {
+    let finishRead
+    const viewer = mountViewer({ standalone, read: () => new Promise(resolve => { finishRead = resolve }) })
+    try {
+      await flush()
+      assert.equal(viewer.doc.activeElement, viewer.body)
+      assert.deepEqual(viewer.focusCalls, [{ preventScroll: true }])
+      const calls = []
+      viewer.state.searchInputRef.value = { focus: () => { viewer.doc.activeElement = viewer.state.searchInputRef.value }, select() {} }
+      viewer.listeners.keydown({ key: 'f', ctrlKey: true, target: viewer.doc.activeElement, preventDefault: () => calls.push('prevent'), stopPropagation: () => calls.push('stop') })
+      await flush()
+      assert.equal(viewer.state.toolsVisible.value, true)
+      assert.equal(viewer.doc.activeElement, viewer.state.searchInputRef.value)
+      assert.deepEqual(calls, ['prevent', 'stop'])
+      finishRead({ offset: 0, length: 6, totalSize: 6, contentBase64: btoa('hello\n') })
+      await flush()
+      viewer.sockets[0].frame({ type: 'data', sequence: 1, offset: 10, totalSize: 10, content: 'new\n' })
+      await flush()
+      assert.equal(viewer.doc.activeElement, viewer.state.searchInputRef.value, 'late read and Tail cannot steal search focus')
+      assert.equal(viewer.focusCalls.length, 1)
+    } finally { viewer.unmount() }
+  }
+})
+
+test('closing before the opening focus tick cannot focus a retired viewer', async () => {
+  const viewer = mountViewer()
+  viewer.unmount()
+  await flush()
+  assert.equal(viewer.focusCalls.length, 0)
 })
 
 test('search tools toggle and Escape retain the current search and active filter', async () => {
