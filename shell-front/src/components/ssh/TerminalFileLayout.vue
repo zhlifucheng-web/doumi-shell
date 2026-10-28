@@ -55,14 +55,33 @@
             </span>
           </div>
           <div class="layout-actions">
-            <button v-if="!collapsed" type="button" class="layout-btn" title="恢复默认比例 (60% / 40%)" @click="setRatio(60)">
-              6:4 比例
+            <button
+              v-if="!collapsed"
+              type="button"
+              class="layout-btn layout-icon-btn"
+              :title="ratio <= 35 ? '还原默认高度 (双击分割条也可重置)' : '最大化文件面板'"
+              @click="toggleMaximize"
+            >
+              <svg v-if="ratio <= 35" class="layout-svg" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9L4 4m0 0v4m0-4h4m11 5l5-5m0 0v4m0-4h-4M9 15l-5 5m0 0v-4m0 4h4m11-5l5 5m0 0v-4m0 4h-4" />
+              </svg>
+              <svg v-else class="layout-svg" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+              </svg>
             </button>
-            <button v-if="!collapsed" type="button" class="layout-btn" @click="setRatio(ratio > 40 ? 35 : 60)">
-              {{ ratio > 40 ? '放大文件' : '放大终端' }}
-            </button>
-            <button type="button" class="layout-btn" :aria-expanded="!collapsed" @click="collapsed = !collapsed">
-              {{ collapsed ? '展开文件' : '收起' }}
+            <button
+              type="button"
+              class="layout-btn layout-icon-btn"
+              :title="collapsed ? '展开文件面板' : '收起文件面板'"
+              :aria-expanded="!collapsed"
+              @click="collapsed = !collapsed"
+            >
+              <svg v-if="collapsed" class="layout-svg" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+              </svg>
+              <svg v-else class="layout-svg" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
             </button>
           </div>
         </div>
@@ -90,6 +109,15 @@ watch(fileLocation, (location) => {
 })
 function setRatio(value) {
   ratio.value = Math.round(Math.max(30, Math.min(75, value)))
+}
+let savedRatioBeforeMaximize = 60
+function toggleMaximize() {
+  if (ratio.value <= 35) {
+    setRatio(savedRatioBeforeMaximize > 35 ? savedRatioBeforeMaximize : 60)
+  } else {
+    savedRatioBeforeMaximize = ratio.value
+    setRatio(30)
+  }
 }
 let dragging = false
 function startDrag(event) {
@@ -241,7 +269,17 @@ function endDrag() {
   color: var(--ws-text-muted);
   font-size: 11px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: all var(--ws-transition-fast);
+}
+.layout-btn.layout-icon-btn {
+  padding: 3px 5px;
+}
+.layout-svg {
+  width: 14px;
+  height: 14px;
 }
 .layout-btn:hover {
   background: var(--ws-bg-card);

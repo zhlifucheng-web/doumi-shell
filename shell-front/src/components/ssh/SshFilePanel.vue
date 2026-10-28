@@ -41,46 +41,184 @@
       </el-popover>
     </div>
     <template v-else>
-      <div class="terminal-file-context">
-        <el-checkbox v-model="followTerminal">跟随终端目录</el-checkbox>
-        <span>文件身份：{{ terminalContext?.fileUser || '待检测' }} · 终端用户（最近检测）：{{ terminalContext?.terminalUser || '未知' }}</span>
-        <el-checkbox v-model="assignUploadOwner" :disabled="!canAssignOwner">上传后归属终端用户</el-checkbox>
-        <span v-if="contextMessage || autoNavigationError" role="status">{{ contextMessage || autoNavigationError }}</span>
-      </div>
-      <div class="toolbar">
-        <div class="toolbar-left">
-          <el-breadcrumb separator="/">
-            <el-breadcrumb-item>
-              <a href="#" @click.prevent="goRoot">根</a>
-            </el-breadcrumb-item>
-            <el-breadcrumb-item v-for="(seg, idx) in breadcrumbs" :key="idx">
-              <a href="#" @click.prevent="goToIndex(idx)">{{ seg }}</a>
-            </el-breadcrumb-item>
-          </el-breadcrumb>
-          <div class="quick-bookmarks">
-            <button v-if="canGoParent" type="button" class="bookmark-pill is-parent-btn" title="返回上一级目录" @click="goParent">.. 上一级</button>
-            <button type="button" class="bookmark-pill" title="前往家目录" @click="navigateToQuickPath('~')">~ 家目录</button>
-            <button type="button" class="bookmark-pill" title="前往根目录" @click="navigateToQuickPath('/')">/ 根</button>
-            <button type="button" class="bookmark-pill" title="前往日志目录" @click="navigateToQuickPath('/var/log')">/var/log</button>
-            <button type="button" class="bookmark-pill" title="前往配置目录" @click="navigateToQuickPath('/etc')">/etc</button>
-            <button type="button" class="bookmark-pill" title="前往临时目录" @click="navigateToQuickPath('/tmp')">/tmp</button>
-          </div>
-          <span v-if="items.length" class="items-count-pill" :title="`当前目录共 ${items.length} 项`">
-            共 {{ items.length }} 项<template v-if="filterKeyword && sortedItems.length !== items.length"> (匹配 {{ sortedItems.length }})</template>
-          </span>
+      <!-- 终端路径协同提示条 (在有提示信息或两端路径不一致时提示) -->
+      <div v-if="syncNotice || contextMessage || autoNavigationError" class="terminal-sync-notice" role="status">
+        <div class="notice-content">
+          <el-icon class="notice-icon"><Connection /></el-icon>
+          <span class="notice-text">{{ syncNotice || contextMessage || autoNavigationError }}</span>
         </div>
-        <div class="toolbar-actions">
+        <button v-if="canJumpTerminalCwd" type="button" class="notice-jump-btn" @click="jumpToTerminalCwd">
+          立即对齐终端目录 →
+        </button>
+      </div>
+
+      <div class="sftp-toolbar">
+        <!-- 左侧：导航按钮组 + 一体化智能地址栏 -->
+        <div class="toolbar-nav-group">
+          <!-- 导航与终端联动按钮簇 -->
+          <div class="nav-btn-cluster">
+            <button
+              type="button"
+              class="nav-icon-btn"
+              :disabled="!canGoParent"
+              title="返回上一级 (Alt + ↑)"
+              @click="goParent"
+            >
+              <el-icon><ArrowLeft /></el-icon>
+            </button>
+            <button
+              type="button"
+              class="nav-icon-btn"
+              title="前往主目录 (~)"
+              @click="navigateToQuickPath('~')"
+            >
+              <el-icon><House /></el-icon>
+            </button>
+            <button
+              type="button"
+              class="nav-icon-btn"
+              :class="{ 'is-loading': loading }"
+              title="刷新目录 (F5)"
+              @click="refresh"
+            >
+              <el-icon><Refresh /></el-icon>
+            </button>
+            <span class="nav-cluster-divider" />
+            <!-- 终端联动快捷控制组 -->
+            <button
+              type="button"
+              class="nav-icon-btn sync-jump-btn"
+              :disabled="!terminalContext?.cwd"
+              :title="terminalContext?.cwd ? `对齐终端：跳转至 ${terminalContext.cwd}` : '暂无终端目录信息'"
+              @click="jumpToTerminalCwd"
+            >
+              <el-icon><Aim /></el-icon>
+            </button>
+            <button
+              type="button"
+              class="nav-icon-btn sync-toggle-btn"
+              :class="{ 'is-active': followTerminal }"
+              :title="followTerminal ? '终端联动：已开启（终端切换目录时自动跟随）' : '终端联动：已关闭（点击开启）'"
+              @click="followTerminal = !followTerminal"
+            >
+              <el-icon><Link /></el-icon>
+            </button>
+          </div>
+
+          <!-- 一体化智能地址栏 -->
+          <div class="smart-address-bar" :class="{ 'is-editing': isEditingPath }">
+            <!-- 浏览态：面包屑与快捷书签 -->
+            <div v-if="!isEditingPath" class="address-breadcrumb-wrap" @click="enterPathEditMode">
+              <span class="breadcrumb-root" title="前往根目录" @click.stop="goRoot">/</span>
+              <template v-for="(seg, idx) in breadcrumbs" :key="idx">
+                <span class="breadcrumb-separator">/</span>
+                <span
+                  class="breadcrumb-seg"
+                  :class="{ 'is-last': idx === breadcrumbs.length - 1 }"
+                  @click.stop="goToIndex(idx)"
+                >
+                  {{ seg }}
+                </span>
+              </template>
+            </div>
+
+            <!-- 编辑态：路径输入框 -->
+            <div v-else class="address-input-wrap">
+              <input
+                ref="pathInputRef"
+                v-model="pathInput"
+                class="address-text-input font-mono-code"
+                placeholder="输入绝对路径 (回车前往)..."
+                @keyup.enter="handlePathInputEnter"
+                @keyup.esc="exitPathEditMode"
+              />
+              <button type="button" class="address-action-btn confirm" @click="handlePathInputEnter">前往</button>
+              <button type="button" class="address-action-btn cancel" @click="exitPathEditMode">取消</button>
+            </div>
+
+            <!-- 地址栏右侧操作：常用书签下拉 + 编辑切换图标 -->
+            <div class="address-bar-actions">
+              <el-dropdown trigger="click" @command="navigateToQuickPath">
+                <button type="button" class="address-pill-btn" title="常用系统路径快捷跳转" @click.stop>
+                  <el-icon><Star /></el-icon>
+                </button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="~">~ 家目录</el-dropdown-item>
+                    <el-dropdown-item command="/">/ 根目录</el-dropdown-item>
+                    <el-dropdown-item divided command="/var/log">/var/log 日志目录</el-dropdown-item>
+                    <el-dropdown-item command="/etc">/etc 配置文件</el-dropdown-item>
+                    <el-dropdown-item command="/tmp">/tmp 临时缓存</el-dropdown-item>
+                    <el-dropdown-item command="/opt">/opt 可选软件包</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+
+              <button
+                v-if="!isEditingPath"
+                type="button"
+                class="address-pill-btn edit-btn"
+                title="手动输入路径 (Ctrl+L)"
+                @click.stop="enterPathEditMode"
+              >
+                <el-icon><Edit /></el-icon>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右侧：身份与权限协同 + 过滤 + 排序 + 传输 + 新建 + 上传 -->
+        <div class="toolbar-action-group">
+          <!-- 用户身份与权限协同卡片 -->
+          <el-popover trigger="click" :width="290" placement="bottom-end">
+            <template #reference>
+              <button
+                type="button"
+                class="user-context-pill"
+                :title="`文件身份: ${terminalContext?.fileUser || 'root'} · 终端用户: ${terminalContext?.terminalUser || '未知'}`"
+              >
+                <el-icon class="user-pill-ico"><User /></el-icon>
+                <span class="user-pill-name font-mono-code">{{ terminalContext?.fileUser || 'root' }}</span>
+                <span class="user-pill-arrow">→ {{ terminalContext?.terminalUser || 'nodear' }}</span>
+                <el-icon class="user-pill-down"><ArrowDown /></el-icon>
+              </button>
+            </template>
+            <div class="user-popover-card">
+              <div class="popover-title">权限协同与归属配置</div>
+              <div class="popover-row">
+                <span class="popover-k">SFTP 会话身份:</span>
+                <span class="popover-v font-mono-code">{{ terminalContext?.fileUser || '待检测' }}</span>
+              </div>
+              <div class="popover-row">
+                <span class="popover-k">终端登录用户:</span>
+                <span class="popover-v font-mono-code">{{ terminalContext?.terminalUser || '未知' }}</span>
+              </div>
+              <div class="popover-divider" />
+              <el-checkbox v-model="assignUploadOwner" :disabled="!canAssignOwner" class="upload-owner-checkbox">
+                上传后归属终端用户
+              </el-checkbox>
+              <div class="popover-hint">
+                上传文件完成后自动执行 chown 归属于终端用户，避免以 root 权限上传导致普通用户无法写入。
+              </div>
+            </div>
+          </el-popover>
+
+          <!-- 搜索过滤 -->
           <el-input
-            v-model="pathInput"
+            v-model="filterKeyword"
             size="small"
-            class="path-input"
-            placeholder="绝对路径"
-            @keyup.enter="navigateToPath"
-          />
-          <el-button size="small" @click="navigateToPath">前往</el-button>
-          <el-button size="small" :loading="loading" @click="refresh">刷新</el-button>
+            class="filter-input"
+            placeholder="过滤文件..."
+            clearable
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+
+          <!-- 排序下拉 -->
           <el-dropdown trigger="click" @command="handleSortCommand">
-            <el-button size="small" :title="`当前排序: ${currentSortLabel}`">
+            <el-button size="small" class="sort-btn" :title="`当前排序: ${currentSortLabel}`">
               <el-icon class="el-icon--left"><Sort /></el-icon>
               <span>{{ currentSortLabel }}</span>
               <el-icon class="el-icon--right"><ArrowDown /></el-icon>
@@ -98,17 +236,8 @@
               </el-dropdown-menu>
             </template>
           </el-dropdown>
-          <el-input
-            v-model="filterKeyword"
-            size="small"
-            class="filter-input"
-            placeholder="过滤文件名..."
-            clearable
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
+
+          <!-- 传输队列胶囊 -->
           <el-popover
             trigger="hover"
             :width="350"
@@ -119,7 +248,17 @@
             :hide-after="150"
           >
             <template #reference>
-              <el-button size="small" :type="activeTransferCount ? 'primary' : 'default'" plain :title="activeTransferCount ? '' : transferButtonTitle" @click="showTransfers = true">{{ transferButtonLabel }}</el-button>
+              <el-button
+                size="small"
+                :type="activeTransferCount ? 'warning' : 'default'"
+                :plain="!activeTransferCount"
+                class="transfer-badge-btn"
+                :title="activeTransferCount ? '' : transferButtonTitle"
+                @click="showTransfers = true"
+              >
+                <el-icon v-if="activeTransferCount" class="is-loading"><Refresh /></el-icon>
+                <span>{{ transferButtonLabel }}</span>
+              </el-button>
             </template>
             <TransferHoverCard
               :transfers="activeTransfers"
@@ -127,11 +266,34 @@
               @open-list="showTransfers = true"
             />
           </el-popover>
-          <el-button v-if="embedded" size="small" :aria-pressed="showDetails" @click="showDetails=!showDetails">{{ showDetails ? '精简列表' : '详细信息' }}</el-button>
-          <el-button size="small" type="primary" @click="showMkdir = true">新建目录</el-button>
+
+          <!-- 详细信息切换 -->
+          <el-button v-if="embedded" size="small" :aria-pressed="showDetails" @click="showDetails = !showDetails">
+            {{ showDetails ? '精简' : '详细' }}
+          </el-button>
+
+          <!-- 新建目录 -->
+          <el-button size="small" type="primary" plain @click="showMkdir = true">
+            <el-icon class="el-icon--left"><FolderAdd /></el-icon>
+            <span>新建目录</span>
+          </el-button>
+
+          <!-- 上传文件 & 文件夹 -->
           <input ref="uploadInput" type="file" hidden multiple @change="uploadFiles" />
-          <el-button size="small" type="success" @click="uploadInput.click()">上传文件</el-button>
-          <FolderTransfer ref="folderTransfer" :session-token="sessionToken" :path="loadedPath || currentPath" :owner-uid="uploadOwnership?.ownerUid" :owner-gid="uploadOwnership?.ownerGid" :ownership-requested="assignUploadOwner" :ownership-available="canAssignOwner" @uploaded="onFolderUploaded" />
+          <el-button size="small" type="primary" @click="uploadInput.click()">
+            <el-icon class="el-icon--left"><Upload /></el-icon>
+            <span>上传文件</span>
+          </el-button>
+          <FolderTransfer
+            ref="folderTransfer"
+            :session-token="sessionToken"
+            :path="loadedPath || currentPath"
+            :owner-uid="uploadOwnership?.ownerUid"
+            :owner-gid="uploadOwnership?.ownerGid"
+            :ownership-requested="assignUploadOwner"
+            :ownership-available="canAssignOwner"
+            @uploaded="onFolderUploaded"
+          />
         </div>
       </div>
 
@@ -298,7 +460,24 @@
 import { computed, onActivated, onDeactivated, onScopeDispose, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, Document, Folder, Search, Sort, Upload } from '@element-plus/icons-vue'
+import {
+  Aim,
+  ArrowDown,
+  ArrowLeft,
+  Connection,
+  Document,
+  Edit,
+  Folder,
+  FolderAdd,
+  House,
+  Link,
+  Refresh,
+  Search,
+  Sort,
+  Star,
+  Upload,
+  User
+} from '@element-plus/icons-vue'
 import {
   getTerminalContext,
   sftpChown,
@@ -404,10 +583,10 @@ const activeTransferPercent = computed(() => activeOverallProgress.value.percent
 
 const transferButtonLabel = computed(() => {
   if (activeTransferCount.value > 0) {
-    const pct = activeOverallProgress.value.total > 0 ? ` · ${activeTransferPercent.value}%` : ''
-    return `传输列表（${activeTransferCount.value} 项进行中${pct}）`
+    const pct = activeOverallProgress.value.total > 0 ? ` ${activeTransferPercent.value}%` : ''
+    return `传输 (${activeTransferCount.value})${pct}`
   }
-  return `传输列表（${visibleTransfers.value.length}）`
+  return `传输 (${visibleTransfers.value.length})`
 })
 
 const transferButtonTitle = computed(() => {
@@ -508,6 +687,50 @@ let restoringPath = !!props.savedPath
 let disposed = false
 onScopeDispose(() => { disposed = true; ++listRequest })
 const autoNavigationError = ref('')
+const isEditingPath = ref(false)
+const pathInputRef = ref(null)
+
+function enterPathEditMode() {
+  isEditingPath.value = true
+  pathInput.value = loadedPath.value || currentPath.value || ''
+  setTimeout(() => {
+    pathInputRef.value?.focus?.()
+    pathInputRef.value?.select?.()
+  }, 40)
+}
+
+function exitPathEditMode() {
+  isEditingPath.value = false
+  pathInput.value = loadedPath.value || currentPath.value || ''
+}
+
+function handlePathInputEnter() {
+  isEditingPath.value = false
+  navigateToPath()
+}
+
+const canJumpTerminalCwd = computed(() => {
+  const cwd = terminalContext.value?.cwd
+  const cur = (loadedPath.value || currentPath.value || '').replace(/\/+$/, '')
+  return !!(cwd && cwd.startsWith('/') && cwd.replace(/\/+$/, '') !== cur)
+})
+
+function jumpToTerminalCwd() {
+  const cwd = terminalContext.value?.cwd
+  if (cwd && cwd.startsWith('/')) {
+    navigateToQuickPath(cwd)
+  } else {
+    ElMessage.info('暂未检测到终端工作目录')
+  }
+}
+
+const syncNotice = computed(() => {
+  if (!followTerminal.value && canJumpTerminalCwd.value) {
+    return `终端当前位于: ${terminalContext.value?.cwd}`
+  }
+  return ''
+})
+
 const assignUploadOwner = ref(false)
 const { follow: followTerminal, context: terminalContext, message: contextMessage, canAssignOwner } = useTerminalFileContext({
   sessionToken: () => props.sessionToken, tabId: () => props.tabId, active: () => props.active,
@@ -1139,106 +1362,353 @@ function formatMtime(sec) {
   text-align: center;
   margin-top: 8px;
 }
-.terminal-file-context { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:12px; color:var(--el-text-color-secondary); }
-.toolbar {
+.terminal-sync-notice {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
   justify-content: space-between;
+  gap: 8px;
+  padding: 4px 10px;
+  background: var(--ws-accent-bg, rgba(99, 102, 241, 0.08));
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: var(--ws-radius-sm, 6px);
+  font-size: 12px;
+  color: var(--el-color-primary, #6366f1);
 }
-.toolbar-actions {
+.notice-content {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
   align-items: center;
-}
-.path-input {
-  width: 220px;
-}
-.filter-input {
-  width: 140px;
-}
-.items-count-pill {
-  font-size: 11px;
-  color: var(--el-text-color-secondary, #909399);
-  padding: 2px 7px;
-  border-radius: 4px;
-  background: var(--el-fill-color-light, rgba(0, 0, 0, 0.04));
-  border: 1px solid var(--el-border-color-lighter, #e4e7ed);
-  font-family: var(--font-mono, monospace);
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.upload-drop {
-  flex-shrink: 0;
+.notice-icon {
+  font-size: 14px;
 }
-.upload-drop :deep(.el-upload-dragger) {
-  padding: 8px 0;
-}
-.upload-ico {
-  font-size: 28px;
-  color: var(--el-color-primary);
-}
-.file-table {
-  flex: 1;
-  min-height: 0;
-}
-.embedded { gap:4px; }
-.embedded .toolbar { gap:4px; flex-shrink:0; }
-.embedded .toolbar-actions { gap:4px; }
-.embedded .toolbar-actions :deep(.el-button + .el-button) { margin-left:0; }
-.embedded .path-input { width:170px; }
-.embedded .filter-input { width:110px; }
-.embedded .file-table { min-height:70px; }
-.embedded .no-session { padding:0; overflow:auto; }
-.embedded .no-session :deep(.el-empty) { padding:4px; }
-.embedded .no-session :deep(.el-empty__image) { display:none; }
-.transfer-heading{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap}.transfer-server-label{font-size:12px;color:var(--el-text-color-secondary)}.transfer-hint{font-size:12px;color:var(--el-text-color-secondary);margin:4px 0 8px}.transfer-error{display:block;color:var(--el-color-danger);overflow-wrap:anywhere}
-.row-ico {
-  vertical-align: middle;
-  margin-right: 4px;
-}
-.perm-cell {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+.notice-text {
   font-size: 12px;
 }
-.toolbar-left {
+.notice-jump-btn {
+  background: none;
+  border: none;
+  color: var(--el-color-primary, #6366f1);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 1px 4px;
+  white-space: nowrap;
+  transition: opacity 0.15s ease;
+}
+.notice-jump-btn:hover {
+  text-decoration: underline;
+  opacity: 0.85;
+}
+
+.sftp-toolbar {
   display: flex;
-  align-items: center;
-  gap: 10px;
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
-.quick-bookmarks {
+.toolbar-nav-group {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  flex: 1;
+  min-width: 300px;
 }
-.bookmark-pill {
-  padding: 1px 6px;
-  border-radius: var(--ws-radius-xs, 4px);
+.nav-btn-cluster {
+  display: inline-flex;
+  align-items: center;
   background: var(--el-fill-color-light, rgba(0, 0, 0, 0.04));
   border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--ws-radius-sm, 6px);
+  padding: 2px;
+  gap: 1px;
+  flex-shrink: 0;
+}
+.nav-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
   color: var(--ws-text-muted, #64748b);
-  font-size: 11px;
-  font-family: var(--font-mono, monospace);
   cursor: pointer;
   transition: all 0.15s ease;
 }
-.bookmark-pill.is-parent-btn {
-  font-weight: 600;
+.nav-icon-btn:hover:not(:disabled) {
+  background: var(--el-bg-color, #ffffff);
+  color: var(--ws-text-primary, #0f172a);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.nav-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.nav-icon-btn.is-loading .el-icon {
+  animation: rotating 1.2s linear infinite;
+}
+.nav-cluster-divider {
+  display: inline-block;
+  width: 1px;
+  height: 12px;
+  background: var(--el-border-color-lighter);
+  margin: 0 2px;
+}
+.nav-icon-btn.sync-jump-btn:hover:not(:disabled) {
+  color: var(--el-color-success, #10b981);
+}
+.nav-icon-btn.sync-toggle-btn.is-active {
   color: var(--el-color-primary, #6366f1);
-  background: var(--ws-fill-active, rgba(99, 102, 241, 0.08));
-  border-color: rgba(99, 102, 241, 0.25);
+  background: var(--ws-accent-bg, rgba(99, 102, 241, 0.12));
 }
-html.dark .bookmark-pill {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.08);
-  color: #cbd5e1;
+
+.smart-address-bar {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  background: var(--el-fill-color-light, rgba(0, 0, 0, 0.03));
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--ws-radius-sm, 6px);
+  padding: 0 6px 0 8px;
+  cursor: text;
+  transition: all 0.15s ease;
+  position: relative;
+  overflow: hidden;
 }
-.bookmark-pill:hover {
-  background: var(--ws-fill-active, rgba(99, 102, 241, 0.15));
+.smart-address-bar:hover {
+  border-color: var(--el-border-color);
+  background: var(--el-fill-color, rgba(0, 0, 0, 0.05));
+}
+.smart-address-bar.is-editing,
+.smart-address-bar:focus-within {
   border-color: var(--el-color-primary, #6366f1);
+  box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.2);
+  background: var(--el-bg-color, #ffffff);
+}
+.address-breadcrumb-wrap {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+  font-size: 12px;
+}
+.address-breadcrumb-wrap::-webkit-scrollbar {
+  display: none;
+}
+.breadcrumb-root {
+  font-weight: 700;
   color: var(--el-color-primary, #6366f1);
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 3px;
+  transition: background 0.12s ease;
+}
+.breadcrumb-root:hover {
+  background: var(--ws-accent-bg, rgba(99, 102, 241, 0.1));
+}
+.breadcrumb-separator {
+  color: var(--ws-text-muted, #94a3b8);
+  font-size: 11px;
+}
+.breadcrumb-seg {
+  color: var(--ws-text-muted, #64748b);
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--font-mono, monospace);
+  transition: all 0.12s ease;
+}
+.breadcrumb-seg:hover {
+  color: var(--el-color-primary, #6366f1);
+  background: var(--ws-accent-bg, rgba(99, 102, 241, 0.08));
+}
+.breadcrumb-seg.is-last {
+  font-weight: 600;
+  color: var(--ws-text-primary, #0f172a);
+  background: var(--el-bg-color, rgba(255, 255, 255, 0.8));
+  border: 1px solid var(--el-border-color-lighter);
+}
+.address-input-wrap {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 4px;
+}
+.address-text-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 12px;
+  color: var(--el-text-color-primary);
+  font-family: var(--font-mono, monospace);
+}
+.address-action-btn {
+  border: none;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.address-action-btn.confirm {
+  background: var(--el-color-primary, #6366f1);
+  color: #ffffff;
+}
+.address-action-btn.confirm:hover {
+  background: var(--el-color-primary-light-3);
+}
+.address-action-btn.cancel {
+  background: transparent;
+  color: var(--ws-text-muted, #64748b);
+}
+.address-action-btn.cancel:hover {
+  color: var(--ws-text-primary);
+}
+.address-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+.address-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  border-radius: 3px;
+  color: var(--ws-text-muted, #94a3b8);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.address-pill-btn:hover {
+  color: var(--el-color-primary, #6366f1);
+  background: var(--ws-accent-bg, rgba(99, 102, 241, 0.08));
+}
+
+.toolbar-action-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.user-context-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  height: 26px;
+  border-radius: var(--ws-radius-sm, 6px);
+  background: var(--el-fill-color-light, rgba(0, 0, 0, 0.03));
+  border: 1px solid var(--el-border-color-lighter);
+  color: var(--ws-text-muted, #64748b);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.user-context-pill:hover {
+  border-color: var(--el-border-color);
+  background: var(--el-fill-color);
+  color: var(--ws-text-primary);
+}
+.user-pill-ico {
+  color: #eab308;
+  font-size: 12px;
+}
+.user-pill-name {
+  font-weight: 600;
+  color: var(--ws-text-primary);
+}
+.user-pill-arrow {
+  color: var(--ws-text-muted);
+  font-size: 10px;
+}
+.user-pill-down {
+  font-size: 9px;
+  margin-left: 1px;
+}
+
+.user-popover-card {
+  padding: 4px 0;
+  font-size: 12px;
+}
+.popover-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--ws-text-primary);
+  font-size: 13px;
+}
+.popover-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.popover-k {
+  color: var(--ws-text-muted);
+}
+.popover-v {
+  font-weight: 600;
+  color: var(--ws-text-primary);
+  background: var(--el-fill-color-light);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.popover-divider {
+  height: 1px;
+  background: var(--el-border-color-lighter);
+  margin: 8px 0;
+}
+.upload-owner-checkbox {
+  margin: 4px 0;
+}
+.popover-hint {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.4;
+  margin-top: 4px;
+}
+
+.filter-input {
+  width: 130px;
+}
+.filter-input :deep(.el-input__wrapper) {
+  padding-left: 8px;
+}
+.sort-btn {
+  padding: 5px 8px;
+}
+.transfer-badge-btn {
+  padding: 5px 8px;
+}
+
+html.dark .nav-icon-btn:hover:not(:disabled),
+:root[data-theme='dark'] .nav-icon-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+html.dark .smart-address-bar.is-editing,
+:root[data-theme='dark'] .smart-address-bar.is-editing {
+  background: #0f1523;
+}
+html.dark .breadcrumb-seg.is-last,
+:root[data-theme='dark'] .breadcrumb-seg.is-last {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e2e8f0;
 }
 .file-table-container {
   flex: 1;
