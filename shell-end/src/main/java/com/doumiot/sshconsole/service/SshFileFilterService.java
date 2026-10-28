@@ -3,6 +3,7 @@ package com.doumiot.sshconsole.service;
 import com.doumiot.sshconsole.sftp.FileTailRecoveryException;
 import com.doumiot.sshconsole.ssh.SshFileFilterRemoteFactory;
 import com.doumiot.sshconsole.ssh.SshFileFilterRemoteCursor;
+import com.doumiot.sshconsole.ssh.NativeFilterSnapshot;
 import javax.annotation.PreDestroy;
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
 import com.doumiot.sshconsole.sftp.SshFileFilterScanner;
@@ -14,7 +15,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Session-owned bounded scanners; remote mode retains one demand-driven SSH helper/FD. */
+/** Native fixed history where capabilities permit, then bounded Java/SFTP Tail. */
 @Service
 @SshConsoleEnabled
 public class SshFileFilterService {
@@ -33,14 +34,28 @@ public class SshFileFilterService {
         final SshFileFilterScanner scanner;
         try { scanner = new SshFileFilterScanner(keyword, encoding, caseSensitive, contextLines); }
         catch (IllegalArgumentException error) { throw new IOException("筛选参数无效: " + error.getMessage(), error); }
-        final Scan scan;
+        final Scan scan;NativeFilterSnapshot nativeSnapshot=null;
+        String reason=SshFileFilterRemoteFactory.eligibility(keyword,encoding,caseSensitive);
         try (SshSftpService.ReadFileHandle handle = files.openReadHandle(token, path)) {
             SshSftpService.ReadSnapshot snapshot = handle.snapshot();
             scan = new Scan(token, handle.path(), scanner, snapshot.getSize(), snapshot.getMtime());
+            if(reason==null) {
+                long size=snapshot.getSize();
+                byte[] prefix=readExact(handle,0,(int)Math.min(ANCHOR_BYTES,size));
+                byte[] boundary=readExact(handle,Math.max(0,size-ANCHOR_BYTES),(int)Math.min(ANCHOR_BYTES,size));
+                byte[] suffix=readExact(handle,Math.max(0,size-65536),(int)Math.min(65536,size));
+                nativeSnapshot=NativeFilterSnapshot.create(size,snapshot.getMtime(),prefix,boundary,suffix);
+                if(nativeSnapshot==null)reason="文件末行未结束或末尾上下文超过 64 KiB，使用 SFTP 扫描";
+            }
         }
-        scan.remote = remoteScans.open(token, scan.path, keyword, encoding, caseSensitive, contextLines);
+        if(reason==null){
+            SshFileFilterRemoteFactory.Attempt attempt=remoteScans.openNative(token,scan.path,keyword,encoding,caseSensitive,contextLines,nativeSnapshot,scanner);
+            if(attempt!=null){scan.remote=attempt.cursor;reason=attempt.reason;}
+            else reason="远端能力不可用，使用 SFTP 扫描";
+        }
         if (scan.remote != null) scan.lastSize = scan.remote.size();
-        String id = UUID.randomUUID().toString(); scans.put(id, scan); return new Started(id, scan.remote != null ? "remote" : "sftp");
+        if(scan.remote!=null)scan.remote.pause(true);
+        String id = UUID.randomUUID().toString(); scans.put(id, scan); return new Started(id, scan.remote != null ? "native" : "sftp",reason);
     }
 
     public Batch next(String token, String id) throws IOException {
@@ -62,7 +77,7 @@ public class SshFileFilterService {
         Scan scan = require(token, id);
         synchronized (scan) {
             checkActive(id, scan);
-            if (scan.tailOwner != null || (!historical && (scan.offset != scan.lastSize || scan.limited)))
+            if (scan.tailOwner != null || (!historical && (scan.offset != scan.lastSize || scan.limited || scan.remote!=null)))
                 throw new IOException("请等待历史筛选完成或关闭已有 Tail 后重试");
             TailLease lease = new TailLease(id, scan); scan.tailOwner = lease; return lease;
         }
@@ -83,6 +98,21 @@ public class SshFileFilterService {
             if (lease.scan.tailOwner == lease) { lease.scan.tailOwner = null; lease.scan.touched = System.currentTimeMillis(); }
         }
     }
+    /** Independent of scan monitor: STOP must interrupt autonomous remote work while a poll runs. */
+    public void pauseNative(TailLease lease,boolean paused) {
+        if(lease==null)return;SshFileFilterRemoteCursor cursor=lease.scan.remote;if(cursor!=null)cursor.pause(paused);
+    }
+    public void pauseNative(String token,String id,boolean paused) {
+        Scan scan=scans.get(id);if(scan!=null&&scan.token.equals(token)){SshFileFilterRemoteCursor cursor=scan.remote;if(cursor!=null)cursor.pause(paused);}
+    }
+    /** A long pause releases the process; resume replays Java with the same emission state. */
+    public void retireNative(String token,String id,TailLease lease) {
+        Scan scan=scans.get(id);if(scan==null||!scan.token.equals(token)||scan.tailOwner!=lease)return;
+        SshFileFilterRemoteCursor cursor=scan.remote;if(cursor!=null)try{cursor.close();}catch(IOException ignored){}
+    }
+    public void cancelUnfinishedNative(String token,String id,TailLease lease) {
+        Scan scan=scans.get(id);if(scan!=null&&scan.token.equals(token)&&scan.tailOwner==lease&&scan.remote!=null)discard(id,scan);
+    }
     public static final class TailLease {
         private final String scanId;
         private final Scan scan;
@@ -97,9 +127,35 @@ public class SshFileFilterService {
     }
     private Batch read(Scan scan, String id, SshSftpService.ReadFileHandle handle) throws IOException {
         if (scan.remote != null) {
-            Batch batch = scan.remote.next(id);
+            SshFileFilterRemoteCursor cursor=scan.remote;
+            final Batch batch;
+            try{if(scan.tailOwner==null)cursor.pause(false);batch=cursor.next(id);}
+            catch(IOException nativeFailure){
+                checkActive(id,scan); // A user cancellation must never become a compatibility replay.
+                if(nativeFailure instanceof FileTailRecoveryException && "FILE_CHANGED".equals(((FileTailRecoveryException)nativeFailure).getCode()))throw nativeFailure;
+                NativeFilterSnapshot snapshot=cursor.snapshot();cursor.close();cursor.awaitCleanup();
+                try(SshSftpService.ReadFileHandle restart=files.openReadHandle(scan.token,scan.path)){
+                    if(restart.length()<snapshot.size)throw changed();
+                    verify(restart,0,snapshot.prefix);verify(restart,snapshot.size-snapshot.boundary.length,snapshot.boundary);
+                    scan.remote=null;scan.offset=0;scan.prefix=new byte[0];scan.boundary=new byte[0];scan.lastSize=snapshot.size;scan.mtime=snapshot.mtime;
+                    scan.fallbackReason="远端原生扫描达到资源限制或通道失败，已切换 SFTP 兼容扫描";
+                    return read(scan,id,restart);
+                }
+            }
             checkActive(id, scan);
             scan.offset = batch.getOffset(); scan.lastSize = batch.getTotalSize(); scan.limited = batch.isLimited();
+            if(batch.isEof()&&!batch.isLimited()) {
+                NativeFilterSnapshot snapshot=cursor.snapshot();
+                try(SshSftpService.ReadFileHandle seedHandle=files.openReadHandle(scan.token,scan.path)) {
+                    cursor.verifySnapshot();
+                    if(seedHandle.length()<snapshot.size)throw changed();
+                    verify(seedHandle,0,snapshot.prefix);verify(seedHandle,snapshot.size-snapshot.boundary.length,snapshot.boundary);
+                    verify(seedHandle,snapshot.size-snapshot.seed.length,snapshot.seed);
+                    cursor.verifySnapshot();cursor.seedScanner();
+                    scan.prefix=snapshot.prefix;scan.boundary=snapshot.boundary;scan.mtime=snapshot.mtime;
+                }
+                scan.remote=null;cursor.close();
+            }
             return batch;
         }
         SshSftpService.ReadSnapshot snapshot = handle.snapshot();
@@ -125,7 +181,7 @@ public class SshFileFilterService {
         System.arraycopy(bytes,0,tail,scan.boundary.length,bytes.length);
         scan.boundary = Arrays.copyOfRange(tail,Math.max(0,tail.length - ANCHOR_BYTES),tail.length);
         scan.offset += length; scan.lastSize = size; scan.mtime = mtime; scan.limited = scan.scanner.isLimited();
-        return new Batch(id, rows, scan.offset, size, eof, scan.scanner.isLimited());
+        return new Batch(id, rows, scan.offset, size, eof, scan.scanner.isLimited(),"sftp",scan.fallbackReason);
     }
 
     public void cancel(String token, String id) throws IOException {
@@ -173,7 +229,8 @@ public class SshFileFilterService {
         final SshFileFilterScanner scanner;
         long offset, lastSize, mtime;
         boolean limited;
-        SshFileFilterRemoteCursor remote;
+        String fallbackReason;
+        volatile SshFileFilterRemoteCursor remote;
         volatile TailLease tailOwner;
         volatile long touched = System.currentTimeMillis();
         byte[] prefix = new byte[0], boundary = new byte[0];
@@ -181,6 +238,10 @@ public class SshFileFilterService {
             this.token = token; this.path = path; this.scanner = scanner; this.lastSize = size; this.mtime = mtime;
         }
     }
-    @Value public static class Started { String scanId; String mode; }
-    @Value public static class Batch { String scanId; List<SshFileFilterScanner.Row> rows; long offset; long totalSize; boolean eof; boolean limited; }
+    @Value public static class Started { String scanId; String mode; String reason; }
+    @Value public static class Batch {
+        String scanId; List<SshFileFilterScanner.Row> rows; long offset; long totalSize; boolean eof; boolean limited;String mode;String reason;
+        public Batch(String id,List<SshFileFilterScanner.Row> rows,long offset,long total,boolean eof,boolean limited){this(id,rows,offset,total,eof,limited,null,null);}
+        public Batch(String id,List<SshFileFilterScanner.Row> rows,long offset,long total,boolean eof,boolean limited,String mode,String reason){this.scanId=id;this.rows=rows;this.offset=offset;this.totalSize=total;this.eof=eof;this.limited=limited;this.mode=mode;this.reason=reason;}
+    }
 }

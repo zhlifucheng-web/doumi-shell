@@ -44,22 +44,70 @@ class SshFileFilterServiceTest {
         ReflectionTestUtils.setField(files,"sessionRegistry",registry); ReflectionTestUtils.setField(service,"files",files); ReflectionTestUtils.setField(service,"remoteScans",remoteFactory);
     }
     @AfterEach void cleanup() {service.closeAll();}
-    @Test void remoteModeTransfersOnlyRowsAndRetainsCursorAcrossHistoryAndTail() throws Exception {
-        SshFileFilterRemoteCursor remoteCursor=mock(SshFileFilterRemoteCursor.class);
-        when(remoteFactory.open(eq("owner"),eq("/app.log"),eq("hit"),eq("UTF-8"),eq(true),eq(0))).thenReturn(remoteCursor);
-        when(remoteCursor.size()).thenReturn(600000L);
-        when(remoteCursor.next(anyString())).thenAnswer(c->new SshFileFilterService.Batch(c.getArgument(0),Collections.emptyList(),262144,600000,false,false))
-                .thenAnswer(c->new SshFileFilterService.Batch(c.getArgument(0),Collections.singletonList(new com.doumiot.sshconsole.sftp.SshFileFilterScanner.Row(9,"hit",true)),600000,600000,true,false))
-                .thenAnswer(c->new SshFileFilterService.Batch(c.getArgument(0),Collections.singletonList(new com.doumiot.sshconsole.sftp.SshFileFilterScanner.Row(10,"hit appended",true)),600013,600013,true,false));
+    @Test void nativeHistoryHandsOffToJavaAndIncludesConcurrentAppend() throws Exception {
+        bytes="first\nhit\n".getBytes(StandardCharsets.UTF_8);
+        final byte[] history=bytes.clone();
+        SshFileFilterRemoteCursor cursor=mock(SshFileFilterRemoteCursor.class);
+        com.doumiot.sshconsole.ssh.NativeFilterSnapshot snapshot=com.doumiot.sshconsole.ssh.NativeFilterSnapshot.create(history.length,mtime,history,history,history);
+        when(remoteFactory.openNative(anyString(),anyString(),anyString(),anyString(),anyBoolean(),anyInt(),any(),any())).thenAnswer(call->{
+            com.doumiot.sshconsole.sftp.SshFileFilterScanner scanner=call.getArgument(7);
+            when(cursor.next(anyString())).thenAnswer(c->{
+                com.doumiot.sshconsole.sftp.SshFileFilterScanner.Row row=new com.doumiot.sshconsole.sftp.SshFileFilterScanner.Row(2,"hit",true);
+                scanner.acceptNativeRow(row);bytes="first\nhit\nnew partial".getBytes(StandardCharsets.UTF_8);mtime++;
+                return new SshFileFilterService.Batch(c.getArgument(0),Collections.singletonList(row),history.length,history.length,true,false);
+            });
+            doAnswer(c->{scanner.seedNative(snapshot.seed,2);return null;}).when(cursor).seedScanner();
+            return new SshFileFilterRemoteFactory.Attempt(cursor,null);
+        });
+        when(cursor.size()).thenReturn((long)history.length);when(cursor.snapshot()).thenReturn(snapshot);when(cursor.finished()).thenReturn(true);
+        SshFileFilterService.Started started=service.start("owner","/app.log","hit","UTF-8",true,2);
+        assertEquals("native",started.getMode());
+        assertTrue(service.next("owner",started.getScanId()).isEof());verify(cursor).close();
+        SshFileFilterService.Batch appended=service.next("owner",started.getScanId());
+        assertEquals(Collections.singletonList(new com.doumiot.sshconsole.sftp.SshFileFilterScanner.Row(3,"new partial",false)),appended.getRows());
+        assertEquals(bytes.length,appended.getOffset());
+    }
+    @Test void initialPartialEofAndUnsupportedSemanticsHaveExplicitFallbackReasons() throws Exception {
+        when(remoteFactory.openNative(anyString(),anyString(),anyString(),anyString(),anyBoolean(),anyInt(),any(),any())).thenReturn(SshFileFilterRemoteFactory.Attempt.fallback("partial EOF"));
         SshFileFilterService.Started started=service.start("owner","/app.log","hit","UTF-8",true,0);
-        assertEquals("remote",started.getMode());
-        SshFileFilterService.TailLease history=service.claimStream("owner",started.getScanId(),true);
-        assertTrue(history.remote());assertFalse(service.nextTail(history,null).isEof());assertTrue(service.nextTail(history,null).isEof());
-        service.releaseTail(history);
-        SshFileFilterService.TailLease live=service.claimTail("owner",started.getScanId());
-        assertEquals("hit appended",service.nextTail(live,null).getRows().get(0).getText());
-        verify(remote,never()).read(anyLong(),any(byte[].class),anyInt(),anyInt());
-        verify(remoteCursor,never()).close();service.cancel("owner",started.getScanId());verify(remoteCursor).close();
+        assertEquals("sftp",started.getMode());assertNotNull(started.getReason());
+    }
+    @Test void cancelDuringNativeReadNeverStartsSftpReplay() throws Exception {
+        bytes="hit\n".getBytes(StandardCharsets.UTF_8);
+        SshFileFilterRemoteCursor cursor=mock(SshFileFilterRemoteCursor.class);when(cursor.size()).thenReturn(4L);
+        when(remoteFactory.openNative(anyString(),anyString(),anyString(),anyString(),anyBoolean(),anyInt(),any(),any())).thenAnswer(call->{when(cursor.snapshot()).thenReturn(call.getArgument(6));return new SshFileFilterRemoteFactory.Attempt(cursor,null);});
+        String id=service.start("owner","/app.log","hit","UTF-8",true,0).getScanId();
+        when(cursor.next(anyString())).thenAnswer(c->{service.cancel("owner",id);throw new IOException("closed");});
+        assertThrows(IOException.class,()->service.next("owner",id));verify(sftp,times(1)).open(anyString());
+    }
+    @Test void tailClaimWaitsForNativeEndMetadataEvenIfLastRowReachedSnapshotEnd() throws Exception {
+        bytes="hit\n".getBytes(StandardCharsets.UTF_8);
+        SshFileFilterRemoteCursor cursor=mock(SshFileFilterRemoteCursor.class);when(cursor.size()).thenReturn(4L);
+        when(remoteFactory.openNative(anyString(),anyString(),anyString(),anyString(),anyBoolean(),anyInt(),any(),any())).thenReturn(new SshFileFilterRemoteFactory.Attempt(cursor,null));
+        when(cursor.next(anyString())).thenAnswer(c->new SshFileFilterService.Batch(c.getArgument(0),Collections.singletonList(new com.doumiot.sshconsole.sftp.SshFileFilterScanner.Row(1,"hit",true)),4,4,false,false));
+        String id=service.start("owner","/app.log","hit","UTF-8",true,0).getScanId();service.next("owner",id);
+        assertThrows(IOException.class,()->service.claimTail("owner",id));
+    }
+    @Test void nativeResourceFailureReplaysInSftpWithoutDuplicateRowsOrLosingAppend() throws Exception {
+        bytes="hit one\nmiss\nhit two\n".getBytes(StandardCharsets.UTF_8);
+        SshFileFilterRemoteCursor cursor=mock(SshFileFilterRemoteCursor.class);
+        when(remoteFactory.openNative(anyString(),anyString(),anyString(),anyString(),anyBoolean(),anyInt(),any(),any())).thenAnswer(call->{
+            com.doumiot.sshconsole.sftp.SshFileFilterScanner scanner=call.getArgument(7);
+            when(cursor.next(anyString())).thenAnswer(c->{
+                com.doumiot.sshconsole.sftp.SshFileFilterScanner.Row row=new com.doumiot.sshconsole.sftp.SshFileFilterScanner.Row(1,"hit one",true);scanner.acceptNativeRow(row);
+                return new SshFileFilterService.Batch(c.getArgument(0),Collections.singletonList(row),8,bytes.length,false,false);
+            }).thenThrow(new IOException("grep memory exhausted"));
+            when(cursor.snapshot()).thenReturn(call.getArgument(6));
+            return new SshFileFilterRemoteFactory.Attempt(cursor,null);
+        });
+        when(cursor.size()).thenReturn((long)bytes.length);
+        String id=service.start("owner","/app.log","hit","UTF-8",true,0).getScanId();
+        assertEquals("hit one",service.next("owner",id).getRows().get(0).getText());
+        SshFileFilterService.Batch fallback=service.next("owner",id);
+        assertEquals("sftp",fallback.getMode());assertNotNull(fallback.getReason());
+        assertEquals(Collections.singletonList(new com.doumiot.sshconsole.sftp.SshFileFilterScanner.Row(3,"hit two",true)),fallback.getRows());
+        bytes="hit one\nmiss\nhit two\nhit append".getBytes(StandardCharsets.UTF_8);mtime++;
+        assertEquals(4,service.next("owner",id).getRows().get(0).getLineNumber());verify(cursor).close();
     }
     @Test void scansResolvedFileAndUpdatesEofPartialLine() throws Exception {
         String id = service.start("owner", "~/app.log", "hit", "UTF-8", true, 0).getScanId();

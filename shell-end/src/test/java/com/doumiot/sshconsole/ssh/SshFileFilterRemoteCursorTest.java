@@ -1,64 +1,55 @@
 package com.doumiot.sshconsole.ssh;
 
+import com.doumiot.sshconsole.sftp.SshFileFilterScanner;
 import org.junit.jupiter.api.Test;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.time.*;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SshFileFilterRemoteCursorTest {
-    private final ByteArrayOutputStream sent = new ByteArrayOutputStream();
-    private boolean closed;
-    private SshFileFilterRemoteCursor cursor(String frames, Clock clock) {
-        return new SshFileFilterRemoteCursor(new ByteArrayInputStream(frames.getBytes(StandardCharsets.UTF_8)), sent, () -> closed=true, clock);
+    private NativeFilterSnapshot snapshot(byte[] history) {return NativeFilterSnapshot.create(history.length,1,history,history,history);}
+    private SshFileFilterRemoteCursor cursor(byte[] history,String wire,SshFileFilterScanner scanner) {
+        return new SshFileFilterRemoteCursor(new ByteArrayInputStream(wire.getBytes(StandardCharsets.UTF_8)),()->false,()->{},snapshot(history),scanner,"hit",paused->{});
     }
-    @Test void sendsStructuredConfigurationAndOnlyReadsOnDemand() throws Exception {
-        SshFileFilterRemoteCursor c=cursor("{\"type\":\"ready\",\"totalSize\":1048576}\n{\"type\":\"batch\",\"rows\":[{\"lineNumber\":3,\"text\":\"hit\",\"matched\":true}],\"offset\":262144,\"totalSize\":1048576,\"eof\":false,\"limited\":false}\n",Clock.systemUTC());
-        Map<String,Object> config=new LinkedHashMap<>();config.put("path","/a'$(touch sentinel)\n.log");config.put("keyword","hit");
-        assertTrue(c.initialize(config)); assertFalse(sent.toString("UTF-8").contains("\nnext\n"));
-        assertEquals("/a'$(touch sentinel)\n.log",new com.fasterxml.jackson.databind.ObjectMapper().readTree(sent.toString("UTF-8")).path("path").asText());
-        assertEquals("hit",c.next("scan").getRows().get(0).getText()); assertTrue(sent.toString("UTF-8").endsWith("\nnext\n"));
-        c.close();c.close();assertTrue(closed);assertThrows(IOException.class,()->c.next("scan"));
+    @Test void parsesAbsoluteContextAndSeedsAppendedPartialLine() throws Exception {
+        byte[] history="old\nhit\nlast\n".getBytes(StandardCharsets.UTF_8);
+        SshFileFilterScanner scanner=new SshFileFilterScanner("hit","UTF-8",true,2);
+        SshFileFilterRemoteCursor cursor=cursor(history,"COUNT\t3\n1-0-old\n2:4:hit\n3-8-last\nEND\tOK\n",scanner);
+        assertEquals(3,cursor.next("id").getRows().size());assertTrue(cursor.finished());
+        cursor.seedScanner();assertEquals(Collections.singletonList(new SshFileFilterScanner.Row(4,"new partial",false)),scanner.accept("new partial".getBytes(StandardCharsets.UTF_8),true));
     }
-    @Test void preservesBoundedLongLinePreviewMetadata() throws Exception {
-        SshFileFilterRemoteCursor c=cursor("{\"type\":\"ready\",\"totalSize\":70000}\n{\"type\":\"batch\",\"rows\":[{\"lineNumber\":1,\"text\":\"late hit\",\"matched\":true,\"truncated\":true}],\"offset\":70000,\"totalSize\":70000,\"eof\":true,\"limited\":false}\n",Clock.systemUTC());
-        c.initialize(Collections.emptyMap());assertTrue(c.next("scan").getRows().get(0).isTruncated());
+    @Test void partialInitialEofAndUnboundedContextSeedFallBack() {
+        assertNull(NativeFilterSnapshot.create(3,1,new byte[0],new byte[0],"hit".getBytes(StandardCharsets.UTF_8)));
+        byte[] suffix=new byte[65536];Arrays.fill(suffix,(byte)'x');suffix[suffix.length-1]='\n';
+        assertNull(NativeFilterSnapshot.create(90000,1,new byte[0],new byte[0],suffix));
+        assertNotNull(snapshot(new byte[0]));
     }
-    @Test void propagatesRotationCodeAndClosesChannel() throws Exception {
-        SshFileFilterRemoteCursor c=cursor("{\"type\":\"ready\",\"totalSize\":8}\n{\"type\":\"error\",\"code\":\"FILE_CHANGED\",\"message\":\"文件已改变\"}\n",Clock.systemUTC());
-        c.initialize(Collections.emptyMap());
-        com.doumiot.sshconsole.sftp.FileTailRecoveryException failure=assertThrows(com.doumiot.sshconsole.sftp.FileTailRecoveryException.class,()->c.next("scan"));
-        assertEquals("FILE_CHANGED",failure.getCode()); assertTrue(closed);
+    @Test void consumesAtMostOneWireBudgetAndFindsLateMatchInHugeEarlierLine() throws Exception {
+        char[] huge=new char[2*1024*1024];Arrays.fill(huge,'x');String line=new String(huge)+"hit end";
+        byte[] history=(line+"\na\nb\n").getBytes(StandardCharsets.UTF_8);
+        byte[] suffix=Arrays.copyOfRange(history,history.length-65536,history.length);
+        NativeFilterSnapshot snapshot=NativeFilterSnapshot.create(history.length,1,Arrays.copyOf(history,4096),Arrays.copyOfRange(history,history.length-4096,history.length),suffix);
+        ByteArrayInputStream input=new ByteArrayInputStream(("COUNT\t3\n1:0:"+line+"\nEND\tOK\n").getBytes(StandardCharsets.UTF_8));
+        SshFileFilterRemoteCursor cursor=new SshFileFilterRemoteCursor(input,()->false,()->{},snapshot,new SshFileFilterScanner("hit","UTF-8",true,0),"hit",paused->{});
+        int before=input.available();assertTrue(cursor.next("id").getRows().isEmpty());assertTrue(before-input.available()<=262144);
+        List<SshFileFilterScanner.Row> rows=new ArrayList<>();for(int n=0;n<100&&!cursor.finished();n++)rows.addAll(cursor.next("id").getRows());
+        assertTrue(cursor.finished());assertEquals(1,rows.size());assertTrue(rows.get(0).getText().contains("hit end"));assertTrue(rows.get(0).isTruncated());
     }
-    @Test void rejectsOversizedOrOutOfOrderRemoteData() throws Exception {
-        String ready="{\"type\":\"ready\",\"totalSize\":8}\n";
-        SshFileFilterRemoteCursor c=cursor(ready+"{\"type\":\"batch\",\"rows\":[],\"offset\":9,\"totalSize\":8,\"eof\":true,\"limited\":false}\n",Clock.systemUTC());
-        c.initialize(Collections.emptyMap());final SshFileFilterRemoteCursor invalid=c;assertThrows(IOException.class,()->invalid.next("scan"));assertTrue(closed);
-        closed=false;char[] oversized=new char[4*1024*1024+1];Arrays.fill(oversized,'x');
-        c=cursor(new String(oversized),Clock.systemUTC()); final SshFileFilterRemoteCursor huge=c;
-        assertThrows(IOException.class,()->huge.initialize(Collections.emptyMap()));assertTrue(closed);
+    @Test void idleInputNeverBlocksAndUnexpectedExitRequestsRecovery() throws Exception {
+        InputStream idle=new InputStream(){public int available(){return 0;}public int read(){fail("must not block in read");return -1;}};
+        SshFileFilterRemoteCursor cursor=new SshFileFilterRemoteCursor(idle,()->false,()->{},snapshot(new byte[0]),new SshFileFilterScanner("hit","UTF-8",true,0),"hit",paused->{});
+        assertFalse(cursor.next("id").isEof());
+        SshFileFilterRemoteCursor exited=new SshFileFilterRemoteCursor(idle,()->true,()->{},snapshot(new byte[0]),new SshFileFilterScanner("hit","UTF-8",true,0),"hit",paused->{});
+        assertThrows(IOException.class,()->exited.next("id"));
     }
-    @Test void unexpectedChannelEofRequestsRecoveryRatherThanLeavingViewerStopped() throws Exception {
-        SshFileFilterRemoteCursor c=cursor("{\"type\":\"ready\",\"totalSize\":8}\n",Clock.systemUTC());c.initialize(Collections.emptyMap());
-        com.doumiot.sshconsole.sftp.FileTailRecoveryException error=assertThrows(com.doumiot.sshconsole.sftp.FileTailRecoveryException.class,()->c.next("scan"));
-        assertEquals("TAIL_EXPIRED",error.getCode());assertTrue(closed);
+    @Test void returnsAlreadyCountedRowsBeforeDeferringNativeFailureToNextPoll() throws Exception {
+        SshFileFilterRemoteCursor c=cursor("hit\n".getBytes(StandardCharsets.UTF_8),"COUNT\t1\n1:0:hit\nEND\tFAILED\n",new SshFileFilterScanner("hit","UTF-8",true,0));
+        assertEquals(1,c.next("id").getRows().size());assertThrows(IOException.class,()->c.next("id"));
     }
-    @Test void missingPythonIsExplicitCompatibilityFallback() throws Exception {
-        SshFileFilterRemoteCursor c=cursor("{\"type\":\"unsupported\"}\n",Clock.systemUTC());
-        assertFalse(c.initialize(Collections.emptyMap()));assertTrue(closed);
-    }
-    @Test void deadlineClosesOnlyBlockedReadAndNeverIdleCursor() throws Exception {
-        SshFileFilterRemoteCursor c=cursor("{\"type\":\"ready\",\"totalSize\":8}\n",Clock.fixed(Instant.EPOCH,ZoneOffset.UTC));
-        c.initialize(Collections.emptyMap()); c.expire(999999); assertFalse(closed);
-        java.util.concurrent.CountDownLatch entered=new java.util.concurrent.CountDownLatch(1);
-        java.util.concurrent.CountDownLatch released=new java.util.concurrent.CountDownLatch(1);
-        InputStream blocked=new InputStream(){public int read() throws IOException {entered.countDown();try{released.await();}catch(InterruptedException e){throw new IOException(e);}throw new IOException("closed");}};
-        SshFileFilterRemoteCursor waiting=new SshFileFilterRemoteCursor(blocked,sent,()->{closed=true;released.countDown();},Clock.fixed(Instant.EPOCH,ZoneOffset.UTC));
-        java.util.concurrent.ExecutorService worker=java.util.concurrent.Executors.newSingleThreadExecutor();
-        try {
-            java.util.concurrent.Future<?> result=worker.submit(()->assertThrows(IOException.class,()->waiting.initialize(Collections.emptyMap())));
-            assertTrue(entered.await(2,java.util.concurrent.TimeUnit.SECONDS));waiting.expire(10001);result.get(2,java.util.concurrent.TimeUnit.SECONDS);assertTrue(closed);
-        } finally {released.countDown();worker.shutdownNow();}
+    @Test void invalidNativeHeadersAndFileChangeFailClosed() {
+        for(String wire:Arrays.asList("COUNT\t2\n3:0:hit\n", "COUNT\t0\nEND\tCHANGED\n", "COUNT\t2\n2:0:miss\n")) {
+            SshFileFilterRemoteCursor c=cursor("hit\n".getBytes(StandardCharsets.UTF_8),wire,new SshFileFilterScanner("hit","UTF-8",true,0));assertThrows(IOException.class,()->c.next("id"));
+        }
     }
 }

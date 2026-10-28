@@ -76,6 +76,43 @@ public final class SshFileFilterScanner {
         if (count >= MAX_ROWS || resultChars >= MAX_RESULT_CHARS) limited = true;
     }
     public boolean isLimited() { return limited; }
+
+    /** Native grep already selected context; share the exact global emission budget. */
+    public Row acceptNativeRow(Row row) {
+        Map<Long,Row> accepted=new LinkedHashMap<>();
+        if(row.matched) afterUntil=Math.max(afterUntil,row.lineNumber+context);
+        emit(row,accepted);return accepted.get(row.lineNumber);
+    }
+
+    /** Native v1 accepts only LF-terminated snapshots and a bounded final two-line seed. */
+    public void seedNative(byte[] seed,long completedLines) throws IOException {
+        if(seed.length>65536 || (seed.length>0 && seed[seed.length-1]!='\n')) throw new IOException("无效的原生筛选上下文");
+        int lines=0;for(byte b:seed)if(b=='\n')lines++;
+        if(lines>2 || completedLines<lines)throw new IOException("无效的原生筛选行号");
+        before.clear();long number=completedLines-lines+1;
+        NativeLine preview=new NativeLine(line.keyword());int start=0;
+        for(int i=0;i<seed.length;i++)if(seed[i]=='\n') {
+            preview.accept(seed,start,i-start);before.addLast(preview.finish(number++));
+            preview=new NativeLine(line.keyword());start=i+1;
+        }
+        line.clear();lineNumber=completedLines+1;carry=new byte[0];
+    }
+
+    /** Streaming UTF-8 body parser: retains the same bounded late-match preview as Java scanning. */
+    public static final class NativeLine {
+        private final Line line;
+        private final CharsetDecoder decoder=StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT);
+        private byte[] carry=new byte[0];
+        public NativeLine(String keyword){line=new Line(keyword,true);}
+        public void accept(byte[] bytes,int offset,int length) throws IOException {
+            ByteBuffer input=ByteBuffer.allocate(carry.length+length);input.put(carry).put(bytes,offset,length).flip();
+            CharBuffer chars=CharBuffer.allocate(8192);
+            while(true){CoderResult result=decoder.decode(input,chars,false);chars.flip();while(chars.hasRemaining())line.append(chars.get());chars.clear();
+                if(result.isError())throw new IOException("文件内容与 UTF-8 编码不匹配");if(result.isUnderflow())break;}
+            carry=new byte[input.remaining()];input.get(carry);
+        }
+        public Row finish(long number) throws IOException {if(carry.length!=0)throw new IOException("原生筛选返回不完整 UTF-8 行");return line.current(number);}
+    }
     @Value @AllArgsConstructor public static class Row {
         long lineNumber; String text; boolean matched; boolean truncated;
         public Row(long lineNumber, String text, boolean matched) { this(lineNumber, text, matched, false); }
@@ -100,6 +137,7 @@ public final class SshFileFilterScanner {
             }
             recent = new char[pattern.length + Math.min(128, MAX_LINE_CHARS - pattern.length)];
         }
+        String keyword(){return new String(pattern);}
         private char fold(char ch) { return caseSensitive ? ch : Character.toLowerCase(Character.toUpperCase(ch)); }
         void append(char ch) {
             if (ch == '\r') { if (pendingCr) accept('\r'); pendingCr = true; return; }

@@ -75,9 +75,11 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
                 if(control==null || control.socket!=socket || control.disconnected) throw new IOException("Tail 连接已被替换");
                 if("pause".equals(type)) {
                     if(!control.paused) { control.pausedAt=clock.millis(); control.paused=true; }
+                    pauseNative(tail,true);
                 } else if("close".equals(type)) {
+                    pauseNative(tail,true);
                     control.closed=true; closeSocket(socket); request(tail,true);
-                } else { control.paused=false; request(tail,true); }
+                } else { control.paused=false;if(tail.pending==null)pauseNative(tail,false);request(tail,true); }
                 return;
             }
             synchronized(tail) {
@@ -146,6 +148,7 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
         if(sequence<=tail.acknowledged) return;
         if(tail.pending==null || sequence!=tail.sequence) throw new IOException("Tail 确认序号不正确");
         tail.acknowledged=sequence; tail.pending=null; tail.nextCheckAt=Math.max(clock.millis(),tail.readAt+tail.interval);
+        if(!tail.control.paused&&!tail.control.disconnected)pauseNative(tail,false);
         if(tail.historical && tail.finalHistoryBatch) {tail.historyComplete=true;return;}
         if(tail.limited) { tail.control.closed=true; if(tail.socket!=null) closeSocket(tail.socket); request(tail,true); }
     }
@@ -154,6 +157,7 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
         Control control=tail.control;
         if(control==null || control.socket!=socket) return;
         sockets.remove(socket.getId(),tail); markDisconnected(control);
+        pauseNative(tail,true);
         request(tail,true); // Close retained resources on the read worker, never on this callback.
     }
 
@@ -163,6 +167,7 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
     private void disconnect(Tail tail,WebSocketSession socket) {
         Control control=tail.control;if(control==null || control.socket!=socket) return;
         sockets.remove(socket.getId(),tail);markDisconnected(control);
+        pauseNative(tail,true);
         tail.socket=null;tail.disconnectedAt=control.disconnectedAt;closeControlHandle(control);
     }
     private boolean deliver(Tail tail,String message) {
@@ -212,7 +217,7 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
                 if(clock.millis()-tail.lastHeartbeat>=15000) {
                     if(!deliver(tail,"{\"type\":\"heartbeat\"}")) return;
                 }
-                if(control.paused) { if(clock.millis()-control.pausedAt>=PAUSE_CLOSE_MS) closeHandle(tail); return; }
+                if(control.paused) { if(clock.millis()-control.pausedAt>=PAUSE_CLOSE_MS) {closeHandle(tail);filters.retireNative(tail.token,tail.scanId,tail.lease);} return; }
                 if(tail.pending!=null) {if(!tail.pendingSent) tail.pendingSent=deliver(tail,tail.pending);return;}
                 if(!tail.initialized) {
                     if(tail.lease==null && !tail.scanId.isEmpty()) {
@@ -232,24 +237,35 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
                 ObjectNode data=json.createObjectNode(); long previous=tail.offset;
                 boolean limited=false;
                 if(tail.lease!=null) {
+                    pauseNative(tail,false);
                     SshFileFilterService.Batch batch=filters.nextTail(tail.lease,handle);
                     tail.offset=batch.getOffset(); limited=batch.isLimited(); tail.catchup=!batch.isEof();
                     tail.finalHistoryBatch=tail.historical && (batch.isEof() || limited);
                     data.put("scanId",tail.lease.scanId()); data.set("rows",json.valueToTree(batch.getRows()));
                     data.put("offset",batch.getOffset()); data.put("totalSize",batch.getTotalSize()); data.put("eof",batch.isEof()); data.put("limited",limited);
+                    if(batch.getMode()!=null)data.put("mode",batch.getMode());if(batch.getReason()!=null)data.put("reason",batch.getReason());
                 } else {
                     NormalBatch batch=tail.normal.read(handle); tail.offset=batch.offset; tail.catchup=!batch.eof;
                     data.put("content",batch.content); data.put("offset",batch.offset); data.put("totalSize",batch.size); data.put("eof",batch.eof);
                 }
                 tail.interval=previous==tail.offset ? Math.min(1000,tail.interval*2) : 200;
                 tail.readAt=clock.millis(); tail.nextCheckAt=tail.readAt+tail.interval;
-                if(previous==tail.offset && !limited && !(tail.historical && tail.finalHistoryBatch)) return;
+                if(previous==tail.offset && !limited && !(tail.historical && tail.finalHistoryBatch) && (!data.has("rows") || data.path("rows").size()==0) && !data.hasNonNull("reason")) return;
                 data.put("type","data"); data.put("sequence",++tail.sequence); tail.limited=limited;
                 tail.pending=json.writeValueAsString(data);tail.pendingSent=false;
+                pauseNative(tail,true);
                 if(control.closed) {finish(tail);return;}
                 if(!control.paused && !control.disconnected) tail.pendingSent=deliver(tail,tail.pending);
             } catch(Exception error) { fail(tail,error); }
+            finally {
+                // Callback controls may race the read, including a read with no data/progress.
+                if(control==tail.control&&(control.paused||control.disconnected||control.closed||tail.pending!=null))pauseNative(tail,true);
+            }
         }
+    }
+    private void pauseNative(Tail tail,boolean paused) {
+        if(tail.lease!=null)filters.pauseNative(tail.lease,paused);
+        else if(!tail.scanId.isEmpty())filters.pauseNative(tail.token,tail.scanId,paused);
     }
     private void validateSession(String token) throws IOException {
         final SshSessionRegistry.SessionEntry entry;
@@ -288,6 +304,7 @@ public class SshFileTailWebSocketHandler extends TextWebSocketHandler {
         finish(tail);if(socket!=null)sendError(socket,error);
     }
     private void finish(Tail tail) {
+        if(!tail.scanId.isEmpty())filters.cancelUnfinishedNative(tail.token,tail.scanId,tail.lease);
         if(tail.pending!=null && tail.lease!=null) try {filters.cancel(tail.token,tail.lease.scanId());} catch(IOException ignored) {}
         tails.remove(tail.id,tail); if(tail.socket!=null) sockets.remove(tail.socket.getId(),tail);
         tail.socket=null; tail.pending=null; closeRetired(tail); closeHandle(tail); filters.releaseTail(tail.lease);
