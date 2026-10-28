@@ -361,3 +361,23 @@ test('checked ownership rejects new uploads when the current probe is unavailabl
     assert.equal(panel.queued.length,0);assert.equal(panel.warnings.length,1)
   }finally{panel.unmount()}
 })
+
+
+test('remembered upload ownership waits for fresh identity and applies the current user after reopen',async()=>{
+ const saved=new Map(),storage={getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)}
+ let panel=mountPanel({sessionToken:'old'},undefined,vue.ref(null),undefined,{contextOptions:{storage}})
+ try {panel.state.assignUploadOwner.value=true;await flush()} finally {panel.unmount()}
+ let resolve;const uploaded=[]
+ panel=mountPanel({sessionToken:'new',savedPath:'/srv/new'},undefined,vue.ref(null),undefined,{
+  contextOptions:{storage},getTerminalContext:()=>new Promise(done=>{resolve=done}),sftpUploadLarge:async(...args)=>{uploaded.push(args)}
+ })
+ try {
+  await flush();assert.equal(panel.state.assignUploadOwner.value,true)
+  panel.state.uploadFiles({target:{files:[new File(['x'],'blocked.txt')],value:'selected'}})
+  assert.equal(panel.queued.length,0)
+  resolve({available:true,cwd:'/srv/new',terminalUser:'bob',terminalUid:2000,terminalGid:2001,fileUser:'root'});await flush()
+  panel.state.uploadFiles({target:{files:[new File(['x'],'current.txt')],value:'selected'}})
+  assert.equal(panel.queued.length,1);await panel.queued[0].run({})
+  assert.equal(uploaded[0][3].ownerUid,2000);assert.equal(uploaded[0][3].ownerGid,2001)
+ } finally {panel.unmount()}
+})

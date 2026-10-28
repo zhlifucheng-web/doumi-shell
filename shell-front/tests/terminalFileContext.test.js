@@ -6,8 +6,8 @@ import { useTerminalFileContext } from '../src/composables/useTerminalFileContex
 
 const filename = new URL('./helpers/TerminalFileContextHarness.vue', import.meta.url)
 // The harness mounts lifecycle hooks exactly as the consuming panel does.
-function mountContext(request, props = {}) {
-  const timers = new Map(), calls = [], storage = new Map()
+function mountContext(request, props = {}, storage = new Map()) {
+  const timers = new Map(), calls = []
   let id = 0
 
   const mounted = mountSfcSetup(filename, { modules: { context: { useTerminalFileContext } }, props: { token:'a',tab:'one',active:true,blocked:false,...props }, globals: {
@@ -92,4 +92,35 @@ test('KeepAlive deactivation stops probes and reactivation starts with a fresh c
   visible.value=true;await flush();assert.equal(calls,2);assert.equal(timers.size,1)
  }finally{app.unmount()}
  assert.equal(timers.size,0)
+})
+
+
+test('file switches restore across remounts and persist only booleans, never terminal identities',async()=>{
+ const storage=new Map()
+ let panel=mountContext(async()=>ready('/srv/first'),{},storage)
+ try {
+  await flush();assert.equal(panel.state.context.assignUploadOwner.value,false)
+  panel.state.context.follow.value=false;panel.state.context.assignUploadOwner.value=true;await flush()
+ } finally {panel.unmount()}
+ panel=mountContext(async()=>ready('/srv/other',{terminalUser:'bob',terminalUid:2000,terminalGid:2001}),{},storage)
+ try {
+  assert.equal(panel.state.context.follow.value,false);assert.equal(panel.state.context.assignUploadOwner.value,true)
+  assert.equal(panel.state.context.context.value,null);assert.equal(panel.state.context.canAssignOwner.value,false)
+  await flush();assert.equal(panel.state.context.context.value.terminalUid,2000)
+  panel.state.context.assignUploadOwner.value=false;panel.state.context.follow.value=true;await flush()
+  assert.deepEqual([...storage.values()].sort(),['false','true'])
+ } finally {panel.unmount()}
+ panel=mountContext(async()=>ready(),{},storage)
+ try {assert.equal(panel.state.context.assignUploadOwner.value,false);assert.equal(panel.state.context.follow.value,true)} finally {panel.unmount()}
+})
+
+test('unrecognized ownership preference stays off and restricted storage keeps session switches usable',async()=>{
+ for(const storage of [new Map([['ssh_file_assign_upload_owner','invalid']]),{get(){throw Error('storage denied')},set(){throw Error('quota')}}]) {
+  const panel=mountContext(async()=>ready(),{},storage)
+  try {
+   assert.equal(panel.state.context.assignUploadOwner.value,false)
+   panel.state.context.assignUploadOwner.value=true;panel.state.context.follow.value=false;await flush()
+   assert.equal(panel.state.context.assignUploadOwner.value,true);assert.equal(panel.state.context.follow.value,false)
+  } finally {panel.unmount()}
+ }
 })

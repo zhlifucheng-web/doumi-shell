@@ -1,14 +1,18 @@
 import { computed, onActivated, onDeactivated, onScopeDispose, ref, watch } from 'vue'
 
 export const FOLLOW_STORAGE_KEY = 'ssh_file_follow_terminal'
+export const UPLOAD_OWNER_STORAGE_KEY = 'ssh_file_assign_upload_owner'
 const absolutePath = value => typeof value === 'string' && value.startsWith('/') && !value.includes('\0')
 const validId = value => Number.isInteger(value) && value >= 0 && value <= 2147483647
 
 /** Owns one probe at a time, including across tab/token changes. */
 export function useTerminalFileContext({ sessionToken, tabId, active, blocked, currentPath, request, onNavigate,
-  storage = globalThis.localStorage, schedule = setTimeout, unschedule = clearTimeout }) {
-  let saved
+  storage, schedule = setTimeout, unschedule = clearTimeout }) {
+  if (storage === undefined) { try { storage = globalThis.localStorage } catch { /* Restricted storage. */ } }
+  let saved, savedUploadOwner
   try { saved = storage?.getItem(FOLLOW_STORAGE_KEY) } catch { /* Restricted storage. */ }
+  try { savedUploadOwner = storage?.getItem(UPLOAD_OWNER_STORAGE_KEY) } catch { /* Restricted storage. */ }
+  const assignUploadOwner = ref(savedUploadOwner === 'true')
   const follow = ref(saved !== 'false'), context = ref(null), message = ref('正在检测终端目录…'), activated = ref(true)
   const canAssignOwner = computed(() => !!context.value?.available && validId(context.value.terminalUid) && validId(context.value.terminalGid))
   let generation = 0, timer = null, inFlight = false, disposed = false, controller = null, lastCwd = null
@@ -59,9 +63,12 @@ export function useTerminalFileContext({ sessionToken, tabId, active, blocked, c
     lastCwd = null
     if (value) navigate()
   }, { flush: 'sync' })
+  watch(assignUploadOwner, value => {
+    try { storage?.setItem(UPLOAD_OWNER_STORAGE_KEY, String(value)) } catch { /* Keep the choice for this session. */ }
+  }, { flush: 'sync' })
   watch(blocked, navigate)
   onDeactivated(() => { activated.value = false })
   onActivated(() => { activated.value = true })
   onScopeDispose(() => { disposed = true; ++generation; cancelTimer(); controller?.abort() })
-  return { follow, context, message, canAssignOwner }
+  return { follow, assignUploadOwner, context, message, canAssignOwner }
 }

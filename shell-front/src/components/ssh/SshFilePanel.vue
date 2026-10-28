@@ -731,8 +731,7 @@ const syncNotice = computed(() => {
   return ''
 })
 
-const assignUploadOwner = ref(false)
-const { follow: followTerminal, context: terminalContext, message: contextMessage, canAssignOwner } = useTerminalFileContext({
+const { follow: followTerminal, assignUploadOwner, context: terminalContext, message: contextMessage, canAssignOwner } = useTerminalFileContext({
   sessionToken: () => props.sessionToken, tabId: () => props.tabId, active: () => props.active,
   blocked: () => showEditor.value || showLargeViewer.value,
   currentPath: () => loadedPath.value,
