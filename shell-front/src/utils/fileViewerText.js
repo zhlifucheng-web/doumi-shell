@@ -43,7 +43,7 @@ export function createViewerBlockRenderer() {
     let remaining = 0, count = 0, previousLine = 0
     for (let i = 0; i < items.length; i++) {
       const item = items[i], text = texts[i]
-      const key = `${filtered ? 'line' : 'byte'}:${filtered ? item.lineNumber : item.offset}`
+      const key = item.renderKey || `${filtered ? 'line' : 'byte'}:${filtered ? item.lineNumber : item.offset}`
       const gap = Boolean(filtered && previousLine && item.lineNumber > previousLine + 1)
       let ahead = ''
       if (keyword.length > 1) for (let n = i + 1; n < texts.length && ahead.length < keyword.length - 1; n++) ahead += texts[n].slice(0, keyword.length - 1 - ahead.length)
@@ -68,7 +68,7 @@ export function createViewerBlockRenderer() {
           mark(start, Math.min(text.length, start + match.length), count + n)
         }
         html += escapeHtml(text.slice(end))
-        if (filtered) html = `${gap ? '<span class="line-gap" aria-hidden="true">⋯</span>\n' : ''}<span class="filter-line${item.matched ? ' is-matched' : ''}" data-line="${Number(item.lineNumber)}">${html}</span>`
+        if (filtered && !item.separator) html = `${gap ? '<span class="line-gap" aria-hidden="true">⋯</span>\n' : ''}<span class="filter-line${item.matched ? ' is-matched' : ''}" data-line="${Number(item.lineNumber)}">${html}</span>`
         block = { key, html }
       }
       next.set(key, { scan, base: count, current, gap, matched: item.matched, block })

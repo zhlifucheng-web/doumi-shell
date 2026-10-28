@@ -129,3 +129,29 @@ test('a historical page arriving while selected is retained until resume and app
   assert.equal(filter.readyForTail.value, true)
   await filter.close()
 })
+
+test('reset history waits for the first successful unpaused page and keeps repeated line numbers separate', async () => {
+  const pending = deferred(); let scan = 0
+  const { filter } = fixture({ start: async () => ({ scanId: `s${++scan}` }), next: async id => id === 's1' ? { rows: [{ lineNumber: 1, text: 'old' }], offset: 4, totalSize: 4, eof: true } : pending.promise, cancel: async () => {} })
+  await filter.start({ keyword: 'x' })
+  const restarting = filter.start({ keyword: 'x' }, { preserveHistory: true, truncated: true })
+  await new Promise(setImmediate); filter.pause(true)
+  pending.resolve({ rows: [{ lineNumber: 1, text: 'new' }], offset: 4, totalSize: 4, eof: true }); await restarting
+  assert.deepEqual(filter.displayRows.value.map(r => r.text), ['old'])
+  filter.pause(false); await new Promise(setImmediate)
+  assert.deepEqual(filter.displayRows.value.map(r => r.text), ['old', '===================truncated===================', 'new'])
+  filter.applyTail({ scanId: 's2', rows: [{ lineNumber: 1, text: 'new appended' }], offset: 13, totalSize: 13, eof: true })
+  assert.deepEqual(filter.displayRows.value.map(r => r.text), ['old', '===================truncated===================', 'new appended'])
+  await filter.close()
+})
+
+test('reset history shares the existing row limit and evicts old history before new results', async () => {
+  let scan = 0
+  const { filter } = fixture({ start: async () => ({ scanId: `s${++scan}` }), next: async () => ({ rows: Array.from({ length: 6000 }, (_, n) => ({ lineNumber: n + 1, text: `s${scan}-${n}` })), offset: 6000, totalSize: 6000, eof: true }), cancel: async () => {} })
+  await filter.start({ keyword: 'x' }); await filter.start({ keyword: 'x' }, { preserveHistory: true, truncated: true })
+  assert.equal(filter.displayRows.value.length, 10000)
+  assert.equal(filter.rows.value.length, 6000)
+  assert.equal(filter.displayRows.value.at(-1).text, 's2-5999')
+  assert.equal(filter.limited.value, false)
+  await filter.close()
+})

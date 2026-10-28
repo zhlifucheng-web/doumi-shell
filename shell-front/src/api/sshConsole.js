@@ -201,6 +201,22 @@ export function sftpUpload(sessionToken, path, file) {
   return post(`${BASE}/sftp/upload?${q.toString()}`, form, { showSuccess: false })
 }
 
+/** Convert before upload so unrepresentable characters never overwrite the remote file. */
+export async function sftpEncodeText(sessionToken, content, encoding, bom = false) {
+  const form = new FormData()
+  form.append('file', new Blob([content], { type: 'text/plain;charset=utf-8' }), 'editor.txt')
+  const response = await apiClient.post(`${BASE}/sftp/encode-text`, form, {
+    params: { sessionToken, encoding, bom }, responseType: 'blob', timeout: 0
+  })
+  const blob = response.data
+  if ((response.headers?.['content-type'] || blob.type || '').includes('json')) {
+    let message = '文件编码转换失败'
+    try { const result = JSON.parse(await blob.text()); message = result.externMessage || result.message || message } catch { /* Preserve fallback. */ }
+    throw new Error(message)
+  }
+  return blob
+}
+
 export async function sftpUploadLarge(sessionToken, path, file, { signal, onProgress, onCommitting } = {}) {
   const chunkSize = 4 * 1024 * 1024
   let uploadId

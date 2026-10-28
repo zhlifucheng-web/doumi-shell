@@ -1,9 +1,12 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 // Network ownership is per generation; late starts/pages can never repaint a new scan.
 export function useViewerFilter({ source, api, onError }) {
   const active = ref(false), scanning = ref(false), canceled = ref(false)
-  const rows = ref([]), offset = ref(0), totalSize = ref(0)
+  const history = ref([]), rows = ref([])
+  const displayRows = computed(() => [...history.value, ...rows.value])
+  let segment = 0, pendingReplacement = null
+  const offset = ref(0), totalSize = ref(0)
   const eof = ref(false), limited = ref(false), error = ref(''), paused = ref(false)
   const readyForTail = ref(false)
   let generation = 0, cursor = null, pumping = false, pendingPage = null
@@ -11,15 +14,20 @@ export function useViewerFilter({ source, api, onError }) {
     if (entry) { try { await api.cancel(entry.id, entry.token) } catch { /* idle TTL is the fallback */ } }
   }
   function merge(page) {
+    if (pendingReplacement) {
+      if (pendingReplacement.truncated) history.value.push(...rows.value, { renderKey: `reset:${segment}`, text: '===================truncated===================', separator: true })
+      rows.value = []; pendingReplacement = null
+    }
     let overflow = false
     for (const row of page.rows || []) {
       // Scanner rows are ordered; binary insertion also handles an updated partial line.
       let lo = 0, hi = rows.value.length
       while (lo < hi) { const mid = (lo + hi) >>> 1; if (rows.value[mid].lineNumber < row.lineNumber) lo = mid + 1; else hi = mid }
-      if (rows.value[lo]?.lineNumber === row.lineNumber) rows.value[lo] = row
-      else if (rows.value.length < 10000) rows.value.splice(lo, 0, row)
+      if (rows.value[lo]?.lineNumber === row.lineNumber) rows.value[lo] = { ...row, renderKey: `line:${segment}:${row.lineNumber}` }
+      else if (rows.value.length < 10000) rows.value.splice(lo, 0, { ...row, renderKey: `line:${segment}:${row.lineNumber}` })
       else overflow = true
     }
+    if (history.value.length + rows.value.length > 10000) history.value.splice(0, history.value.length + rows.value.length - 10000)
     offset.value = page.offset
     totalSize.value = page.totalSize
     eof.value = Boolean(page.eof)
@@ -51,12 +59,15 @@ export function useViewerFilter({ source, api, onError }) {
       if (gen === generation) scanning.value = false
     }
   }
-  async function start(options) {
+  async function start(options, { preserveHistory = false, truncated = false } = {}) {
     const gen = ++generation
     const old = cursor; cursor = null; pendingPage = null
     void release(old)
     active.value = true; scanning.value = true; canceled.value = false
-    rows.value = []; offset.value = 0; totalSize.value = 0
+    ++segment
+    pendingReplacement = preserveHistory ? { truncated } : null
+    if (!preserveHistory) { rows.value = []; history.value = [] }
+    offset.value = 0; totalSize.value = 0
     eof.value = false; readyForTail.value = false; limited.value = false; error.value = ''; paused.value = false
     const src = source()
     try {
@@ -95,5 +106,5 @@ export function useViewerFilter({ source, api, onError }) {
     paused.value = value
     if (!value && active.value && !readyForTail.value && !limited.value && !error.value && !canceled.value) void pump(generation, true)
   }
-  return { active, scanning, rows, offset, totalSize, eof, readyForTail, limited, error, canceled, paused, start, cancel, close, tailSource, applyTail, pause }
+  return { active, scanning, rows, displayRows, offset, totalSize, eof, readyForTail, limited, error, canceled, paused, start, cancel, close, tailSource, applyTail, pause }
 }

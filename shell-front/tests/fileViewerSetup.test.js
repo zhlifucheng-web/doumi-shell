@@ -82,11 +82,11 @@ test('viewer Ctrl+F captures default find and focuses its own search', async () 
   try {
     await flush()
     assert.equal(viewer.state.toolsVisible.value, false)
-    viewer.state.searchInputRef.value = { focus: () => calls.push('focus') }
+    viewer.state.searchInputRef.value = { focus: () => calls.push('focus'), select: () => calls.push('select') }
     viewer.listeners.keydown({ key: 'f', ctrlKey: true, preventDefault: () => calls.push('prevent'), stopPropagation: () => calls.push('stop') })
     await flush()
     assert.equal(viewer.state.toolsVisible.value, true)
-    assert.deepEqual(calls, ['prevent', 'stop', 'focus'])
+    assert.deepEqual(calls, ['prevent', 'stop', 'focus', 'select'])
   } finally { viewer.unmount() }
 })
 
@@ -94,13 +94,13 @@ test('search tools toggle and Escape retain the current search and active filter
   const viewer = mountViewer()
   try {
     await flush()
-    viewer.state.searchKeyword.value = 'hello'; viewer.state.filterKeyword.value = 'error'
+    viewer.state.searchKeyword.value = 'error'
     await viewer.state.startFilter()
     await viewer.state.toggleSearchTools()
     assert.equal(viewer.state.toolsVisible.value, true)
     viewer.state.closeSearchTools()
     assert.equal(viewer.state.toolsVisible.value, false)
-    assert.equal(viewer.state.searchKeyword.value, 'hello')
+    assert.equal(viewer.state.searchKeyword.value, 'error')
     assert.equal(viewer.state.filterKeyword.value, 'error')
     assert.equal(viewer.state.filter.active.value, true)
     await viewer.state.toggleSearchTools()
@@ -127,7 +127,7 @@ test('filtering from Tail resumes incremental following only after full historic
   const viewer = mountViewer()
   try {
     await flush()
-    viewer.state.filterKeyword.value = 'hello'
+    viewer.state.searchKeyword.value = 'hello'
     await viewer.state.startFilter()
     assert.equal(viewer.state.autoFollow.value, true)
     assert.equal(viewer.state.filter.eof.value, true)
@@ -158,7 +158,7 @@ test('invalid byte bounds or mismatched scan IDs stop Tail without corrupting co
   } finally { viewer.unmount() }
   const filtered = mountViewer()
   try {
-    await flush(); filtered.state.filterKeyword.value = 'x'; await filtered.state.startFilter(); await flush()
+    await flush(); filtered.state.searchKeyword.value = 'x'; await filtered.state.startFilter(); await flush()
     filtered.sockets.at(-1).frame({ type: 'data', sequence: 1, scanId: 'wrong', offset: 7, totalSize: 7, rows: [] }); await flush()
     assert.equal(filtered.state.autoFollow.value, false)
     assert.equal(filtered.messages.length, 1)
@@ -168,7 +168,7 @@ test('invalid byte bounds or mismatched scan IDs stop Tail without corrupting co
 test('a failed filtered Tail requires a fresh scan before following again', async () => {
   const viewer = mountViewer()
   try {
-    await flush(); viewer.state.filterKeyword.value = 'x'; await viewer.state.startFilter(); await flush()
+    await flush(); viewer.state.searchKeyword.value = 'x'; await viewer.state.startFilter(); await flush()
     viewer.sockets.at(-1).frame({ type: 'error', message: 'Tail 已失效，请重新筛选' }); await flush()
     assert.equal(viewer.state.canFilterTail.value, false)
     assert.match(viewer.state.filter.error.value, /请重新筛选/)
@@ -236,13 +236,13 @@ test('a reset file reloads from the beginning and continues Tail with fresh sequ
     await flush(); value = 'reset\n'
     viewer.sockets[0].frame({ type: 'error', code: 'FILE_CHANGED', message: '文件已截断' })
     await flush(); await flush()
-    assert.equal(viewer.state.combinedText.value, 'reset\n')
+    assert.equal(viewer.state.combinedText.value, 'hello\n===================truncated===================\nreset\n')
     assert.equal(reads.at(-1).fromEnd, false)
     assert.equal(reads.at(-1).offset, 0)
     assert.equal(viewer.state.autoFollow.value, true)
     viewer.sockets.at(-1).frame({ type: 'data', sequence: 1, offset: 11, totalSize: 11, content: 'next\n' })
     await flush()
-    assert.equal(viewer.state.combinedText.value, 'reset\nnext\n')
+    assert.equal(viewer.state.combinedText.value, 'hello\n===================truncated===================\nreset\nnext\n')
     assert.deepEqual(viewer.messages, [])
   } finally { viewer.unmount() }
 })
@@ -260,7 +260,7 @@ test('file reset while selected preserves text and scroll until explicit followi
     assert.equal(viewer.state.combinedText.value, 'hello\n')
     assert.equal(viewer.body.scrollTop, top)
     viewer.select(''); viewer.state.setFollowing(true); await flush(); await flush()
-    assert.equal(viewer.state.combinedText.value, 'reset\n')
+    assert.equal(viewer.state.combinedText.value, 'hello\n===================truncated===================\nreset\n')
     assert.equal(viewer.state.autoFollow.value, true)
   } finally { viewer.unmount() }
 })
@@ -272,11 +272,11 @@ test('filtered Tail reset rescans the same keyword and resumes a new filter subs
     sftpFilterNext: async ({scanId}) => ({ scanId, rows: [{ lineNumber: 1, text: scanId, matched: true }], offset: 6, totalSize: 6, eof: true })
   } })
   try {
-    await flush(); viewer.state.filterKeyword.value = 'hit'; await viewer.state.startFilter(); await flush()
+    await flush(); viewer.state.searchKeyword.value = 'hit'; await viewer.state.startFilter(); await flush()
     viewer.sockets.at(-1).frame({ type: 'error', code: 'FILE_CHANGED', message: '文件已改变或截断' })
     await flush(); await flush()
     assert.deepEqual(keywords, ['hit', 'hit'])
-    assert.equal(viewer.state.filter.rows.value[0].text, 'scan-2')
+    assert.equal(viewer.state.displayedText.value, 'scan-1\n===================truncated===================\nscan-2')
     assert.equal(viewer.state.autoFollow.value, true)
     assert.equal(viewer.sockets.at(-1).sent[0].scanId, 'scan-2')
     assert.deepEqual(viewer.messages, [])
@@ -296,7 +296,7 @@ test('pausing an in-flight reset reload rejects its late result and resumes with
     resolve({ offset: 0, length: 5, totalSize: 5, contentBase64: btoa('late\n') }); await flush()
     assert.equal(viewer.state.combinedText.value, 'hello\n'); assert.equal(viewer.body.scrollTop, top)
     viewer.select(''); viewer.state.setFollowing(true); await flush(); await flush()
-    assert.equal(viewer.state.combinedText.value, 'fresh\n')
+    assert.equal(viewer.state.combinedText.value, 'hello\n===================truncated===================\nfresh\n')
     assert.equal(viewer.state.autoFollow.value, true)
   } finally { viewer.unmount() }
 })
@@ -329,7 +329,7 @@ test('client-side truncation bounds trigger the same reload path as server file-
     await flush(); content = 'new\n'
     viewer.sockets[0].frame({ type: 'data', sequence: 1, offset: 4, totalSize: 4, content: 'new\n' })
     await flush(); await flush()
-    assert.equal(viewer.state.combinedText.value, 'new\n')
+    assert.equal(viewer.state.combinedText.value, 'hello\n===================truncated===================\nnew\n')
     assert.equal(viewer.state.autoFollow.value, true)
     assert.deepEqual(viewer.messages, [])
   } finally { viewer.unmount() }
@@ -348,7 +348,7 @@ test('transient recovery failure schedules one retry and pause cancels it until 
     assert.equal(viewer.state.combinedText.value, 'hello\n')
     viewer.state.setFollowing(false); assert.equal(viewer.timers.size, 0)
     viewer.state.setFollowing(true); await flush(); await flush()
-    assert.equal(viewer.state.combinedText.value, 'fresh\n')
+    assert.equal(viewer.state.combinedText.value, 'hello\n===================truncated===================\nfresh\n')
     assert.equal(viewer.state.autoFollow.value, true)
     assert.deepEqual(viewer.messages, [])
   } finally { viewer.unmount() }
@@ -361,5 +361,99 @@ test('new normal Tail carries the HTTP byte boundary so startup cannot silently 
   try {
     await flush()
     assert.equal(viewer.sockets[0].sent[0].anchorBase64, 'aGVsbG8K')
+  } finally { viewer.unmount() }
+})
+
+
+test('repeated resets keep bounded history and unique render keys while new offsets restart at zero', async () => {
+  let value = 'old-without-newline'
+  const viewer = mountViewer({ read: async () => ({ offset: 0, length: value.length, totalSize: value.length, contentBase64: btoa(value) }) })
+  try {
+    await flush()
+    for (let n = 0; n < 12; n++) {
+      value = `fresh-${n}\n`
+      viewer.sockets.at(-1).frame({ type: 'error', code: 'FILE_CHANGED' }); await flush(); await flush()
+      const blocks = viewer.state.renderedBlocks.value
+      assert.equal(new Set(blocks.map(b => b.key)).size, blocks.length)
+      assert.ok(blocks.length <= 16)
+      assert.equal(viewer.state.rangeEnd.value, value.length)
+      assert.ok(viewer.state.combinedText.value.endsWith(`===================truncated===================\n${value}`))
+    }
+    await viewer.state.copyDisplayed()
+    assert.equal(viewer.copied[0], viewer.state.combinedText.value)
+  } finally { viewer.unmount() }
+})
+
+test('filtered reset retains old results during failed reload and separates repeated line numbers', async () => {
+  let scan = 0, fail = false
+  const viewer = mountViewer({ api: {
+    sftpFilterStart: async () => { if (fail) throw new Error('No such file'); return { scanId: `s${++scan}` } },
+    sftpFilterNext: async ({ scanId }) => ({ rows: [{ lineNumber: 1, text: scanId, matched: true }], offset: 3, totalSize: 3, eof: true })
+  } })
+  try {
+    await flush(); viewer.state.searchKeyword.value = 'x'; await viewer.state.startFilter(); await flush()
+    fail = true; viewer.sockets.at(-1).frame({ type: 'error', code: 'FILE_CHANGED' }); await flush()
+    assert.equal(viewer.state.displayedText.value, 's1')
+    fail = false; viewer.state.setFollowing(false); viewer.state.setFollowing(true); await flush(); await flush()
+    assert.equal(viewer.state.displayedText.value, 's1\n===================truncated===================\ns2')
+    viewer.sockets.at(-1).frame({ type: 'data', sequence: 1, scanId: 's2', rows: [{ lineNumber: 1, text: 's2 appended', matched: true }], offset: 12, totalSize: 12 })
+    await flush()
+    assert.equal(viewer.state.displayedText.value, 's1\n===================truncated===================\ns2 appended')
+    const blocks = viewer.state.renderedBlocks.value
+    assert.equal(new Set(blocks.map(b => b.key)).size, blocks.length)
+    assert.deepEqual(viewer.messages, [])
+  } finally { viewer.unmount() }
+})
+
+
+test('one entered keyword drives search and filtering while active recovery keeps its applied keyword', async () => {
+  const keywords = []
+  const viewer = mountViewer({ api: { sftpFilterStart: async data => { keywords.push(data.keyword); return { scanId: `s${keywords.length}` } } } })
+  try {
+    await flush(); viewer.state.searchKeyword.value = 'hello'
+    assert.equal(viewer.state.matchCount.value, 1)
+    await viewer.state.startFilter(); await flush()
+    assert.deepEqual(keywords, ['hello'])
+    viewer.state.searchKeyword.value = 'other'
+    viewer.sockets.at(-1).frame({ type: 'error', code: 'FILE_CHANGED' }); await flush(); await flush()
+    assert.deepEqual(keywords, ['hello', 'hello'])
+    await viewer.state.startFilter(); await flush()
+    assert.deepEqual(keywords, ['hello', 'hello', 'other'])
+  } finally { viewer.unmount() }
+})
+
+
+test('terminal-style search scope uses Enter for find or file filtering and Shift+Enter for previous match', async () => {
+  const keywords = []
+  const viewer = mountViewer({ api: { sftpFilterStart: async data => { keywords.push(data.keyword); return { scanId: 's' } } } })
+  try {
+    await flush(); viewer.state.searchKeyword.value = 'l'; await flush()
+    viewer.state.activeMatch.value = 0
+    await viewer.state.onSearchEnter({ shiftKey: false })
+    assert.equal(viewer.state.activeMatch.value, 1)
+    await viewer.state.onSearchEnter({ shiftKey: true })
+    assert.equal(viewer.state.activeMatch.value, 0)
+    assert.deepEqual(keywords, [])
+    viewer.state.searchMode.value = 'filter'
+    await viewer.state.onSearchEnter({ shiftKey: false })
+    assert.deepEqual(keywords, ['l'])
+    assert.equal(viewer.state.filter.active.value, true)
+    viewer.state.closeSearchTools()
+    assert.equal(viewer.state.toolsVisible.value, false)
+    assert.equal(viewer.state.filter.active.value, true)
+  } finally { viewer.unmount() }
+})
+
+test('Ctrl+F inside the search input advances a match without invoking browser find', async () => {
+  const viewer = mountViewer(); const calls = []
+  try {
+    await flush(); viewer.state.searchKeyword.value = 'l'; await flush()
+    viewer.state.toolsVisible.value = true; viewer.state.activeMatch.value = 0
+    const input = { focus: () => calls.push('focus'), select: () => calls.push('select') }
+    viewer.state.searchInputRef.value = input
+    viewer.listeners.keydown({ key: 'f', ctrlKey: true, target: viewer.state.searchInputRef.value, preventDefault: () => calls.push('prevent'), stopPropagation: () => calls.push('stop') })
+    await flush()
+    assert.equal(viewer.state.activeMatch.value, 1)
+    assert.deepEqual(calls, ['prevent', 'stop'])
   } finally { viewer.unmount() }
 })
