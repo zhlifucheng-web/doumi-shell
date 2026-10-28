@@ -63,8 +63,8 @@
 
         <div v-else class="palette-empty">
           <el-icon class="palette-empty-ico"><Search /></el-icon>
-          <p>未找到匹配的主机、IP 或操作命令</p>
-          <span class="palette-empty-hint">支持按主机名、IP 地址（如 192.168.x.x）、用户名、操作命令筛选，或输入 ? 咨询 AI</span>
+          <p>未找到匹配的{{ fileContext ? '文件、' : '' }}主机、IP 或操作命令</p>
+          <span class="palette-empty-hint">{{ fileContext ? '支持按当前目录文件名、主机名、IP、用户名或操作命令筛选' : '支持按主机名、IP 地址（如 192.168.x.x）、用户名、操作命令筛选' }}，或输入 ? 咨询 AI</span>
         </div>
 
         <div class="palette-footer">
@@ -102,7 +102,8 @@ import {
 import { fetchSearchTargets } from '@/api/sshConsole'
 
 const props = defineProps({
-  modelValue: { type: Boolean, default: false }
+  modelValue: { type: Boolean, default: false },
+  fileContext: { type: Object, default: null }
 })
 
 const emit = defineEmits([
@@ -114,7 +115,7 @@ const emit = defineEmits([
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
 const placeholderText = computed(() =>
-  `搜索主机名、IP 地址、用户名、动作 (如 >split) 或输入 ? 询问 AI... (${isMac ? '⌘K' : 'Ctrl+K'})`
+  `搜索${props.fileContext ? '当前目录文件、' : ''}主机名、IP 地址、用户名、动作 (如 >split) 或输入 ? 询问 AI... (${isMac ? '⌘K' : 'Ctrl+K'})`
 )
 
 const query = ref('')
@@ -174,6 +175,20 @@ const filteredItems = computed(() => {
   // 2. Filter Hosts & Accounts by IP address, host name, username, remarks, and groups
   const matchedTargets = []
   const terms = q.split(/\s+/).filter(Boolean)
+
+  const context = props.fileContext
+  if (context && !q.startsWith('>')) {
+    const matches = (context.files || []).filter(file =>
+      terms.every(term => String(file.name).toLowerCase().includes(term)))
+    if (matches.length) {
+      results.push({ isHeader: true, label: `当前目录文件 (${matches.length}${matches.length > 50 ? '，显示前 50 项' : ''}) · ${context.path}` })
+      results.push(...matches.slice(0, 50).map(file => ({
+        id: `file-${file.name}`, type: 'file', label: file.name,
+        sub: context.path, icon: Document, file, fileContext: context
+      })))
+    }
+  }
+
 
   for (const item of searchTargets.value) {
     const hostAddr = String(item.hostAddress || '').toLowerCase()
@@ -302,6 +317,10 @@ function selectActive() {
 }
 
 function execute(item) {
+  if (item.type === 'file') {
+    if (item.fileContext === props.fileContext && props.fileContext?.openFile(item.file)) close()
+    return
+  }
   close()
   if (item.target) {
     emit('select-target', item.target)

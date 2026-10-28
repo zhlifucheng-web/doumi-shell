@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
 
 const THEME_KEY = 'doumi-theme-preference'
@@ -8,6 +8,8 @@ const defaultBackground = () => ({ color: '#eaf0f8', image: '', opacity: 90, ena
 export const useWorkspaceStore = defineStore('workspace', () => {
   const managedServer = ref(null)
   const fileLocation = ref(null)
+  // Active SFTP listing and viewer callback are session-only, never persisted.
+  const fileSearchContext = shallowRef(null)
   const preference = ref('system')
   const systemDark = ref(false)
   const background = ref(defaultBackground())
@@ -92,6 +94,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   return {
     managedServer,
     fileLocation,
+    fileSearchContext,
     preference,
     systemDark,
     background,

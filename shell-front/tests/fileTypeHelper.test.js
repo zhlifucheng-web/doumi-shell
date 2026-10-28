@@ -180,3 +180,9 @@ test('standalone viewer query parameters handle special characters and paths cle
   assert.equal(parsed.get('size'), '1048576')
   assert.equal(parsed.get('enc'), 'GBK')
 })
+
+test('GB18030 four-byte characters are not mislabeled as GBK before editing', () => {
+  const bytes = Uint8Array.of(0x94, 0x39, 0xfc, 0x36)
+  assert.equal(detectFileEncoding(bytes), 'GB18030')
+  assert.equal(decodeFileBuffer(bytes, detectFileEncoding(bytes)), '😀')
+})

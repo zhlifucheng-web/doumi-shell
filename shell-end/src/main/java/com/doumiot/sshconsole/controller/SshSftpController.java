@@ -3,6 +3,8 @@ package com.doumiot.sshconsole.controller;
 import com.doumiot.spring.result.NoWrap;
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
 import com.doumiot.sshconsole.service.SshSftpService;
+import com.doumiot.sshconsole.sftp.SshFileTextCodec;
+import com.doumiot.sshconsole.ssh.SshSessionRegistry;
 import com.doumiot.sshconsole.service.SshFolderTransferService;
 import com.doumiot.sshconsole.service.SshUploadService;
 import org.springframework.core.io.InputStreamResource;
@@ -36,6 +38,7 @@ public class SshSftpController {
     private SshSftpService sshSftpService;
     @Resource private SshFolderTransferService folderTransfer;
     @Resource private SshUploadService uploads;
+    @Resource private SshSessionRegistry sessions;
 
     @GetMapping("/folder/limits")
     public long folderLimits() { return folderTransfer.maxBytes(); }
@@ -102,6 +105,17 @@ public class SshSftpController {
             @RequestParam(defaultValue = "262144") int length,
             @RequestParam(defaultValue = "false") boolean fromEnd) throws IOException {
         return sshSftpService.readChunk(sessionToken, path, offset, length, fromEnd);
+    }
+
+    @NoWrap
+    @PostMapping("/encode-text")
+    public ResponseEntity<byte[]> encodeText(@RequestParam @NotBlank String sessionToken,
+            @RequestParam @NotBlank String encoding, @RequestParam(defaultValue = "false") boolean bom,
+            @RequestParam("file") MultipartFile file) throws IOException {
+        sessions.get(sessionToken);
+        if (file.getSize() > SshFileTextCodec.MAX_BYTES) throw new IOException("在线编辑文件超过 50 MB 限制");
+        byte[] encoded = SshFileTextCodec.encode(file.getBytes(), encoding, bom);
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_OCTET_STREAM).contentLength(encoded.length).body(encoded);
     }
 
     @PostMapping("/upload/start")

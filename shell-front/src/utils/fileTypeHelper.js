@@ -179,10 +179,11 @@ export function detectFileEncoding(buffer) {
   } catch {
     // If not valid UTF-8, check if valid GB18030 / GBK
     try {
-      new TextDecoder('gb18030', { fatal: true }).decode(bytes)
+      new TextDecoder('gbk', { fatal: true }).decode(bytes)
       return 'GBK'
     } catch {
-      return 'UTF-8'
+      try { new TextDecoder('gb18030', { fatal: true }).decode(bytes); return 'GB18030' }
+      catch { return 'UTF-8' }
     }
   }
 }

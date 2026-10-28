@@ -20,12 +20,15 @@
         </div>
 
         <div class="editor-toolbar">
+          <span class="encoding-label">打开编码</span>
           <el-select
-            v-model="selectedEncoding"
+            :model-value="selectedEncoding"
             size="small"
             class="encoding-select"
             @change="changeEncoding"
-            title="选择文件读取解析编码"
+            title="打开编码：按所选编码重新读取原始文件"
+            :disabled="loading || saving"
+            aria-label="打开编码"
           >
             <el-option
               v-for="item in ENCODING_OPTIONS"
@@ -33,6 +36,11 @@
               :label="item.label"
               :value="item.value"
             />
+          </el-select>
+
+          <span class="encoding-label">保存编码</span>
+          <el-select v-model="saveEncoding" @change="chooseSaveEncoding" size="small" class="encoding-select" title="保存编码：使用所选编码写入，不改变当前编辑内容" aria-label="保存编码" :disabled="loading || saving">
+            <el-option v-for="item in ENCODING_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
 
           <el-select
@@ -92,7 +100,7 @@
         <div class="status-right">
           <el-dropdown trigger="click" @command="changeEncoding">
             <span class="status-encoding-btn" title="点击切换文件读取编码">
-              {{ selectedEncoding }}
+              打开 {{ selectedEncoding }} / 保存 {{ saveEncoding }}
               <span class="caret-arrow">▾</span>
             </span>
             <template #dropdown>
@@ -143,7 +151,7 @@
           <el-button
             type="primary"
             :loading="saving"
-            :disabled="!isDirty && !saving"
+            :disabled="loading || (!isDirty && !saving)"
             @click="saveFile"
           >
             保存修改
@@ -165,7 +173,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { bracketMatching, defaultHighlightStyle, indentOnInput, StreamLanguage, syntaxHighlighting } from '@codemirror/language'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { useTheme } from '@/composables/useTheme'
-import { sftpBlob, sftpUpload } from '@/api/sshConsole'
+import { sftpBlob, sftpUpload, sftpEncodeText } from '@/api/sshConsole'
 import {
   getLanguageName,
   detectFileEncoding,
@@ -250,7 +258,7 @@ const loading = ref(false)
 const saving = ref(false)
 const isDirty = ref(false)
 const selectedLanguage = ref('text')
-const selectedEncoding = ref('UTF-8')
+const selectedEncoding = ref('UTF-8'), saveEncoding = ref('UTF-8'), savedEncoding = ref('UTF-8')
 const originalContent = ref('')
 const rawFileBuffer = ref(null)
 
@@ -263,7 +271,7 @@ const { effectiveDark: isDark } = useTheme()
 const themeCompartment = new Compartment()
 const languageCompartment = new Compartment()
 
-let editorView = null
+let editorView = null, editorGeneration = 0, saveEncodingExplicit = false
 
 const fullRemotePath = computed(() => {
   if (!props.file?.name) return ''
@@ -365,7 +373,7 @@ function initEditor(content = '') {
       EditorView.updateListener.of(update => {
         if (update.docChanged) {
           const currentText = update.state.doc.toString()
-          isDirty.value = currentText !== originalContent.value
+          isDirty.value = currentText !== originalContent.value || saveEncoding.value !== savedEncoding.value
           docLength.value = currentText.length
           lineCount.value = update.state.doc.lines
         }
@@ -392,6 +400,7 @@ function initEditor(content = '') {
 
 async function loadFileContent() {
   if (!props.sessionToken || !props.file?.name) return
+  const generation = ++editorGeneration
   loading.value = true
   isDirty.value = false
 
@@ -401,25 +410,28 @@ async function loadFileContent() {
   try {
     const blob = await sftpBlob(props.sessionToken, fullRemotePath.value)
     const arrayBuffer = await blob.arrayBuffer()
+    if (generation !== editorGeneration) return
     rawFileBuffer.value = arrayBuffer
 
     // Automatically detect encoding from buffer bytes & BOM
     const detectedEnc = detectFileEncoding(arrayBuffer)
-    selectedEncoding.value = detectedEnc
+    selectedEncoding.value = detectedEnc; saveEncoding.value = detectedEnc; savedEncoding.value = detectedEnc; saveEncodingExplicit = false
 
     const text = decodeFileBuffer(arrayBuffer, detectedEnc)
     originalContent.value = text
     await nextTick()
-    initEditor(text)
+    if (generation === editorGeneration) initEditor(text)
   } catch (err) {
-    ElMessage.error(err.message || '加载文件内容失败')
+    if (generation === editorGeneration) ElMessage.error(err.message || '加载文件内容失败')
   } finally {
-    loading.value = false
+    if (generation === editorGeneration) loading.value = false
   }
 }
 
+function chooseSaveEncoding(encoding) { saveEncodingExplicit = true; saveEncoding.value = encoding }
+
 async function changeEncoding(newEncoding) {
-  if (!newEncoding || (newEncoding === selectedEncoding.value && editorView)) return
+  if (loading.value || saving.value || !newEncoding || (newEncoding === selectedEncoding.value && editorView)) return
 
   if (isDirty.value) {
     try {
@@ -438,11 +450,12 @@ async function changeEncoding(newEncoding) {
   }
 
   selectedEncoding.value = newEncoding
+  if (!saveEncodingExplicit) saveEncoding.value = newEncoding
 
   if (rawFileBuffer.value) {
     const text = decodeFileBuffer(rawFileBuffer.value, newEncoding)
     originalContent.value = text
-    isDirty.value = false
+    isDirty.value = saveEncoding.value !== savedEncoding.value
     if (editorView) {
       editorView.dispatch({
         changes: { from: 0, to: editorView.state.doc.length, insert: text }
@@ -453,26 +466,35 @@ async function changeEncoding(newEncoding) {
 }
 
 async function saveFile() {
-  if (!editorView || saving.value) return
+  if (!editorView || saving.value || loading.value) return
   saving.value = true
 
-  const content = editorView.state.doc.toString()
+  const generation = editorGeneration, view = editorView, sessionToken = props.sessionToken
+  const content = view.state.doc.toString()
   const fileName = props.file?.name || 'file.txt'
   const parentDir = props.dir || '/'
 
   try {
-    const uploadFileObj = new File([content], fileName, { type: 'text/plain;charset=utf-8' })
-    await sftpUpload(props.sessionToken, parentDir, uploadFileObj)
+    const targetEncoding = saveEncoding.value
+    const raw = rawFileBuffer.value ? new Uint8Array(rawFileBuffer.value) : []
+    const bom = (raw[0] === 0xef && raw[1] === 0xbb && raw[2] === 0xbf) || (raw[0] === 0xff && raw[1] === 0xfe) || (raw[0] === 0xfe && raw[1] === 0xff)
+    const encoded = await sftpEncodeText(sessionToken, content, targetEncoding, bom)
+    const encodedBuffer = await encoded.arrayBuffer()
+    if (generation !== editorGeneration) return
+    const uploadFileObj = new File([encodedBuffer], fileName, { type: 'application/octet-stream' })
+    await sftpUpload(sessionToken, parentDir, uploadFileObj)
+    if (generation !== editorGeneration) return
 
     // Update in-memory buffer to latest saved content
-    rawFileBuffer.value = new TextEncoder().encode(content).buffer
+    rawFileBuffer.value = encodedBuffer
+    selectedEncoding.value = targetEncoding; savedEncoding.value = targetEncoding
 
     originalContent.value = content
-    isDirty.value = false
+    isDirty.value = editorView.state.doc.toString() !== content || saveEncoding.value !== savedEncoding.value
     ElMessage.success('保存成功')
     emit('saved', { path: parentDir, name: fileName })
   } catch (err) {
-    ElMessage.error(err.message || '保存失败，请重试')
+    if (generation === editorGeneration) ElMessage.error(err.message || '保存失败，请重试')
   } finally {
     saving.value = false
   }
@@ -487,7 +509,7 @@ function revertChanges() {
     changes: { from: 0, to: editorView.state.doc.length, insert: text }
   })
   originalContent.value = text
-  isDirty.value = false
+  isDirty.value = saveEncoding.value !== savedEncoding.value
   ElMessage.info('已恢复为初始内容')
 }
 
@@ -541,6 +563,8 @@ async function handleBeforeClose(done) {
   }
 }
 
+watch(saveEncoding, () => { isDirty.value = (editorView?.state.doc.toString() ?? originalContent.value) !== originalContent.value || saveEncoding.value !== savedEncoding.value })
+
 // Global Ctrl+S / Cmd+S prevention and save trigger
 function onGlobalKeydown(e) {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -557,6 +581,7 @@ watch(
     if (val && props.file) {
       loadFileContent()
     } else {
+      ++editorGeneration
       if (editorView) {
         editorView.destroy()
         editorView = null
@@ -564,7 +589,7 @@ watch(
       isDirty.value = false
       originalContent.value = ''
       rawFileBuffer.value = null
-      selectedEncoding.value = 'UTF-8'
+      selectedEncoding.value = 'UTF-8'; saveEncoding.value = 'UTF-8'; savedEncoding.value = 'UTF-8'
     }
   }
 )
@@ -578,6 +603,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  ++editorGeneration
   window.removeEventListener('keydown', onGlobalKeydown)
   if (editorView) {
     editorView.destroy()
@@ -666,6 +692,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
+.encoding-label { font-size: 12px; color: var(--el-text-color-secondary); white-space: nowrap; }
 .encoding-select {
   width: 140px;
 }
