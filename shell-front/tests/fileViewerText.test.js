@@ -52,3 +52,18 @@ test('incremental boundary search agrees with whole-text literal search across p
     }
   }
 })
+
+test('long filtered line marks omitted content and invalidates only its metadata-dependent block', async () => {
+  const { createViewerBlockRenderer } = await import('../src/utils/fileViewerText.js')
+  const render = createViewerBlockRenderer()
+  const first = { lineNumber: 1, text: 'hit visible', matched: true, truncated: false }
+  const second = { lineNumber: 2, text: 'other', matched: false }
+  const initial = render([first, second], 'hit', 0, true)
+  const changed = render([{ ...first, truncated: true }, second], 'hit', 0, true)
+  assert.match(changed[0].html, /超长行，部分内容省略/)
+  assert.match(changed[0].html, /data-line="1"/)
+  assert.match(changed[0].html, />hit<\/mark>/)
+  assert.doesNotMatch(initial[0].html, /部分内容省略/)
+  assert.equal(changed[1], initial[1])
+  assert.equal(changed.matchCount, 1)
+})

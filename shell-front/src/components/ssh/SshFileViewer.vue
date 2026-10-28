@@ -464,6 +464,7 @@ onBeforeUnmount(() => {
 .file-content :deep(.search-match.is-current) { background:#ff9800; outline:1px solid #b45309; }
 .file-content :deep(.filter-line) { display:inline-block; width:100%; padding-left:64px; position:relative; }
 .file-content :deep(.filter-line::before) { content:attr(data-line); position:absolute; left:0; width:50px; text-align:right; color:#888; user-select:none; -webkit-user-select:none; }
+.file-content :deep(.line-truncated-note) { color:var(--el-color-warning); user-select:none; -webkit-user-select:none; }
 .file-content :deep(.filter-line.is-matched::before) { color:var(--el-color-primary); }
 .file-content :deep(.line-gap) { color:#888; user-select:none; -webkit-user-select:none; }
 .edge-note { text-align:center; color:#888; padding:8px; user-select:none; }

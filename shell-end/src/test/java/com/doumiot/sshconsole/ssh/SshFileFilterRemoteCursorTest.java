@@ -21,6 +21,10 @@ class SshFileFilterRemoteCursorTest {
         assertEquals("hit",c.next("scan").getRows().get(0).getText()); assertTrue(sent.toString("UTF-8").endsWith("\nnext\n"));
         c.close();c.close();assertTrue(closed);assertThrows(IOException.class,()->c.next("scan"));
     }
+    @Test void preservesBoundedLongLinePreviewMetadata() throws Exception {
+        SshFileFilterRemoteCursor c=cursor("{\"type\":\"ready\",\"totalSize\":70000}\n{\"type\":\"batch\",\"rows\":[{\"lineNumber\":1,\"text\":\"late hit\",\"matched\":true,\"truncated\":true}],\"offset\":70000,\"totalSize\":70000,\"eof\":true,\"limited\":false}\n",Clock.systemUTC());
+        c.initialize(Collections.emptyMap());assertTrue(c.next("scan").getRows().get(0).isTruncated());
+    }
     @Test void propagatesRotationCodeAndClosesChannel() throws Exception {
         SshFileFilterRemoteCursor c=cursor("{\"type\":\"ready\",\"totalSize\":8}\n{\"type\":\"error\",\"code\":\"FILE_CHANGED\",\"message\":\"文件已改变\"}\n",Clock.systemUTC());
         c.initialize(Collections.emptyMap());

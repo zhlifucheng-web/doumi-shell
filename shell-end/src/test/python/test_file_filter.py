@@ -86,7 +86,7 @@ class FileFilterTest(unittest.TestCase):
         self.assertEqual(dict(type='ready', path=self.path, totalSize=7), session.ready)
         self.assertEqual([], select.select([session.process.stdout], [], [], 0)[0])
         batch = session.next()
-        self.assertEqual([dict(lineNumber=1, text='hit', matched=True)], batch['rows'])
+        self.assertEqual([dict(lineNumber=1, text='hit', matched=True, truncated=False)], batch['rows'])
         self.assertEqual((7, 7, True, False), (batch['offset'], batch['totalSize'], batch['eof'], batch['limited']))
         session.process.stdin.close()
         self.assertEqual(0, session.process.wait(timeout=5))
@@ -98,7 +98,7 @@ class FileFilterTest(unittest.TestCase):
             self.write(padding + '中文\r\n'.encode(encoding))
             session = Session(self, self.path, keyword='中文', encoding=encoding)
             rows, batches = session.all()
-            self.assertEqual([dict(lineNumber=131071, text='中文', matched=True)], rows)
+            self.assertEqual([dict(lineNumber=131071, text='中文', matched=True, truncated=False)], rows)
             self.assertGreaterEqual(len(batches), 2)
             previous = 0
             for batch in batches:
@@ -113,7 +113,7 @@ class FileFilterTest(unittest.TestCase):
             session = Session(self, self.path, keyword='中文', encoding=encoding)
             self.assertEqual([], session.next()['rows'])
             self.write(encoded[1:], mode='ab')
-            self.assertEqual([dict(lineNumber=1, text='中文', matched=True)], session.next()['rows'])
+            self.assertEqual([dict(lineNumber=1, text='中文', matched=True, truncated=False)], session.next()['rows'])
             session.close()
 
     def test_literal_metacharacters_paths_and_keywords_never_execute(self):
@@ -122,7 +122,7 @@ class FileFilterTest(unittest.TestCase):
         keyword = '.*$(touch ' + marker + ')'
         self.write(('other\n' + keyword + '\n').encode('utf-8'), path=path)
         session = Session(self, path, keyword=keyword)
-        self.assertEqual([dict(lineNumber=2, text=keyword, matched=True)], session.next()['rows'])
+        self.assertEqual([dict(lineNumber=2, text=keyword, matched=True, truncated=False)], session.next()['rows'])
         self.assertFalse(os.path.exists(marker))
 
     def test_overlapping_contexts_emit_each_completed_line_once(self):
@@ -139,11 +139,11 @@ class FileFilterTest(unittest.TestCase):
         self.assertEqual(['before', 'hit'], [row['text'] for row in session.next()['rows']])
         self.assertEqual([], session.next()['rows'])
         self.write(b' more\nafter', mode='ab')
-        self.assertEqual([dict(lineNumber=2, text='hit more', matched=True),
-                          dict(lineNumber=3, text='after', matched=False)], session.next()['rows'])
+        self.assertEqual([dict(lineNumber=2, text='hit more', matched=True, truncated=False),
+                          dict(lineNumber=3, text='after', matched=False, truncated=False)], session.next()['rows'])
         self.write(b' done\nlast\n', mode='ab')
-        self.assertEqual([dict(lineNumber=3, text='after done', matched=False),
-                          dict(lineNumber=4, text='last', matched=False)], session.next()['rows'])
+        self.assertEqual([dict(lineNumber=3, text='after done', matched=False, truncated=False),
+                          dict(lineNumber=4, text='last', matched=False, truncated=False)], session.next()['rows'])
 
     def test_java_style_case_comparison_does_not_expand_sharp_s(self):
         self.write('SS\nß\nẞ\nİ\nı\ni\n'.encode('utf-8'))
@@ -197,13 +197,94 @@ class FileFilterTest(unittest.TestCase):
             self.assertEqual('hit', session.next()['rows'][0]['text'])
             session.close()
 
-    def test_line_limit_counts_utf16_units_and_rejects_oversized_line(self):
-        for text in ('a' * 65537, '😀' * 32769):
-            self.write(text.encode('utf-8'))
-            session = Session(self, self.path)
-            result = session.next()
-            self.assertEqual('error', result['type'])
-            self.assertIn('65536', result['message'])
+    def test_long_unmatched_line_keeps_scanning_and_late_match_has_bounded_preview(self):
+        self.write(b'x' * (1024 * 1024 + 17) + b'\nhit\n')
+        session = Session(self, self.path)
+        rows, batches = session.all()
+        self.assertEqual([dict(lineNumber=2, text='hit', matched=True, truncated=False)], rows)
+        self.assertGreater(len(batches), 4)
+        self.write(b'x' * 70000 + b'hit' + b'y' * 70000 + b'\n')
+        session.close()
+        session = Session(self, self.path)
+        rows, batches = session.all()
+        self.assertEqual([dict(lineNumber=1, text='x' * 128 + 'hit' + 'y' * 65405,
+                               matched=True, truncated=True)], rows)
+
+    def test_late_case_insensitive_match_crosses_demand_boundary(self):
+        self.write(b'x' * (256 * 1024 - 1) + b'HiT' + b'z' * 20 + b'\n')
+        session = Session(self, self.path, caseSensitive=False)
+        rows, batches = session.all()
+        self.assertEqual([dict(lineNumber=1, text='x' * 128 + 'HiT' + 'z' * 20,
+                               matched=True, truncated=True)], rows)
+        self.assertGreater(len(batches), 1)
+
+    def test_maximum_keyword_is_visible_in_late_preview(self):
+        for keyword in ('A' * 65535 + 'B', '😀' * 32768):
+            self.write((('x' * (256 * 1024 - 32768)) + keyword + 'tail\n').encode('utf-8'))
+            session = Session(self, self.path, keyword=keyword)
+            rows, batches = session.all()
+            self.assertEqual([dict(lineNumber=1, text=keyword, matched=True, truncated=True)], rows)
+            self.assertGreater(len(batches), 1)
+            session.close()
+
+    def test_tail_crossing_preview_cap_updates_flags_without_duplicate_rows(self):
+        self.write(b'hit' + b'x' * 65533)
+        session = Session(self, self.path)
+        first = session.next()['rows']
+        self.assertEqual(False, first[0]['truncated'])
+        self.assertEqual([], session.next()['rows'])
+        self.write(b'x', mode='ab')
+        row = session.next()['rows'][0]
+        self.assertEqual(1, row['lineNumber'])
+        self.assertEqual(first[0]['text'], row['text'])
+        self.assertTrue(row['truncated'])
+        self.assertEqual([], session.next()['rows'])
+        self.write(b'\n', mode='ab')
+        self.assertEqual([], session.next()['rows'])
+
+    def test_context_preview_truncation_and_late_match_replaces_same_line(self):
+        self.write(b'hit\n' + b'x' * 70000)
+        session = Session(self, self.path, contextLines=2, keyword='hit')
+        rows = session.next()['rows']
+        self.assertEqual([1, 2], [row['lineNumber'] for row in rows])
+        self.assertEqual(dict(lineNumber=2, text='x' * 65536, matched=False, truncated=True), rows[1])
+        self.write(b'hit\n' + b'y' * 70000 + b'\nlast\n', mode='ab')
+        rows = session.next()['rows']
+        self.assertEqual([2, 3, 4], [row['lineNumber'] for row in rows])
+        self.assertEqual(dict(lineNumber=2, text='x' * 128 + 'hit', matched=True, truncated=True), rows[0])
+        self.assertEqual(dict(lineNumber=3, text='y' * 65536, matched=False, truncated=True), rows[1])
+
+    def test_long_utf16_preview_does_not_split_supplementary_character(self):
+        self.write(('😀' * 32769 + '\nhit\n').encode('utf-8'))
+        session = Session(self, self.path, contextLines=2)
+        rows = session.next()['rows']
+        self.assertEqual(dict(lineNumber=1, text='😀' * 32768, matched=False, truncated=True), rows[0])
+
+    def test_trailing_carriage_return_is_deferred_at_eof(self):
+        self.write(b'x' * 65536 + b'\r')
+        session = Session(self, self.path, contextLines=2, keyword='\r')
+        self.assertEqual([], session.next()['rows'])
+        self.write(b'\n', mode='ab')
+        self.assertEqual([], session.next()['rows'])
+        self.write(b'hit\r', mode='ab')
+        self.assertEqual([], session.next()['rows'])
+        self.write(b'z', mode='ab')
+        rows = session.next()['rows']
+        self.assertEqual([1, 2], [row['lineNumber'] for row in rows])
+        self.assertFalse(rows[0]['truncated'])
+        self.assertEqual('hit\rz', rows[1]['text'])
+        self.assertEqual([], session.next()['rows'])
+
+    def test_unmatched_long_line_retains_only_bounded_preview_and_match_overlap(self):
+        module = runpy.run_path(HELPER)
+        keyword = 'A' * 65535 + 'B'
+        scanner = module['LineScanner'](dict(keyword=keyword))
+        for unused in range(8):
+            self.assertEqual([], scanner.accept(('😀' * 65536).encode('utf-8'), False))
+            self.assertLessEqual(len(scanner.line.preview.encode('utf-16-le')) // 2, 65536)
+            self.assertLessEqual(len(scanner.line.overlap.encode('utf-16-le')) // 2, 65536 - 1 + 128)
+        rows = scanner.accept((keyword + '\n').encode('utf-8'), True)
+        self.assertEqual([dict(lineNumber=1, text=keyword, matched=True, truncated=True)], rows)
 
     def test_row_limit_stops_at_ten_thousand_and_no_more_reads(self):
         self.write(b'hit\n' * 10002)
@@ -231,7 +312,7 @@ class FileFilterTest(unittest.TestCase):
         self.write(b'x\n' * 600000 + b'hit\n')
         session = Session(self, self.path)
         rows, batches = session.all()
-        self.assertEqual([dict(lineNumber=600001, text='hit', matched=True)], rows)
+        self.assertEqual([dict(lineNumber=600001, text='hit', matched=True, truncated=False)], rows)
         self.assertGreater(len(batches), 4)
         self.assertLess(sum(len(json.dumps(batch)) for batch in batches), 4096)
 
@@ -255,7 +336,7 @@ class FileFilterTest(unittest.TestCase):
             except module['FilterError'] as error:
                 self.fail('ordinary concurrent append was rejected: ' + error.code)
             self.assertEqual('hit', batch['rows'][0]['text'])
-        self.assertEqual([dict(lineNumber=2, text='hit later', matched=True)], remote.next_batch()['rows'])
+        self.assertEqual([dict(lineNumber=2, text='hit later', matched=True, truncated=False)], remote.next_batch()['rows'])
 
     def test_raw_demand_budget_includes_verification_and_ready_reads_no_content(self):
         self.write(b'x\n' * 300000)

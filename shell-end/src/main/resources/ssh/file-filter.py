@@ -53,6 +53,36 @@ def utf16_length(text):
     return sum(2 if ord(character) > 0xffff else 1 for character in text)
 
 
+def utf16_clip(text, limit, suffix=False):
+    """Clip at a Unicode character boundary, including Python 2 narrow builds."""
+    units = 0
+    if suffix:
+        index = len(text)
+        while index:
+            width = 2 if ord(text[index - 1]) > 0xffff else 1
+            size = 1
+            if (0xdc00 <= ord(text[index - 1]) <= 0xdfff and index > 1 and
+                    0xd800 <= ord(text[index - 2]) <= 0xdbff):
+                width, size = 2, 2
+            if units + width > limit:
+                break
+            units += width
+            index -= size
+        return text[index:], units
+    index = 0
+    while index < len(text):
+        width = 2 if ord(text[index]) > 0xffff else 1
+        size = 1
+        if (0xd800 <= ord(text[index]) <= 0xdbff and index + 1 < len(text) and
+                0xdc00 <= ord(text[index + 1]) <= 0xdfff):
+            width, size = 2, 2
+        if units + width > limit:
+            break
+        units += width
+        index += size
+    return text[:index], units
+
+
 def simple_fold(text):
     result = []
     for character in text:
@@ -96,6 +126,68 @@ def decoder_for(encoding):
         raise invalid('远端 Python 不支持所选编码，请更换编码')
 
 
+class LineBuffer(object):
+    """Retain a bounded preview and overlap while searching the entire line."""
+    def __init__(self, keyword, case_sensitive, keyword_units):
+        self.keyword = keyword
+        self.keyword_units = keyword_units
+        self.case_sensitive = case_sensitive
+        self.preview = ''
+        self.preview_units = 0
+        self.preview_closed = False
+        self.seen_units = 0
+        self.matched = False
+        self.overlap = ''
+        self.pending_cr = False
+
+    def extend_preview(self, text):
+        if not self.preview_closed:
+            clipped, units = utf16_clip(text, MAX_LINE - self.preview_units)
+            self.preview += clipped
+            self.preview_units += units
+            self.preview_closed = len(clipped) < len(text) or self.preview_units == MAX_LINE
+
+    def append(self, text):
+        if not text:
+            return
+        if self.pending_cr:
+            text = '\r' + text
+        self.pending_cr = text.endswith('\r')
+        if self.pending_cr:
+            text = text[:-1]
+        if not text:
+            return
+        self.extend_preview(text)
+        if not self.matched:
+            window = self.overlap + text
+            haystack = window if self.case_sensitive else simple_fold(window)
+            start = haystack.find(self.keyword)
+            if start >= 0:
+                end = start + len(self.keyword)
+                match_end = self.seen_units - utf16_length(self.overlap) + utf16_length(window[:end])
+                self.matched = True
+                if match_end > MAX_LINE:
+                    before, unused = utf16_clip(window[:start], min(128, MAX_LINE - self.keyword_units), True)
+                    self.preview = ''
+                    self.preview_units = 0
+                    self.preview_closed = False
+                    self.extend_preview(before + window[start:])
+                # No matching carry is needed after the first match.
+                self.overlap = ''
+            else:
+                # Keyword units minus one retain every cross-chunk match;
+                # another 128 units retain the late snippet's lead-in.
+                self.overlap, unused = utf16_clip(window, self.keyword_units - 1 + 128, True)
+        self.seen_units += utf16_length(text)
+
+    def row(self, number):
+        return dict(lineNumber=number, text=self.preview, matched=self.matched,
+                    truncated=self.seen_units > MAX_LINE)
+
+    def has_content(self):
+        return self.seen_units > 0 or self.pending_cr
+
+
 class LineScanner(object):
     def __init__(self, config):
         keyword = config.get('keyword')
@@ -109,29 +201,27 @@ class LineScanner(object):
             raise invalid('上下文只能为 0 或 2 行')
         self.context = context
         self.keyword = keyword if self.case_sensitive else simple_fold(keyword)
+        self.keyword_units = utf16_length(self.keyword)
         self.decoder = decoder_for(config.get('encoding'))
-        self.line = ''
-        self.line_units = 0
+        self.line = LineBuffer(self.keyword, self.case_sensitive, self.keyword_units)
         self.line_number = 1
         self.before = collections.deque()
         self.after_until = 0
         self.last_emitted = 0
-        self.last_text = None
+        self.last_row = None
         self.last_length = 0
         self.count = 0
         self.result_chars = 0
         self.limited = False
 
     def current(self):
-        text = self.line[:-1] if self.line.endswith('\r') else self.line
-        haystack = text if self.case_sensitive else simple_fold(text)
-        return dict(lineNumber=self.line_number, text=text, matched=self.keyword in haystack)
+        return self.line.row(self.line_number)
 
     def emit(self, row, rows):
         number, text = row['lineNumber'], row['text']
         if self.limited or number < self.last_emitted:
             return
-        if number == self.last_emitted and text == self.last_text:
+        if number == self.last_emitted and row == self.last_row:
             return
         length = utf16_length(text)
         added = length - (self.last_length if number == self.last_emitted else 0)
@@ -143,7 +233,7 @@ class LineScanner(object):
             self.last_emitted = number
         self.result_chars += added
         self.last_length = length
-        self.last_text = text
+        self.last_row = row
         rows[number] = row
         if self.count >= MAX_ROWS or self.result_chars >= MAX_RESULT:
             self.limited = True
@@ -158,11 +248,7 @@ class LineScanner(object):
             self.emit(row, rows)
 
     def append(self, text):
-        units = utf16_length(text)
-        if units > MAX_LINE - self.line_units:
-            raise FilterError('LINE_LIMIT', '单行超过 65536 字符，无法继续筛选，请使用其他工具')
-        self.line += text
-        self.line_units += units
+        self.line.append(text)
 
     def accept(self, data, eof):
         rows = collections.OrderedDict()
@@ -187,10 +273,9 @@ class LineScanner(object):
                     self.before.append(completed)
                     while len(self.before) > self.context:
                         self.before.popleft()
-                self.line = ''
-                self.line_units = 0
+                self.line = LineBuffer(self.keyword, self.case_sensitive, self.keyword_units)
                 self.line_number += 1
-        if eof and self.line and not self.limited:
+        if eof and self.line.has_content() and not self.limited:
             self.select(self.current(), rows)
         return list(rows.values())
 

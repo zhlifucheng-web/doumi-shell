@@ -52,10 +52,10 @@ public class SshFileFilterRemoteCursor implements Closeable {
             for(JsonNode row:page.path("rows")) {
                 long line=number(row,"lineNumber");
                 if(line<=previous || !row.path("text").isTextual() || !row.path("matched").isBoolean()
-                        || row.path("text").textValue().length()>65536) throw new IOException("远端筛选行数据无效");
+                        || row.path("text").textValue().length()>65536 || (row.has("truncated") && !row.path("truncated").isBoolean())) throw new IOException("远端筛选行数据无效");
                 String text=row.path("text").textValue();chars+=text.length();
                 if(chars>4*1024*1024) throw new IOException("远端筛选结果超过内存限制");
-                rows.add(new SshFileFilterScanner.Row(line,text,row.path("matched").asBoolean()));previous=line;
+                rows.add(new SshFileFilterScanner.Row(line,text,row.path("matched").asBoolean(),row.path("truncated").asBoolean(false)));previous=line;
             }
             offset=end;size=total;
             return new SshFileFilterService.Batch(id,rows,end,total,page.path("eof").asBoolean(),page.path("limited").asBoolean());

@@ -56,7 +56,7 @@ export function createViewerBlockRenderer() {
           nextRemaining: Math.max(0, remaining - text.length, last ? consumed + last.index + last.length - text.length : 0) }
       }
       let block = old?.block
-      if (!block || old.scan !== scan || old.base !== count || old.current !== current || old.gap !== gap || old.matched !== item.matched) {
+      if (!block || old.scan !== scan || old.base !== count || old.current !== current || old.gap !== gap || old.matched !== item.matched || old.truncated !== item.truncated) {
         let end = 0, html = ''
         function mark(start, stop, index) {
           html += escapeHtml(text.slice(end, start)) + `<mark data-search-index="${index}" class="search-match${index === current ? ' is-current' : ''}">${escapeHtml(text.slice(start, stop))}</mark>`
@@ -68,10 +68,10 @@ export function createViewerBlockRenderer() {
           mark(start, Math.min(text.length, start + match.length), count + n)
         }
         html += escapeHtml(text.slice(end))
-        if (filtered && !item.separator) html = `${gap ? '<span class="line-gap" aria-hidden="true">⋯</span>\n' : ''}<span class="filter-line${item.matched ? ' is-matched' : ''}" data-line="${Number(item.lineNumber)}">${html}</span>`
+        if (filtered && !item.separator) html = `${gap ? '<span class="line-gap" aria-hidden="true">⋯</span>\n' : ''}<span class="filter-line${item.matched ? ' is-matched' : ''}" data-line="${Number(item.lineNumber)}">${item.truncated ? '<span class="line-truncated-note" title="整行已参与匹配，当前只展示有界片段">[超长行，部分内容省略] </span>' : ''}${html}</span>`
         block = { key, html }
       }
-      next.set(key, { scan, base: count, current, gap, matched: item.matched, block })
+      next.set(key, { scan, base: count, current, gap, matched: item.matched, truncated: item.truncated, block })
       blocks.push(block); count += scan.matches.length; remaining = scan.nextRemaining; previousLine = item.lineNumber
     }
     blocks.matchCount = count; cache = next
