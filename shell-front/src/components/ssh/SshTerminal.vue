@@ -102,6 +102,7 @@ import { enhanceTerminalOutput } from '@/utils/terminalColorEnhancer'
 import { useBackground } from '@/composables/useBackground'
 import { useTheme } from '@/composables/useTheme'
 import { useTerminalTheme } from '@/composables/useTerminalTheme'
+import { parseTabSwitchShortcut } from '@/utils/terminalTabShortcut'
 
 const { background } = useBackground()
 const { effectiveDark } = useTheme()
@@ -615,6 +616,15 @@ function connect() {
     scrollback: TERMINAL_SCROLLBACK
   })
   terminal.attachCustomKeyEventHandler((event) => {
+    const tabAction = parseTabSwitchShortcut(event)
+    if (tabAction) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.type === 'keydown') {
+        window.dispatchEvent(new CustomEvent('doumi-switch-terminal-tab', { detail: tabAction }))
+      }
+      return false
+    }
     if ((event.ctrlKey || event.metaKey) && (event.key?.toLowerCase() === 'k' || event.code === 'KeyK') && !event.altKey) {
       event.preventDefault()
       event.stopPropagation()

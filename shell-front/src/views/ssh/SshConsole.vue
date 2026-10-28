@@ -12,7 +12,7 @@
         <!-- Mini-Dock 模式 (侧栏收起时展示，保持轻快切换会话) -->
         <div v-show="sidebarCollapsed" class="aside-mini-dock">
           <el-tooltip
-            v-for="tab in terminalTabs"
+            v-for="(tab, idx) in terminalTabs"
             :key="`mini-${tab.tabId}`"
             placement="right"
             :show-after="50"
@@ -40,6 +40,10 @@
                   <span class="tab-tooltip-v" :class="tab.token ? 'is-online' : 'is-offline'">
                     {{ tab.token ? '● 已连接' : '○ 未连接' }}
                   </span>
+                </div>
+                <div v-if="idx < 9" class="tab-tooltip-row">
+                  <span class="tab-tooltip-k">快捷键:</span>
+                  <span class="tab-tooltip-v font-mono-code">{{ getTabShortcutLabel(idx + 1) }}</span>
                 </div>
                 <div class="tab-tooltip-hint">点击切换 · 右键更多操作</div>
               </div>
@@ -360,6 +364,10 @@
                                     {{ tab.token ? '● 已连接' : '○ 未连接' }}
                                   </span>
                                 </div>
+                                <div v-if="idx < 9" class="tab-tooltip-row">
+                                  <span class="tab-tooltip-k">快捷键:</span>
+                                  <span class="tab-tooltip-v font-mono-code">{{ getTabShortcutLabel(idx + 1) }}</span>
+                                </div>
                                 <div class="tab-tooltip-hint">滚轮滑动 · 右键更多操作</div>
                               </div>
                             </template>
@@ -399,7 +407,7 @@
                             </div>
                             <div class="dropdown-tabs-list">
                               <el-dropdown-item
-                                v-for="tab in terminalTabs"
+                                v-for="(tab, idx) in terminalTabs"
                                 :key="`menu-${tab.tabId}`"
                                 :command="{ action: 'activate', tabId: tab.tabId }"
                                 :class="{ 'is-active': activeTerminalId === tab.tabId }"
@@ -411,6 +419,7 @@
                                   <span v-if="getTabHostAddress(tab)" class="dropdown-tab-ip font-mono-code">{{ getTabHostAddress(tab) }}</span>
                                 </div>
                                 <div class="dropdown-item-right">
+                                  <span v-if="idx < 9" class="dropdown-shortcut-badge font-mono-code">Ctrl+{{ idx + 1 }}</span>
                                   <el-icon v-if="activeTerminalId === tab.tabId" class="active-check"><Check /></el-icon>
                                   <button
                                     type="button"
@@ -833,6 +842,7 @@ import SshMonitorPanel from '@/components/ssh/SshMonitorPanel.vue'
 import ScriptManagement from '@/components/ssh/ScriptManagement.vue'
 import SshProcessPanel from '@/components/ssh/SshProcessPanel.vue'
 import SshDiskPanel from '@/components/ssh/SshDiskPanel.vue'
+import { getTabShortcutLabel, parseTabSwitchShortcut, resolveTargetTab } from '@/utils/terminalTabShortcut'
 import {
   createAccount,
   createGroup,
@@ -1205,12 +1215,40 @@ watch(filterText, async (val) => {
   treeRef.value?.filter(val)
 })
 
+function handleTabSwitchAction(action) {
+  if (!action || !terminalTabs.value.length) return
+  const target = resolveTargetTab(terminalTabs.value, activeTerminalId.value, action)
+  if (!target) return
+  if (target.tabId !== activeTerminalId.value) {
+    activateTerminalTab(target.tabId, true)
+  } else {
+    terminalRefs.get(target.tabId)?.focusTerminal?.()
+  }
+}
+
+function onSwitchTerminalTabEvent(event) {
+  if (event?.detail) {
+    handleTabSwitchAction(event.detail)
+  }
+}
+
+function onGlobalTabSwitchKeydown(event) {
+  if (event.defaultPrevented) return
+  const action = parseTabSwitchShortcut(event)
+  if (action) {
+    event.preventDefault()
+    handleTabSwitchAction(action)
+  }
+}
+
 onMounted(() => {
   restoreSavedAccount()
   void loadSearchTargets()
   window.addEventListener('doumi-configuration-imported', refreshTree)
   window.addEventListener('doumi-open-account', onGlobalOpenAccount)
   window.addEventListener('doumi-terminal-action', onGlobalTerminalAction)
+  window.addEventListener('doumi-switch-terminal-tab', onSwitchTerminalTabEvent)
+  window.addEventListener('keydown', onGlobalTabSwitchKeydown)
   window.addEventListener('click', closeContextMenu)
   window.addEventListener('blur', closeContextMenu)
   window.addEventListener('resize', checkScrollOverflow)
@@ -1223,6 +1261,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('doumi-configuration-imported', refreshTree)
   window.removeEventListener('doumi-open-account', onGlobalOpenAccount)
   window.removeEventListener('doumi-terminal-action', onGlobalTerminalAction)
+  window.removeEventListener('doumi-switch-terminal-tab', onSwitchTerminalTabEvent)
+  window.removeEventListener('keydown', onGlobalTabSwitchKeydown)
   window.removeEventListener('click', closeContextMenu)
   window.removeEventListener('blur', closeContextMenu)
   window.removeEventListener('resize', checkScrollOverflow)
@@ -2001,7 +2041,7 @@ function openAdditionalTerminalTab() {
   nextTick(scrollToActiveTab)
 }
 
-async function activateTerminalTab(tabId) {
+async function activateTerminalTab(tabId, shouldFocus = false) {
   activeTerminalId.value = tabId
   const tab = terminalTabs.value.find(item => item.tabId === tabId)
   sessionToken.value = tab?.token || ''
@@ -2014,7 +2054,12 @@ async function activateTerminalTab(tabId) {
     await persistAccountSelection(node)
   }
   persistTerminalTabs()
-  nextTick(scrollToActiveTab)
+  nextTick(() => {
+    scrollToActiveTab()
+    if (shouldFocus) {
+      terminalRefs.get(tabId)?.focusTerminal?.()
+    }
+  })
 }
 
 function closeTerminalTab(tabId) {
@@ -3486,6 +3531,15 @@ async function isHostInsideGroup(hostId, groupId) {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+}
+.dropdown-shortcut-badge {
+  font-size: 10px;
+  color: var(--ws-text-muted);
+  background: var(--ws-bg-card);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--ws-border);
+  line-height: 1.2;
 }
 .active-check {
   color: var(--ws-accent);
