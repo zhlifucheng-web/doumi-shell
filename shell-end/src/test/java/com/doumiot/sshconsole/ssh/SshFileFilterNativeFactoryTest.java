@@ -33,6 +33,31 @@ class SshFileFilterNativeFactoryTest {
             assertNull(attempt.cursor);assertTrue(attempt.reason.contains("missing-grep"));
         }finally{factory.closeAll();}
     }
+    @Test void emptyCheckReplyWithRemoteExitThreeReportsFileChanged() throws Exception {
+        Fixture f=new Fixture();SshFileFilterRemoteFactory.Attempt attempt=f.open();
+        try {
+            when(f.controlProcess.getInputStream()).thenAnswer(call->new ByteArrayInputStream(new byte[0]));when(f.controlProcess.isEOF()).thenReturn(true);when(f.controlProcess.getExitStatus()).thenReturn(3);
+            com.doumiot.sshconsole.sftp.FileTailRecoveryException changed=assertThrows(com.doumiot.sshconsole.sftp.FileTailRecoveryException.class,attempt.cursor::verifySnapshot);
+            assertEquals("FILE_CHANGED",changed.getCode());
+        }finally{f.factory.closeAll();}
+    }
+    @Test void checkTransportFailurePreservesCauseAndUsesRecoveryInsteadOfFileChanged() throws Exception {
+        Fixture f=new Fixture();SshFileFilterRemoteFactory.Attempt attempt=f.open();IOException wire=new IOException("wire broken");
+        try {
+            when(f.client.isConnected()).thenReturn(true);
+            when(f.controlProcess.getInputStream()).thenReturn(new InputStream(){public int available() throws IOException{throw wire;}public int read(){return -1;}});
+            com.doumiot.sshconsole.sftp.FileTailRecoveryException failure=assertThrows(com.doumiot.sshconsole.sftp.FileTailRecoveryException.class,attempt.cursor::verifySnapshot);
+            assertEquals("TAIL_EXPIRED",failure.getCode());assertSame(wire,failure.getCause());
+        }finally{f.factory.closeAll();}
+    }
+    @Test void emptySuccessfulCheckReplyIsAProtocolFailureAndNeverFileChanged() throws Exception {
+        Fixture f=new Fixture();SshFileFilterRemoteFactory.Attempt attempt=f.open();
+        try {
+            when(f.client.isConnected()).thenReturn(true);when(f.controlProcess.getInputStream()).thenAnswer(call->new ByteArrayInputStream(new byte[0]));when(f.controlProcess.isEOF()).thenReturn(true);
+            com.doumiot.sshconsole.sftp.FileTailRecoveryException failure=assertThrows(com.doumiot.sshconsole.sftp.FileTailRecoveryException.class,attempt.cursor::verifySnapshot);
+            assertEquals("TAIL_EXPIRED",failure.getCode());assertNotNull(failure.getCause());
+        }finally{f.factory.closeAll();}
+    }
     @Test void closingControllersKeepTheirCapacityUntilQueuedCleanupCompletes() throws Exception {
         Fixture f=new Fixture();java.util.List<Runnable> queued=new java.util.ArrayList<>();
         java.util.concurrent.ExecutorService executor=mock(java.util.concurrent.ExecutorService.class);
@@ -90,9 +115,9 @@ class SshFileFilterNativeFactoryTest {
         }finally{f.factory.closeAll();}
     }
     private static final class Fixture {
-        final SshFileFilterRemoteFactory factory;final Session.Command nativeProcess=mock(Session.Command.class);
+        final SshFileFilterRemoteFactory factory;final Session.Command nativeProcess=mock(Session.Command.class),controlProcess=mock(Session.Command.class);final SSHClient client=mock(SSHClient.class);
         Fixture() throws Exception {
-            SshSessionRegistry registry=mock(SshSessionRegistry.class);SSHClient client=mock(SSHClient.class);Session nativeSession=mock(Session.class),controlSession=mock(Session.class);Session.Command controlProcess=mock(Session.Command.class);
+            SshSessionRegistry registry=mock(SshSessionRegistry.class);Session nativeSession=mock(Session.class),controlSession=mock(Session.class);
             SshSessionRegistry.SessionEntry entry=new SshSessionRegistry.SessionEntry();entry.setClient(client);when(registry.get("owner")).thenReturn(entry);
             when(client.startSession()).thenAnswer(new org.mockito.stubbing.Answer<Session>(){int n;public Session answer(org.mockito.invocation.InvocationOnMock call){return n++%2==0?nativeSession:controlSession;}});
             // Native/probe pairs are used during startup; cleanup uses a control command as well.

@@ -14,7 +14,11 @@ export function useViewerFilter({ source, api, onError }) {
     if (entry) { try { await api.cancel(entry.id, entry.token) } catch { /* idle TTL is the fallback */ } }
   }
   function merge(page) {
-    if ((page.mode === 'native' || page.mode === 'sftp') && (!readyForTail.value || page.reason)) { mode.value = page.mode; reason.value = typeof page.reason === 'string' ? page.reason : '' }
+    if ((page.mode === 'native' || page.mode === 'sftp') && (!readyForTail.value || page.reason)) {
+      if (typeof page.reason === 'string') reason.value = page.reason
+      else if (page.mode !== mode.value) reason.value = ''
+      mode.value = page.mode
+    }
     if (pendingReplacement) {
       if (pendingReplacement.truncated) history.value.push(...rows.value, { renderKey: `reset:${segment}`, text: '===================truncated===================', separator: true })
       rows.value = []; pendingReplacement = null

@@ -61,7 +61,16 @@ public class SshFileFilterRemoteFactory {
             if(!control.send("PROBE"))return Attempt.fallback("远端进程组暂停控制不可用，使用 SFTP 扫描");
             final Control owner=control;final Session.Command nativeProcess=process;
             SshFileFilterRemoteCursor cursor=new SshFileFilterRemoteCursor(process.getInputStream(),()->!nativeProcess.isOpen() || nativeProcess.isEOF(),()->owner.request(2),snapshot,scanner,keyword,paused->owner.request(paused?1:0));
-            cursor.guard=()->{if(!owner.send("CHECK"))throw new com.doumiot.sshconsole.sftp.FileTailRecoveryException("FILE_CHANGED","原生筛选文件身份已改变，请重新筛选");};
+            cursor.guard=()->{
+                final boolean valid;
+                try{valid=owner.send("CHECK");}
+                catch(IOException failure){
+                    com.doumiot.sshconsole.sftp.FileTailRecoveryException recovery=new com.doumiot.sshconsole.sftp.FileTailRecoveryException(
+                            owner.client.isConnected()?"TAIL_EXPIRED":"SSH_DISCONNECTED","原生筛选文件校验通道已中断，请重新筛选");
+                    recovery.initCause(failure);throw recovery;
+                }
+                if(!valid)throw new com.doumiot.sshconsole.sftp.FileTailRecoveryException("FILE_CHANGED","原生筛选文件身份已改变，请重新筛选");
+            };
             cursor.cleanupGuard=()->{try{if(!owner.done.await(12,TimeUnit.SECONDS))throw new IOException("原生进程组清理超时，请重新筛选");if(owner.cleanupFailure!=null)throw owner.cleanupFailure;}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IOException("原生进程清理中断",interrupted);}};
             control.cursor=cursor;cursors.add(cursor);
             stdin.write("go\n".getBytes(StandardCharsets.US_ASCII));stdin.flush();
@@ -92,8 +101,18 @@ public class SshFileFilterRemoteFactory {
             try(Session channel=client.startSession()){
                 Session.Command command=channel.exec(controlCommand);
                 command.getOutputStream().write((pid+"\n"+ticks+"\n"+nonce+"\n"+action+"\n"+child+"\n").getBytes(StandardCharsets.US_ASCII));command.getOutputStream().flush();
-                String answer=readLine(command.getInputStream(),command,5000);command.join(5,TimeUnit.SECONDS);
-                return "OK".equals(answer)&&Integer.valueOf(0).equals(command.getExitStatus());
+                String answer=null;
+                try{answer=readLine(command.getInputStream(),command,5000);}
+                catch(ReplyEndedException ended){
+                    // CHECK deliberately exits nonzero without a reply when identity changed.
+                    command.join(5,TimeUnit.SECONDS);
+                    Integer status=command.getExitStatus();if(status!=null&&status!=0)return false;
+                    throw ended;
+                }
+                command.join(5,TimeUnit.SECONDS);Integer status=command.getExitStatus();
+                if(status!=null&&status!=0)return false;
+                if(Integer.valueOf(0).equals(status)&&"OK".equals(answer))return true;
+                throw new IOException("远端原生进程控制响应或退出状态无效");
             }
         }
         void request(int state) {
@@ -128,10 +147,11 @@ public class SshFileFilterRemoteFactory {
     private static String readLine(InputStream input,Session.Command process,long timeout) throws IOException {
         long end=System.nanoTime()+timeout*1_000_000L;ByteArrayOutputStream out=new ByteArrayOutputStream();
         while(System.nanoTime()<end){
-            if(input.available()>0){int c=input.read();if(c=='\n')return new String(out.toByteArray(),StandardCharsets.US_ASCII);if(c<0)break;if(out.size()>=4096)throw new IOException("远端能力响应过大");out.write(c);}
-            else{if(!process.isOpen()||process.isEOF())break;try{Thread.sleep(10);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IOException("原生筛选启动中断",interrupted);}}
-        }throw new IOException("远端能力探测超时或已结束");
+            if(input.available()>0){int c=input.read();if(c=='\n')return new String(out.toByteArray(),StandardCharsets.US_ASCII);if(c<0)throw new ReplyEndedException();if(out.size()>=4096)throw new IOException("远端能力响应过大");out.write(c);}
+            else{if(!process.isOpen()||process.isEOF())throw new ReplyEndedException();try{Thread.sleep(10);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IOException("原生筛选启动中断",interrupted);}}
+        }throw new IOException("远端能力探测超时");
     }
+    private static final class ReplyEndedException extends IOException {ReplyEndedException(){super("远端进程已结束但未返回完整响应");}}
     private static String b64(byte[] bytes){return Base64.getEncoder().encodeToString(bytes);}
     private static String quote(String value){return "'"+value.replace("'","'\"'\"'")+"'";}
     private static String resource(String name) throws IOException {

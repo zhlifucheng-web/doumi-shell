@@ -165,3 +165,9 @@ test('normal SFTP Tail after native history does not mislabel the completed hist
   assert.equal(s.filter.applyTail({scanId:'a',rows:[],offset:20,totalSize:20,eof:true,mode:'sftp',reason:null}),true)
   assert.equal(s.filter.mode.value,'native');await s.filter.close()
 })
+
+test('initial SFTP eligibility reason remains visible when ordinary pages omit a new reason', async () => {
+  const s=fixture({start:async()=>({scanId:'a',mode:'sftp',reason:'所选编码使用SFTP扫描'})}),run=s.filter.start({keyword:'x'}),ws=await s.open()
+  s.data(ws,{mode:'sftp',reason:null});await flush();assert.equal(s.filter.reason.value,'所选编码使用SFTP扫描')
+  ws.frame({type:'complete'});await run;await s.filter.close()
+})
