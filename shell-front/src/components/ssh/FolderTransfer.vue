@@ -24,7 +24,7 @@
 import { ref, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { sftpDownloadLarge, sftpDownload, sftpFolderTree, sftpFolderUpload, sftpFolderLimit, sftpFolderMkdir } from '@/api/sshConsole'
-const props=defineProps({sessionToken:String,path:String})
+const props=defineProps({sessionToken:String,path:String,ownerUid:Number,ownerGid:Number,ownershipRequested:Boolean,ownershipAvailable:Boolean})
 const emit=defineEmits(['uploaded'])
 const canPick=!!window.showDirectoryPicker
 const folderInput=ref(),showUpload=ref(false),showDownload=ref(false),compressed=ref(true),downloadTarget=ref(null),busy=ref(false),percent=ref(0),status=ref('')
@@ -36,10 +36,25 @@ watch(busy, value => {
 onBeforeUnmount(()=>window.removeEventListener('beforeunload',warnBeforeLeave))
 const join=(base,name)=>`${base.replace(/\/$/,'')}/${name}`
 function openDownload(row){if(busy.value)return;downloadTarget.value={name:row.name,path:join(props.path,row.name)};showDownload.value=true}
-async function uploadFolderEntries(entries) {
+let pendingUploadSnapshot = null
+function captureUpload() {
+  if (!props.sessionToken || !props.path?.startsWith('/') || props.path.includes('\0')) {
+    ElMessage.warning('请等待文件会话和绝对目录加载完成后上传')
+    return null
+  }
+  if (props.ownershipRequested && (!props.ownershipAvailable || ![props.ownerUid, props.ownerGid].every(id => Number.isInteger(id) && id >= 0 && id <= 2147483647))) {
+    ElMessage.warning('无法确认终端用户 UID/GID，请等待检测成功或取消上传归属选项')
+    return null
+  }
+  return {token:props.sessionToken,path:props.path,ownership:props.ownershipRequested?{ownerUid:props.ownerUid,ownerGid:props.ownerGid}:{}}
+}
+async function uploadFolderEntries(entries, captured) {
   if (!entries || !entries.length) return
+  if (busy.value) { ElMessage.warning('请等待当前文件夹传输完成'); return }
+  const snapshot = captured || captureUpload()
+  if (!snapshot) return
   try {
-    await upload(entries, props.sessionToken, props.path, compressed.value)
+    await upload(entries, snapshot.token, snapshot.path, compressed.value, { ...snapshot.ownership })
   } catch (e) {
     ElMessage.error(e.message || '文件夹上传失败')
   } finally {
@@ -48,8 +63,10 @@ async function uploadFolderEntries(entries) {
 }
 defineExpose({openDownload, uploadFolderEntries})
 async function chooseUpload(){
-  if(!canPick){folderInput.value.value='';folderInput.value.click();return}
-  const token=props.sessionToken,path=props.path,zip=compressed.value
+  const snapshot=captureUpload()
+  if(!snapshot)return
+  if(!canPick){pendingUploadSnapshot={...snapshot,compress:compressed.value};folderInput.value.value='';folderInput.value.click();return}
+  const {token,path,ownership}=snapshot,zip=compressed.value
   try {
     const root=await window.showDirectoryPicker({mode:'read'}),entries=[]
     busy.value=true;percent.value=0;status.value='正在读取文件夹…'
@@ -62,15 +79,19 @@ async function chooseUpload(){
         else {entries.push({name:`${prefix}/${handle.name}`,file:await handle.getFile()});if(entries.length>10000)throw new Error('文件夹超过 10000 项')}
       }
     }
-    await walk(root,root.name);await upload(entries,token,path,zip)
+    await walk(root,root.name);await upload(entries,token,path,zip,ownership)
   }catch(e){failure(e)}finally{busy.value=false}
 }
 async function fallbackUpload(event){
   const entries=Array.from(event.target.files||[]).map(file=>({name:file.webkitRelativePath,file}))
-  if(!entries.length)return
-  try{await upload(entries,props.sessionToken,props.path,compressed.value)}catch(e){failure(e)}finally{busy.value=false}
+  const snapshot=pendingUploadSnapshot || captureUpload()
+  pendingUploadSnapshot=null
+  if(!entries.length || !snapshot)return
+  try{await upload(entries,snapshot.token,snapshot.path,snapshot.compress ?? compressed.value,snapshot.ownership)}catch(e){failure(e)}finally{busy.value=false}
 }
-async function upload(entries,token,path,compress){
+async function upload(entries,token,path,compress,ownership={}){
+  const warnings=new Set()
+  const record=result=>{if(result?.warning)warnings.add(result.warning)}
   if(entries.length>10000)throw new Error('文件夹超过 10000 项')
   busy.value=true;percent.value=0;status.value='准备上传…'
   const max=await sftpFolderLimit(),total=entries.reduce((sum,e)=>sum+(e.file?.size||0),0)
@@ -80,16 +101,17 @@ async function upload(entries,token,path,compress){
     for(const entry of entries){if(entry.dir)zip.folder(entry.name);else zip.file(entry.name,entry.file)}
     status.value='正在本机压缩文件夹…'
     const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}},p=>percent.value=Math.round(p.percent/2))
-    status.value='上传并还原文件夹…';await sftpFolderUpload(token,path,new File([blob],'folder.zip'),{archive:true})
+    status.value='上传并还原文件夹…';record(await sftpFolderUpload(token,path,new File([blob],'folder.zip'),{archive:true,...ownership}))
   }else{
     for(let i=0;i<entries.length;i++){
       const entry=entries[i];status.value=`正在上传 ${entry.name}`
-      if(entry.dir)await sftpFolderMkdir(token,path,entry.name)
-      else await sftpFolderUpload(token,path,entry.file,{relativePath:entry.name})
+      if(entry.dir)record(await sftpFolderMkdir(token,path,entry.name,ownership))
+      else record(await sftpFolderUpload(token,path,entry.file,{relativePath:entry.name,...ownership}))
       percent.value=Math.round((i+1)/entries.length*100)
     }
   }
-  percent.value=100;showUpload.value=false;emit('uploaded');ElMessage.success('文件夹上传完成')
+  percent.value=100;showUpload.value=false;emit('uploaded',{token,path});ElMessage.success('文件夹上传完成')
+  if(warnings.size)ElMessage.warning(`文件夹已上传，部分归属设置未完成：${[...warnings].join('；')}`)
 }
 async function download(){
   const token=props.sessionToken,target=downloadTarget.value,compress=compressed.value

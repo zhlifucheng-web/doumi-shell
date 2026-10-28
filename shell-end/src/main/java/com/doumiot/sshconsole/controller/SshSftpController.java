@@ -4,6 +4,7 @@ import com.doumiot.spring.result.NoWrap;
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
 import com.doumiot.sshconsole.service.SshSftpService;
 import com.doumiot.sshconsole.sftp.SshFileTextCodec;
+import com.doumiot.sshconsole.sftp.SftpStreams;
 import com.doumiot.sshconsole.ssh.SshSessionRegistry;
 import com.doumiot.sshconsole.service.SshFolderTransferService;
 import com.doumiot.sshconsole.service.SshUploadService;
@@ -43,10 +44,14 @@ public class SshSftpController {
     @GetMapping("/folder/limits")
     public long folderLimits() { return folderTransfer.maxBytes(); }
 
+    public void folderMkdir(String sessionToken,String path,String relativePath) throws IOException {
+        folderMkdir(sessionToken,path,relativePath,null,null);
+    }
     @PostMapping("/folder/mkdir")
-    public void folderMkdir(@RequestParam @NotBlank String sessionToken,@RequestParam(required=false) String path,
-            @RequestParam @NotBlank String relativePath) throws IOException {
-        folderTransfer.mkdir(sessionToken,path,relativePath);
+    public SftpStreams.UploadResult folderMkdir(@RequestParam @NotBlank String sessionToken,@RequestParam(required=false) String path,
+            @RequestParam @NotBlank String relativePath,@RequestParam(required=false) Long ownerUid,
+            @RequestParam(required=false) Long ownerGid) throws IOException {
+        return folderTransfer.mkdir(sessionToken,path,relativePath,ownerUid,ownerGid);
     }
 
     @GetMapping("/folder/tree")
@@ -68,12 +73,16 @@ public class SshSftpController {
                 .contentLength(size).body(body);
     }
 
+    public void folderUpload(String sessionToken,String path,MultipartFile file,boolean archive,String relativePath) throws IOException {
+        folderUpload(sessionToken,path,file,archive,relativePath,null,null);
+    }
     @PostMapping("/folder/upload")
-    public void folderUpload(@RequestParam @NotBlank String sessionToken,@RequestParam(required=false) String path,
+    public SftpStreams.UploadResult folderUpload(@RequestParam @NotBlank String sessionToken,@RequestParam(required=false) String path,
             @RequestParam("file") MultipartFile file,@RequestParam(defaultValue="false") boolean archive,
-            @RequestParam(required=false) String relativePath) throws IOException {
-        if(archive)folderTransfer.uploadArchive(sessionToken,path,file);
-        else folderTransfer.uploadFile(sessionToken,path,relativePath,file);
+            @RequestParam(required=false) String relativePath,@RequestParam(required=false) Long ownerUid,
+            @RequestParam(required=false) Long ownerGid) throws IOException {
+        if(archive)return folderTransfer.uploadArchive(sessionToken,path,file,ownerUid,ownerGid);
+        return folderTransfer.uploadFile(sessionToken,path,relativePath,file,ownerUid,ownerGid);
     }
 
     @GetMapping("/directories")
@@ -118,11 +127,15 @@ public class SshSftpController {
         return ResponseEntity.ok().contentType(MediaType.APPLICATION_OCTET_STREAM).contentLength(encoded.length).body(encoded);
     }
 
+    public String startUpload(String sessionToken,String path,String name,long total) throws IOException {
+        return startUpload(sessionToken,path,name,total,null,null);
+    }
     @PostMapping("/upload/start")
     public String startUpload(@RequestParam @NotBlank String sessionToken,
             @RequestParam(required=false) String path, @RequestParam @NotBlank String name,
-            @RequestParam long total) throws IOException {
-        return uploads.start(sessionToken, path, name, total);
+            @RequestParam long total,@RequestParam(required=false) Long ownerUid,
+            @RequestParam(required=false) Long ownerGid) throws IOException {
+        return uploads.start(sessionToken, path, name, total, ownerUid, ownerGid);
     }
 
     @PostMapping("/upload/chunk")
@@ -132,10 +145,13 @@ public class SshSftpController {
         uploads.chunk(sessionToken, uploadId, offset, file);
     }
 
+    public void completeUpload(String sessionToken,String uploadId) throws IOException {
+        uploads.complete(sessionToken,uploadId);
+    }
     @PostMapping("/upload/complete")
-    public void completeUpload(@RequestParam @NotBlank String sessionToken,
+    public SftpStreams.UploadResult completeUploadResult(@RequestParam @NotBlank String sessionToken,
             @RequestParam @NotBlank String uploadId) throws IOException {
-        uploads.complete(sessionToken, uploadId);
+        return uploads.completeResult(sessionToken, uploadId);
     }
 
     @PostMapping("/upload/cancel")
@@ -144,12 +160,16 @@ public class SshSftpController {
         uploads.cancel(sessionToken, uploadId);
     }
 
+    public void upload(String sessionToken,String path,MultipartFile file) throws IOException {
+        upload(sessionToken,path,file,null,null);
+    }
     @PostMapping("/upload")
-    public void upload(
+    public SftpStreams.UploadResult upload(
             @RequestParam @NotBlank String sessionToken,
             @RequestParam(required = false) String path,
-            @RequestParam("file") MultipartFile file) throws IOException {
-        sshSftpService.upload(sessionToken, path, file);
+            @RequestParam("file") MultipartFile file,@RequestParam(required=false) Long ownerUid,
+            @RequestParam(required=false) Long ownerGid) throws IOException {
+        return sshSftpService.upload(sessionToken, path, file, ownerUid, ownerGid);
     }
 
     @PostMapping("/mkdir")

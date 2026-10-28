@@ -41,6 +41,12 @@
       </el-popover>
     </div>
     <template v-else>
+      <div class="terminal-file-context">
+        <el-checkbox v-model="followTerminal">跟随终端目录</el-checkbox>
+        <span>文件身份：{{ terminalContext?.fileUser || '待检测' }} · 终端用户（最近检测）：{{ terminalContext?.terminalUser || '未知' }}</span>
+        <el-checkbox v-model="assignUploadOwner" :disabled="!canAssignOwner">上传后归属终端用户</el-checkbox>
+        <span v-if="contextMessage || autoNavigationError" role="status">{{ contextMessage || autoNavigationError }}</span>
+      </div>
       <div class="toolbar">
         <div class="toolbar-left">
           <el-breadcrumb separator="/">
@@ -125,7 +131,7 @@
           <el-button size="small" type="primary" @click="showMkdir = true">新建目录</el-button>
           <input ref="uploadInput" type="file" hidden multiple @change="uploadFiles" />
           <el-button size="small" type="success" @click="uploadInput.click()">上传文件</el-button>
-          <FolderTransfer ref="folderTransfer" :session-token="sessionToken" :path="currentPath" @uploaded="refresh" />
+          <FolderTransfer ref="folderTransfer" :session-token="sessionToken" :path="loadedPath || currentPath" :owner-uid="uploadOwnership?.ownerUid" :owner-gid="uploadOwnership?.ownerGid" :ownership-requested="assignUploadOwner" :ownership-available="canAssignOwner" @uploaded="onFolderUploaded" />
         </div>
       </div>
 
@@ -294,6 +300,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Document, Folder, Search, Sort, Upload } from '@element-plus/icons-vue'
 import {
+  getTerminalContext,
   sftpChown,
   sftpDelete,
   sftpDownloadLarge,
@@ -303,6 +310,7 @@ import {
   sftpRename,
   sftpUploadLarge
 } from '@/api/sshConsole'
+import { useTerminalFileContext } from '@/composables/useTerminalFileContext'
 import { useTransfers } from '@/composables/useTransfers'
 import { storeToRefs } from 'pinia'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -499,6 +507,51 @@ let handledLocation=null,lastAccount,lastTab,listRequest=0
 let restoringPath = !!props.savedPath
 let disposed = false
 onScopeDispose(() => { disposed = true; ++listRequest })
+const autoNavigationError = ref('')
+const assignUploadOwner = ref(false)
+const { follow: followTerminal, context: terminalContext, message: contextMessage, canAssignOwner } = useTerminalFileContext({
+  sessionToken: () => props.sessionToken, tabId: () => props.tabId, active: () => props.active,
+  blocked: () => showEditor.value || showLargeViewer.value,
+  currentPath: () => loadedPath.value,
+  request: getTerminalContext,
+  onNavigate(path) {
+    autoNavigationError.value = ''
+    currentPath.value = path; pathInput.value = path
+    void refresh({ automatic: true })
+  }
+})
+const uploadOwnership = computed(() => assignUploadOwner.value && canAssignOwner.value
+  ? { ownerUid: terminalContext.value.terminalUid, ownerGid: terminalContext.value.terminalGid } : null)
+function captureUpload(targetDir) {
+  const dir = targetDir || loadedPath.value
+  if (!props.sessionToken || !dir?.startsWith('/') || dir.includes('\0')) {
+    ElMessage.warning('请等待文件会话和绝对目录加载完成后上传')
+    return null
+  }
+  if (assignUploadOwner.value && !canAssignOwner.value) {
+    ElMessage.warning('无法确认终端用户 UID/GID，请等待检测成功或取消上传归属选项')
+    return null
+  }
+  return { token: props.sessionToken, dir, ownership: { ...uploadOwnership.value }, accountId: props.accountId, hostId: props.hostId }
+}
+function onFolderUploaded(snapshot) {
+  if (snapshot?.token === props.sessionToken && snapshot?.path === loadedPath.value) void refresh()
+}
+function queueUpload(file, snapshot) {
+  const { token, dir, ownership, accountId, hostId } = snapshot
+  enqueueTransfer({ name: file.name, direction: '上传', path: dir, total: file.size, accountId, hostId,
+    run: async transferOptions => {
+      const result = await sftpUploadLarge(token, dir, file, { ...transferOptions, ...ownership })
+      if (result?.warning) {
+        ElMessage.success(`已上传 ${file.name}`)
+        ElMessage.warning(`文件已上传，归属设置未完成：${result.warning}`)
+      }
+      if (props.sessionToken === token && loadedPath.value === dir) void refresh()
+      return result
+    }
+  })
+}
+
 watch(
   () => [props.sessionToken, props.active, fileLocation.value, props.accountId, props.tabId],
   ([tok, active, location, accountId, tabId], previous = []) => {
@@ -519,6 +572,7 @@ watch(
     if (!active) return
     if (tok) {
       if (location && location !== handledLocation && location.accountId === props.accountId) {
+        followTerminal.value = false
         currentPath.value = location.path
         pathInput.value = location.path
         handledLocation = location
@@ -575,6 +629,7 @@ const canGoParent = computed(() => {
 })
 
 function goParent() {
+  followTerminal.value = false
   if (!canGoParent.value) return
   const p = (loadedPath.value || currentPath.value || '/').replace(/\/+$/, '')
   const lastSlash = p.lastIndexOf('/')
@@ -585,12 +640,14 @@ function goParent() {
 }
 
 function goRoot() {
+  followTerminal.value = false
   currentPath.value = props.defaultCwd || '/'
   pathInput.value = currentPath.value
   refresh()
 }
 
 function goToIndex(idx) {
+  followTerminal.value = false
   const segs = breadcrumbs.value.slice(0, idx + 1)
   currentPath.value = '/' + segs.join('/')
   pathInput.value = currentPath.value
@@ -598,6 +655,7 @@ function goToIndex(idx) {
 }
 
 function enterDir(target) {
+  followTerminal.value = false
   const name = (typeof target === 'object' && target !== null ? target.name : target)?.trim()
   if (!name) return
 
@@ -618,6 +676,7 @@ function enterDir(target) {
 }
 
 function navigateToPath() {
+  followTerminal.value = false
   currentPath.value = pathInput.value.trim()
   refresh()
 }
@@ -634,7 +693,7 @@ function isUnavailableDirectoryError(err) {
   return /no[ _]such[ _](file|path)|not[ _]a[ _]directory|permission[ _]denied|不存在|无权|权限/i.test(message)
 }
 
-async function refresh() {
+async function refresh({ automatic = false } = {}) {
   if (!props.sessionToken || disposed) return
   const request = ++listRequest, token = props.sessionToken, tabId = props.tabId
   const pathArg = currentPath.value || pathInput.value || ''
@@ -666,7 +725,8 @@ async function refresh() {
       currentPath.value = loadedPath.value || currentPath.value
       pathInput.value = currentPath.value
       const errMsg = err?.response?.data?.externMessage || err?.response?.data?.message || err?.message || '读取远程目录失败'
-      ElMessage.error(errMsg)
+      if (automatic) autoNavigationError.value = `终端目录无法访问：${errMsg}`
+      else ElMessage.error(errMsg)
     }
   } finally {
     if (request === listRequest) loading.value = false
@@ -860,9 +920,9 @@ async function processDroppedDataTransfer(dataTransfer, targetDir = null) {
     emit('request-session')
     return
   }
-  const dir = targetDir || currentPath.value || pathInput.value || ''
-  const token = props.sessionToken
-  const accountId = props.accountId, hostId = props.hostId
+  const snapshot = captureUpload(targetDir)
+  if (!snapshot) return
+  const { dir } = snapshot
 
   const items = dataTransfer?.items
   let hasDirectory = false
@@ -893,26 +953,13 @@ async function processDroppedDataTransfer(dataTransfer, targetDir = null) {
   // Upload folder entries if any
   if (hasDirectory && folderEntries.length > 0) {
     if (folderTransfer.value?.uploadFolderEntries) {
-      await folderTransfer.value.uploadFolderEntries(folderEntries)
+      await folderTransfer.value.uploadFolderEntries(folderEntries, { token: snapshot.token, path: snapshot.dir, ownership: snapshot.ownership })
     }
   }
 
   // Upload regular files if any
   if (regularFiles.length > 0) {
-    for (const file of regularFiles) {
-      enqueueTransfer({
-        name: file.name,
-        direction: '上传',
-        path: dir,
-        total: file.size,
-        accountId,
-        hostId,
-        run: async transferOptions => {
-          await sftpUploadLarge(token, dir, file, transferOptions)
-          if (props.sessionToken === token && currentPath.value === dir) void refresh()
-        }
-      })
-    }
+    for (const file of regularFiles) queueUpload(file, snapshot)
     ElMessage.success(`已开始上传 ${regularFiles.length} 个文件至 ${dir || '当前目录'}`)
   }
 }
@@ -926,14 +973,9 @@ defineExpose({
 function uploadFiles(event) {
   const files = Array.from(event.target.files || [])
   event.target.value = '' // File references belong to the queue and are released when each task ends.
-  if (!props.sessionToken) return
-  const dir = currentPath.value || pathInput.value || ''
-  const token = props.sessionToken
-  const accountId = props.accountId, hostId = props.hostId
-  for (const file of files) enqueueTransfer({ name: file.name, direction: '上传', path: dir, total: file.size, accountId, hostId, run: async transferOptions => {
-    await sftpUploadLarge(token, dir, file, transferOptions)
-    if (props.sessionToken === token && currentPath.value === dir) void refresh()
-  } })
+  const snapshot = captureUpload()
+  if (!snapshot) return
+  for (const file of files) queueUpload(file, snapshot)
 }
 
 function remotePathForRow(row) {
@@ -1097,6 +1139,7 @@ function formatMtime(sec) {
   text-align: center;
   margin-top: 8px;
 }
+.terminal-file-context { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:12px; color:var(--el-text-color-secondary); }
 .toolbar {
   display: flex;
   flex-wrap: wrap;

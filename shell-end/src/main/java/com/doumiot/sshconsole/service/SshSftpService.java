@@ -281,6 +281,11 @@ public class SshSftpService {
     @lombok.Value public static class ReadSnapshot { long size; long mtime; boolean stable; }
 
     public void upload(String sessionToken, String path, MultipartFile file) throws IOException {
+        upload(sessionToken, path, file, null, null);
+    }
+
+    public SftpStreams.UploadResult upload(String sessionToken, String path, MultipartFile file, Long ownerUid, Long ownerGid) throws IOException {
+        SftpStreams.Ownership owner = SftpStreams.Ownership.of(ownerUid, ownerGid);
         if (file == null || !StringUtils.hasText(file.getOriginalFilename())) {
             throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, "请选择要上传的文件");
         }
@@ -302,7 +307,7 @@ public class SshSftpService {
             String remote = dir.endsWith("/") ? dir + name : dir + "/" + name;
             remote = SshSftpPathResolver.resolve(remote, entry != null ? entry.getDefaultCwd() : null, home);
             file.transferTo(tmp);
-            SftpStreams.put(sftp, tmp, remote);
+            return SftpStreams.put(sftp, tmp, remote, owner);
         } finally {
             Files.deleteIfExists(tmp);
         }

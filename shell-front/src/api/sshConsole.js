@@ -163,6 +163,12 @@ export function openAccountSession(id) {
   return post(`${BASE}/accounts/${id}/session`, {}, { showSuccess: false })
 }
 
+export function getTerminalContext(sessionToken, { signal } = {}) {
+  return handleApiResponse(apiClient.get(`${BASE}/terminal-context`, {
+    params: { sessionToken }, signal, timeout: 15000
+  }), { showSuccess: false, showFailure: false })
+}
+
 export function sftpList(sessionToken, path = '') {
   const params = { sessionToken }
   if (path) params.path = path
@@ -217,7 +223,7 @@ export async function sftpEncodeText(sessionToken, content, encoding, bom = fals
   return blob
 }
 
-export async function sftpUploadLarge(sessionToken, path, file, { signal, onProgress, onCommitting } = {}) {
+export async function sftpUploadLarge(sessionToken, path, file, { signal, onProgress, onCommitting, ownerUid, ownerGid } = {}) {
   const chunkSize = 4 * 1024 * 1024
   let uploadId
   const request = (action, params, body = null, requestSignal = signal, timeout = 0) => handleApiResponse(
@@ -226,7 +232,7 @@ export async function sftpUploadLarge(sessionToken, path, file, { signal, onProg
     }), { showSuccess: false, showFailure: false })
   try {
     signal?.throwIfAborted()
-    uploadId = await request('start', { path, name: file.name, total: file.size })
+    uploadId = await request('start', { path, name: file.name, total: file.size, ...ownershipParams({ ownerUid, ownerGid }) })
     for (let offset = 0; offset < file.size; offset += chunkSize) {
       signal?.throwIfAborted()
       const end = Math.min(file.size, offset + chunkSize)
@@ -238,7 +244,7 @@ export async function sftpUploadLarge(sessionToken, path, file, { signal, onProg
     signal?.throwIfAborted()
     // Final rename is a commit: do not interrupt it and report a successful replacement as cancelled.
     onCommitting?.()
-    await request('complete', { uploadId }, null, null)
+    return await request('complete', { uploadId }, null, null)
   } catch (error) {
     if (uploadId) {
       try { await request('cancel', { uploadId }, null, null, 15000) }
@@ -406,12 +412,16 @@ export async function runScriptStream(id, sessionToken, handlers = {}) {
   }
 }
 
+function ownershipParams({ownerUid,ownerGid}={}) {
+  return ownerUid == null && ownerGid == null ? {} : {ownerUid,ownerGid}
+}
+
 export const sftpFolderTree = (sessionToken, path) => handleApiResponse(apiClient.get(`${BASE}/sftp/folder/tree`, {params:{sessionToken,path},timeout:120000}), {showSuccess:false,showFailure:false})
 export const sftpFolderLimit = () => get(`${BASE}/sftp/folder/limits`, {}, {showSuccess:false})
-export const sftpFolderMkdir = (sessionToken,path,relativePath) => handleApiResponse(apiClient.post(`${BASE}/sftp/folder/mkdir`,null,{params:{sessionToken,path,relativePath}}),{showSuccess:false})
-export function sftpFolderUpload(sessionToken,path,file,{archive=false,relativePath=''}={}) {
+export const sftpFolderMkdir = (sessionToken,path,relativePath,options={}) => handleApiResponse(apiClient.post(`${BASE}/sftp/folder/mkdir`,null,{params:{sessionToken,path,relativePath,...ownershipParams(options)}}),{showSuccess:false})
+export function sftpFolderUpload(sessionToken,path,file,{archive=false,relativePath='',ownerUid,ownerGid}={}) {
   const form=new FormData();form.append('file',file)
-  return handleApiResponse(apiClient.post(`${BASE}/sftp/folder/upload`,form,{params:{sessionToken,path,archive,relativePath},timeout:0}),{showSuccess:false})
+  return handleApiResponse(apiClient.post(`${BASE}/sftp/folder/upload`,form,{params:{sessionToken,path,archive,relativePath,...ownershipParams({ownerUid,ownerGid})},timeout:0}),{showSuccess:false})
 }
 export async function sftpBlob(sessionToken,path,{folder=false,compress=true}={}) {
   const url = `${API_BASE}${BASE}/sftp/${folder?'folder/download':'download'}`
