@@ -510,6 +510,7 @@ onBeforeUnmount(() => {
 .filter-status { padding:8px 12px; font-size:12px; background:var(--el-fill-color-light); }
 .tail-status { font-size:12px; color:var(--el-color-success); }
 .viewer-body { flex:1; min-height:0; overflow:auto; padding:12px 18px; background:#fafafa; color:#24292f; font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.viewer-body:focus { outline:none; }
 .is-dark .viewer-body { background:#1e1e1e; color:#d4d4d4; }
 .file-content { margin:0; font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; -webkit-user-select:text; }
 .file-content :deep(*) { user-select:text; -webkit-user-select:text; }
