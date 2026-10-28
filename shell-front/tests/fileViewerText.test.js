@@ -67,3 +67,27 @@ test('long filtered line marks omitted content and invalidates only its metadata
   assert.equal(changed[1], initial[1])
   assert.equal(changed.matchCount, 1)
 })
+
+test('local rows visibly label fragment line numbers and never imply absolute source lines', async () => {
+  const { createViewerBlockRenderer } = await import('../src/utils/fileViewerText.js')
+  const render = createViewerBlockRenderer(), row = { lineNumber: 3, text: 'hit', matched: true }
+  const global = render([row], '', -1, true)
+  const local = render([{ ...row, fragment: true }], '', -1, true)
+  assert.match(local[0].html, /片段行号 3/)
+  assert.match(local[0].html, /data-line="片段 3"/)
+  assert.doesNotMatch(global[0].html, /片段行号/)
+})
+
+test('case-sensitive filter highlighting follows its literal match option without changing default find', async () => {
+  const { createViewerBlockRenderer } = await import('../src/utils/fileViewerText.js')
+  const render = createViewerBlockRenderer(), rows = [{ lineNumber: 1, text: 'Hit hit', matched: true }]
+  assert.equal(render(rows, 'hit', -1, true, true).matchCount, 1)
+  assert.equal(render(rows, 'hit', -1, true, false).matchCount, 2)
+})
+
+test('local Unicode-insensitive matches also receive a visible highlight', async () => {
+  const { createViewerBlockRenderer } = await import('../src/utils/fileViewerText.js')
+  const render = createViewerBlockRenderer()
+  const rows = [{ lineNumber: 1, text: '𐐨猫', matched: true, fragment: true }]
+  assert.equal(render(rows, '𐐀猫', -1, true, false).matchCount, 1)
+})

@@ -4,7 +4,7 @@
       <div class="file-title"><strong :title="name">{{ name }}</strong><span :title="path">{{ path }}</span></div>
       <div class="viewer-tools">
         <el-button size="small" :type="toolsVisible ? 'primary' : 'default'" :aria-expanded="toolsVisible" title="查找 / 筛选（Ctrl/⌘+F）" @click="toggleSearchTools">查找 / 筛选</el-button>
-        <el-select v-model="selectedEncoding" size="small" class="encoding" aria-label="文件编码" @change="changeEncoding">
+        <el-select v-model="selectedEncoding" :disabled="localMode" size="small" class="encoding" aria-label="文件编码" @change="changeEncoding">
           <el-option v-for="enc in ENCODING_OPTIONS" :key="enc.value" :label="enc.label" :value="enc.value" />
         </el-select>
         <el-button v-if="!standalone" size="small" @click="emit('standalone', selectedEncoding)">独立窗口</el-button>
@@ -18,17 +18,18 @@
       <span v-if="filter.limited.value"> · 已达结果上限，请缩小关键词范围</span>
       <span v-if="filter.error.value"> · {{ filter.error.value }}</span>
     </div>
+    <div v-if="localMode" class="filter-status" role="status">仅筛选已加载内容 · 片段行号 · 显示 {{ localFilter.rows.value.length }} 行（含上下文）<span v-if="localFilter.limited.value"> · 已达结果上限，请缩小关键词范围</span></div>
     <div class="viewer-bar navigation-bar">
-      <el-button size="small" :disabled="filter.active.value || loading" @click="jumpToHead">文件开头</el-button>
-      <el-button size="small" :disabled="filter.active.value || !hasMoreBefore || loading" @click="loadEarlier">向上加载</el-button>
-      <el-button size="small" :disabled="filter.active.value || !hasMoreAfter || loading" @click="loadLater">向下加载</el-button>
-      <el-button size="small" :disabled="loading" @click="goBottom">{{ filter.active.value ? '结果末尾 / Tail' : '文件末尾 / Tail' }}</el-button>
-      <span v-if="!filter.active.value" class="range-info">{{ formatSize(rangeStart) }} ~ {{ formatSize(rangeEnd) }} / {{ formatSize(totalSize) }}</span>
-      <template v-if="!filter.active.value">
+      <el-button size="small" :disabled="filteredMode || loading" @click="jumpToHead">文件开头</el-button>
+      <el-button size="small" :disabled="filteredMode || !hasMoreBefore || loading" @click="loadEarlier">向上加载</el-button>
+      <el-button size="small" :disabled="filteredMode || !hasMoreAfter || loading" @click="loadLater">向下加载</el-button>
+      <el-button size="small" :disabled="loading" @click="goBottom">{{ localMode ? '结果末尾' : filter.active.value ? '结果末尾 / Tail' : '文件末尾 / Tail' }}</el-button>
+      <span v-if="!filteredMode" class="range-info">{{ formatSize(rangeStart) }} ~ {{ formatSize(rangeEnd) }} / {{ formatSize(totalSize) }}</span>
+      <template v-if="!filteredMode">
         <el-input-number v-model="jumpPercent" :min="0" :max="100" :controls="false" size="small" class="jump-input" aria-label="跳转文件百分比" @keyup.enter="jumpToPercent" />
         <span>%</span><el-button size="small" :disabled="loading" @click="jumpToPercent">前往</el-button>
       </template>
-      <el-button size="small" :disabled="loading" @click="filter.active.value ? startFilter(filterKeyword) : jumpToTail()">刷新</el-button>
+      <el-button size="small" :disabled="loading" @click="refreshViewer">刷新</el-button>
       <el-switch :model-value="autoFollow" active-text="Tail" :disabled="filter.active.value && !canFilterTail" @change="setFollowing" />
       <span v-if="autoFollow" class="tail-status">{{ tailStatus === 'reconnecting' ? '连接中断，正在续接…' : tailStatus === 'connecting' ? '正在连接…' : '实时追踪中' }}</span>
       <span v-else class="scope-hint">追踪暂停</span>
@@ -40,20 +41,21 @@
     <div class="viewer-content">
       <div v-if="toolsVisible" class="viewer-search" @mousedown.stop @keydown.esc.stop.prevent="closeSearchTools">
         <select v-model="searchMode" aria-label="搜索范围" title="选择查找或筛选" @change="focusSearchInput">
-          <option value="find">当前内容</option>
-          <option value="filter">全文件筛选</option>
+          <option value="find">查找当前内容</option>
+          <option value="local">筛选当前内容</option>
+          <option value="filter">筛选整个文件</option>
         </select>
-        <input ref="searchInputRef" v-model="searchKeyword" :placeholder="searchMode === 'filter' ? '筛选全文件内容' : '查找当前显示内容'" aria-label="查找和筛选关键词" @keydown.enter.stop.prevent="onSearchEnter" />
+        <input ref="searchInputRef" v-model="searchKeyword" maxlength="65536" :placeholder="searchMode === 'filter' ? '输入关键词后主动扫描整个文件' : searchMode === 'local' ? '仅筛选已加载内容' : '查找当前显示内容'" aria-label="查找和筛选关键词" @keydown.enter.stop.prevent="onSearchEnter" />
         <span class="match-status">{{ matchCount ? activeMatch + 1 : 0 }} / {{ matchCount }}</span>
         <button type="button" aria-label="上一个匹配" title="上一个匹配（Shift+Enter）" :disabled="!matchCount" @click="navigateMatch(-1)">↑</button>
         <button type="button" aria-label="下一个匹配" title="下一个匹配（Enter）" :disabled="!matchCount" @click="navigateMatch(1)">↓</button>
-        <template v-if="searchMode === 'filter'">
+        <template v-if="searchMode !== 'find'">
           <el-checkbox v-model="caseSensitive" size="small">区分大小写</el-checkbox>
           <el-checkbox v-model="withContext" size="small">前后 2 行</el-checkbox>
-          <button type="button" :disabled="!searchKeyword" @click="startFilter()">{{ filter.active.value ? '重新筛选' : '筛选行' }}</button>
+          <button v-if="searchMode === 'filter'" type="button" :disabled="!searchKeyword" @click="startFilter()">{{ filter.active.value ? '重新扫描整个文件' : '扫描整个文件' }}</button>
           <button v-if="filter.scanning.value || (filter.paused.value && !filter.readyForTail.value)" type="button" @click="cancelFilter">取消扫描</button>
         </template>
-        <button v-if="filter.active.value" type="button" @click="leaveFilter">恢复原文</button>
+        <button v-if="filteredMode" type="button" @click="leaveFilter">恢复原文</button>
         <button type="button" aria-label="关闭查找和筛选" @click="closeSearchTools">关闭</button>
       </div>
       <div ref="viewerBodyRef" v-loading="loading" class="viewer-body" tabindex="0" aria-label="文件文本内容" @scroll.passive="onViewerScroll" @wheel.passive="holdFollow = false" @pointerdown="holdFollow = false" @keydown="holdFollow = false">
@@ -68,7 +70,7 @@
       <el-button size="small" @click="goTop">置顶</el-button>
       <el-button size="small" @click="goBottom">置底</el-button>
       <el-button size="small" :disabled="!selectedText" @mousedown.prevent @click="copySelection">复制选中</el-button>
-      <el-button size="small" @click="copyDisplayed">{{ filter.active.value ? '复制筛选结果' : '复制已加载文本' }}</el-button>
+      <el-button size="small" @click="copyDisplayed">{{ filteredMode ? '复制筛选结果' : '复制已加载文本' }}</el-button>
       <el-button v-if="!standalone && size <= 50 * 1024 * 1024" size="small" @click="emit('edit')">编辑</el-button>
       <el-button size="small" :loading="downloading" @click="downloadFile">下载文件</el-button>
     </footer>
@@ -83,6 +85,7 @@ import { base64ToUint8Array, decodeFileBuffer, detectFileEncoding, ENCODING_OPTI
 import { createViewerBlockRenderer, highlightText, searchMatches, nextMatch, interceptFind } from '@/utils/fileViewerText'
 import { createViewerTail } from '@/composables/useViewerTail'
 import { createViewerSession, isViewerSessionError } from '@/composables/useViewerSession'
+import { useViewerLocalFilter } from '@/composables/useViewerLocalFilter'
 import { useViewerFilter } from '@/composables/useViewerFilter'
 import { useTheme } from '@/composables/useTheme'
 
@@ -93,6 +96,7 @@ const rootRef = ref(null), viewerBodyRef = ref(null), searchInputRef = ref(null)
 const toolsVisible = ref(false), searchMode = ref('find')
 const searchKeyword = ref(''), activeMatch = ref(-1), selectedText = ref(''), frozenHtml = ref(null)
 const selectedEncoding = ref(props.encoding || 'UTF-8'), filterKeyword = ref(''), caseSensitive = ref(false), withContext = ref(false)
+const appliedFilterOptions = ref(null)
 const loading = ref(false), downloading = ref(false), autoFollow = ref(false), chunks = ref([])
 const totalSize = ref(props.size), hasMoreBefore = ref(false), hasMoreAfter = ref(false)
 const jumpPercent = ref(100)
@@ -105,6 +109,11 @@ const viewerSession = createViewerSession({ token: props.sessionToken, accountId
   api: { context: getSessionContext, open: openViewerSession, close: closeViewerSession }
 })
 const normalHistory = ref([])
+const localFilter = useViewerLocalFilter()
+const localMode = computed(() => searchMode.value === 'local')
+const filteredMode = computed(() => filter.active.value || localMode.value)
+const localRowsActive = computed(() => localMode.value && Boolean(searchKeyword.value))
+let modeGeneration = 0
 let contentEpoch = 0
 const normalBlocks = computed(() => [...normalHistory.value, ...chunks.value])
 const combinedText = computed(() => normalBlocks.value.map(c => c.text).join(''))
@@ -119,14 +128,36 @@ const filter = useViewerFilter({
     else if (!recovering.value) { setFollowing(false); ElMessage.error(message) }
   }
 })
-const displayedText = computed(() => filter.active.value ? filter.displayRows.value.map(r => r.text).join('\n') : combinedText.value)
+const displayedRows = computed(() => filter.active.value ? filter.displayRows.value : localRowsActive.value ? localFilter.rows.value : null)
+const displayedText = computed(() => displayedRows.value ? displayedRows.value.map(r => r.text).join('\n') : combinedText.value)
 const renderBlocks = createViewerBlockRenderer()
-const contentBlocks = computed(() => renderBlocks(filter.active.value ? filter.displayRows.value : normalBlocks.value, searchKeyword.value, activeMatch.value, filter.active.value))
+const contentBlocks = computed(() => renderBlocks(displayedRows.value || normalBlocks.value, searchKeyword.value, activeMatch.value, Boolean(displayedRows.value), filter.active.value ? appliedFilterOptions.value?.caseSensitive : localRowsActive.value && caseSensitive.value))
 const matchCount = computed(() => searchKeyword.value ? contentBlocks.value.matchCount : 0)
 const canFilterTail = computed(() => filter.readyForTail.value && !filter.canceled.value && !filter.limited.value && !filter.error.value)
 const filterProgress = computed(() => filter.totalSize.value ? Math.min(100, Math.floor(100 * filter.offset.value / filter.totalSize.value)) : filter.eof.value ? 100 : 0)
-const filterStatus = computed(() => `${filter.mode.value === 'sftp' ? 'SFTP兼容扫描' : '远端扫描'} · ${filter.error.value ? '筛选中断' : filter.limited.value ? '结果已截断' : filter.canceled.value ? '已取消（部分结果）' : filter.eof.value ? '已扫描到文件末尾' : filter.paused.value ? '选择文本中，扫描暂停' : filter.scanning.value ? '全文件扫描中' : '部分扫描结果'}`)
+const filterStatus = computed(() => `${filter.mode.value === 'sftp' ? 'SFTP兼容扫描' : filter.mode.value === 'native' ? '远端grep扫描' : '远端扫描'}${filter.reason?.value ? `（${filter.reason.value}）` : ''} · ${filter.error.value ? '筛选中断' : filter.limited.value ? '结果已截断' : filter.canceled.value ? '已取消（部分结果）' : filter.eof.value ? '已扫描到文件末尾' : filter.paused.value ? '选择文本中，扫描暂停' : filter.scanning.value ? '全文件扫描中' : '部分扫描结果'} · 当前结果关键词：${filterKeyword.value.slice(0, 80)}${filterKeyword.value.length > 80 ? '…' : ''}${appliedFilterOptions.value && (searchKeyword.value !== appliedFilterOptions.value.keyword || caseSensitive.value !== appliedFilterOptions.value.caseSensitive || (withContext.value ? 2 : 0) !== appliedFilterOptions.value.contextLines) ? '（参数已修改，尚未重新扫描）' : ''}`)
 const renderedBlocks = computed(() => frozenHtml.value ?? contentBlocks.value)
+watch([normalBlocks, searchKeyword, caseSensitive, withContext, searchMode], () => {
+  if (!localMode.value) return
+  localFilter.configure({ keyword: searchKeyword.value, caseSensitive: caseSensitive.value, contextLines: withContext.value ? 2 : 0 })
+  localFilter.sync(normalBlocks.value)
+}, { flush: 'sync' })
+watch(searchMode, async (mode, previous) => {
+  const generation = ++modeGeneration
+  if (mode === 'local' && !filter.active.value) originalScroll = viewerBodyRef.value?.scrollTop || 0
+  if (mode !== 'filter' && (filter.active.value || (previous === 'filter' && filter.scanning.value))) {
+    ++requestGeneration; loading.value = false; stopTail(); followAfterScan = false
+    await filter.close()
+    if (generation !== modeGeneration) return
+    await nextTick(); if (viewerBodyRef.value) viewerBodyRef.value.scrollTop = originalScroll
+  }
+  if (mode !== 'local') localFilter.clear()
+  selectedText.value = ''; frozenHtml.value = null
+  if (previous === 'local' && mode !== 'local') {
+    await nextTick()
+    if (!disposed && generation === modeGeneration && viewerBodyRef.value) viewerBodyRef.value.scrollTop = originalScroll
+  }
+})
 watch([searchKeyword, matchCount], () => { activeMatch.value = matchCount.value ? Math.min(Math.max(0, activeMatch.value), matchCount.value - 1) : -1 })
 watch(filter.readyForTail, async ready => {
   if (ready && !recovering.value && followAfterScan && !selectedText.value && !disposed) { holdFollow = false; setFollowing(true); await nextTick(); scrollToBottom() }
@@ -153,9 +184,9 @@ function pauseForReading() { holdFollow = true; followAfterScan = false; setFoll
 function goTop() { pauseForReading(); if (viewerBodyRef.value) viewerBodyRef.value.scrollTop = 0 }
 
 async function replaceChunk(fromEnd, offset = 0) {
-  if (!props.sessionToken || !props.path) return
+  if (localMode.value || !props.sessionToken || !props.path) return
   stopTail()
-  const gen = ++requestGeneration
+  const gen = ++requestGeneration, modeAtRequest = modeGeneration
   loading.value = true
   try {
     const res = await viewerSession.run(token => sftpReadChunk(token, props.path, { offset, length: chunkSize, fromEnd }))
@@ -164,6 +195,7 @@ async function replaceChunk(fromEnd, offset = 0) {
     normalHistory.value = []; ++contentEpoch
     chunks.value = [chunk(res, fromEnd)]; updateBounds(res)
     await nextTick()
+    if (localMode.value || modeAtRequest !== modeGeneration) return
     if (fromEnd) { holdFollow = false; setFollowing(true); scrollToBottom() }
     else { pauseForReading(); if (viewerBodyRef.value) viewerBodyRef.value.scrollTop = 0 }
   } catch (err) { if (gen === requestGeneration && !disposed) ElMessage.error(err.message || '读取文件失败') }
@@ -176,7 +208,7 @@ function jumpToPercent() {
   return percent === 100 ? jumpToTail() : replaceChunk(false, Math.max(0, Math.floor(totalSize.value * percent / 100) - (percent ? chunkSize / 2 : 0)))
 }
 async function loadAdjacent(earlier) {
-  if (loading.value || !chunks.value.length || filter.active.value) return
+  if (localMode.value || loading.value || !chunks.value.length || filter.active.value) return
   pauseForReading(); stopTail()
   const gen = ++requestGeneration, el = viewerBodyRef.value
   const height = el?.scrollHeight || 0, top = el?.scrollTop || 0
@@ -196,6 +228,7 @@ async function loadAdjacent(earlier) {
 function loadEarlier() { return loadAdjacent(true) }
 function loadLater() { return loadAdjacent(false) }
 async function goBottom() {
+  if (localMode.value) { scrollToBottom(); return }
   holdFollow = false
   if (!filter.active.value) { await jumpToTail(); return }
   scrollToBottom()
@@ -276,7 +309,7 @@ async function recoverTail() {
     if (filter.active.value) {
       followAfterScan = true
       if (!reason.filterLoaded) {
-        await filter.start({ keyword: filterKeyword.value, caseSensitive: caseSensitive.value, contextLines: withContext.value ? 2 : 0 }, { preserveHistory: true, truncated: reason.code === 'FILE_CHANGED' })
+        await filter.start(appliedFilterOptions.value || { keyword: filterKeyword.value, caseSensitive: caseSensitive.value, contextLines: withContext.value ? 2 : 0 }, { preserveHistory: true, truncated: reason.code === 'FILE_CHANGED' })
         if (filter.error.value) throw new Error(filter.error.value)
         reason.filterLoaded = filter.readyForTail.value || filter.limited.value
       }
@@ -290,7 +323,7 @@ async function recoverTail() {
       }
       if (reason.code === 'FILE_CHANGED') {
         const newline = combinedText.value && !combinedText.value.endsWith('\n') ? '\n' : ''
-        normalHistory.value.push(...chunks.value, { renderKey: `reset:${++contentEpoch}`, text: `${newline}===================truncated===================\n` })
+        normalHistory.value.push(...chunks.value, { renderKey: `reset:${++contentEpoch}`, separator: true, text: `${newline}===================truncated===================\n` })
       }
       chunks.value = [chunk(page, true)]; trimNormalHistory(); updateBounds(page)
     }
@@ -342,7 +375,7 @@ function onViewerScroll() {
   if (!el || (loading.value && !filter.scanning.value) || selectedText.value) return
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24
   if (!atBottom) { followAfterScan = false; setFollowing(false) }
-  else if (!holdFollow) {
+  else if (!holdFollow && !localMode.value) {
     if (filter.active.value && filter.scanning.value) { followAfterScan = true; filter.pause(false) }
     else if (filter.active.value ? canFilterTail.value : chunks.value.length && !hasMoreAfter.value) setFollowing(true)
   }
@@ -359,7 +392,7 @@ function onSelectionChange() {
   }
 }
 async function openSearchTools() {
-  toolsVisible.value = true; pauseForReading()
+  toolsVisible.value = true
   await nextTick()
   if (!disposed && toolsVisible.value) focusSearchInput(true)
 }
@@ -403,25 +436,39 @@ async function downloadFile() {
   finally { downloading.value = false }
 }
 async function startFilter(keyword = searchKeyword.value) {
-  if (!keyword) return
+  if (searchMode.value !== 'filter' || !keyword) return
   filterKeyword.value = keyword
+  appliedFilterOptions.value = { keyword, caseSensitive: caseSensitive.value, contextLines: withContext.value ? 2 : 0 }
   if (!filter.active.value) originalScroll = viewerBodyRef.value?.scrollTop || 0
   const wasFollowing = autoFollow.value || followAfterScan
   ++requestGeneration; loading.value = false; pauseForReading(); stopTail()
   followAfterScan = wasFollowing
   selectedText.value = ''; frozenHtml.value = null
-  await filter.start({ keyword: filterKeyword.value, caseSensitive: caseSensitive.value, contextLines: withContext.value ? 2 : 0 })
+  await filter.start(appliedFilterOptions.value)
 }
 function cancelFilter() { stopTail(); return filter.cancel() }
 async function leaveFilter() {
-  stopTail(); await filter.close()
+  const scroll = originalScroll
+  if (localMode.value) pauseForReading()
+  else { stopTail(); await filter.close() }
+  searchMode.value = 'find'; localFilter.clear()
   frozenHtml.value = null; selectedText.value = ''
-  await nextTick(); if (viewerBodyRef.value) viewerBodyRef.value.scrollTop = originalScroll
+  await nextTick(); if (viewerBodyRef.value) viewerBodyRef.value.scrollTop = scroll
+}
+function refreshViewer() {
+  if (localMode.value) {
+    localFilter.clear()
+    localFilter.configure({ keyword: searchKeyword.value, caseSensitive: caseSensitive.value, contextLines: withContext.value ? 2 : 0 })
+    localFilter.sync(normalBlocks.value)
+    return
+  }
+  return filter.active.value ? startFilter(filterKeyword.value) : jumpToTail()
 }
 async function changeEncoding() {
+  if (localMode.value) return
   stopTail()
-  if (filter.active.value) await startFilter(filterKeyword.value)
-  else await replaceChunk(false, rangeStart.value)
+  if (filter.active.value) { await filter.close(); return }
+  await replaceChunk(false, rangeStart.value)
 }
 onMounted(() => {
   document.addEventListener('keydown', onDocumentKeydown, true)
@@ -429,7 +476,7 @@ onMounted(() => {
   void jumpToTail()
 })
 onBeforeUnmount(() => {
-  disposed = true; ++requestGeneration; stopTail(); viewerSession.close(); void filter.close()
+  disposed = true; ++requestGeneration; ++modeGeneration; stopTail(); localFilter.clear(); viewerSession.close(); void filter.close()
   document.removeEventListener('keydown', onDocumentKeydown, true)
   document.removeEventListener('selectionchange', onSelectionChange)
 })
@@ -464,6 +511,8 @@ onBeforeUnmount(() => {
 .file-content :deep(.search-match.is-current) { background:#ff9800; outline:1px solid #b45309; }
 .file-content :deep(.filter-line) { display:inline-block; width:100%; padding-left:64px; position:relative; }
 .file-content :deep(.filter-line::before) { content:attr(data-line); position:absolute; left:0; width:50px; text-align:right; color:#888; user-select:none; -webkit-user-select:none; }
+.file-content :deep(.filter-line.is-fragment) { padding-left:90px; }
+.file-content :deep(.filter-line.is-fragment::before) { width:76px; }
 .file-content :deep(.line-truncated-note) { color:var(--el-color-warning); user-select:none; -webkit-user-select:none; }
 .file-content :deep(.filter-line.is-matched::before) { color:var(--el-color-primary); }
 .file-content :deep(.line-gap) { color:#888; user-select:none; -webkit-user-select:none; }

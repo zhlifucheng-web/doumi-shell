@@ -150,3 +150,18 @@ test('cancel preserves merged partial results and refuses every late frame', asy
   s.data(ws, { rows: [{ lineNumber: 2, text: 'late' }] }, 2); ws.frame({ type: 'complete' }); await flush()
   assert.deepEqual(s.filter.rows.value.map(row => row.text), ['keep']); assert.equal(s.filter.tailSource(), null)
 })
+
+test('an operational native fallback updates the visible mode without changing row or ACK identity', async () => {
+  const s=fixture({start:async()=>({scanId:'a',mode:'native'})});const run=s.filter.start({keyword:'x'}),ws=await s.open()
+  s.data(ws,{rows:[{lineNumber:2,text:'x'}],mode:'sftp',reason:'原生命令资源限制，回退兼容扫描'});await flush()
+  assert.equal(s.filter.mode.value,'sftp');assert.match(s.filter.reason.value,/资源限制/)
+  assert.equal(s.filter.rows.value[0].lineNumber,2);assert.deepEqual(ws.sent.at(-1),{type:'ack',sequence:1})
+  ws.frame({type:'complete'});await run;await s.filter.close()
+})
+
+test('normal SFTP Tail after native history does not mislabel the completed history as a fallback', async () => {
+  const s=fixture({start:async()=>({scanId:'a',mode:'native'})}),run=s.filter.start({keyword:'x'}),ws=await s.open()
+  await s.complete(ws,{mode:'native'});await run
+  assert.equal(s.filter.applyTail({scanId:'a',rows:[],offset:20,totalSize:20,eof:true,mode:'sftp',reason:null}),true)
+  assert.equal(s.filter.mode.value,'native');await s.filter.close()
+})

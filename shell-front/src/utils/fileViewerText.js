@@ -1,7 +1,7 @@
-export function searchMatches(text, keyword) {
+export function searchMatches(text, keyword, caseSensitive = false) {
   if (!keyword) return []
   const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return Array.from(String(text).matchAll(new RegExp(escaped, 'gi')), m => ({ index: m.index, length: m[0].length }))
+  return Array.from(String(text).matchAll(new RegExp(escaped, caseSensitive ? 'gu' : 'giu')), m => ({ index: m.index, length: m[0].length }))
 }
 
 function escapeHtml(text) {
@@ -37,7 +37,7 @@ export function interceptFind(event, focus) {
 // joins matches across batches; unchanged blocks never revisit their old matches.
 export function createViewerBlockRenderer() {
   let cache = new Map()
-  return (items, keyword = '', current = -1, filtered = false) => {
+  return (items, keyword = '', current = -1, filtered = false, caseSensitive = false) => {
     const texts = items.map((item, i) => filtered ? item.text + (i < items.length - 1 ? '\n' : '') : item.text)
     const next = new Map(), blocks = []
     let remaining = 0, count = 0, previousLine = 0
@@ -49,14 +49,14 @@ export function createViewerBlockRenderer() {
       if (keyword.length > 1) for (let n = i + 1; n < texts.length && ahead.length < keyword.length - 1; n++) ahead += texts[n].slice(0, keyword.length - 1 - ahead.length)
       const consumed = Math.min(remaining, text.length), old = cache.get(key)
       let scan = old?.scan
-      if (!scan || scan.text !== text || scan.ahead !== ahead || scan.keyword !== keyword || scan.remaining !== remaining) {
-        const matches = keyword ? searchMatches(text.slice(consumed) + ahead, keyword).filter(m => m.index + consumed < text.length) : []
+      if (!scan || scan.text !== text || scan.ahead !== ahead || scan.keyword !== keyword || scan.remaining !== remaining || scan.caseSensitive !== caseSensitive) {
+        const matches = keyword ? searchMatches(text.slice(consumed) + ahead, keyword, caseSensitive).filter(m => m.index + consumed < text.length) : []
         const last = matches.at(-1)
-        scan = { text, ahead, keyword, remaining, matches, consumed,
+        scan = { text, ahead, keyword, remaining, caseSensitive, matches, consumed,
           nextRemaining: Math.max(0, remaining - text.length, last ? consumed + last.index + last.length - text.length : 0) }
       }
       let block = old?.block
-      if (!block || old.scan !== scan || old.base !== count || old.current !== current || old.gap !== gap || old.matched !== item.matched || old.truncated !== item.truncated) {
+      if (!block || old.scan !== scan || old.base !== count || old.current !== current || old.gap !== gap || old.matched !== item.matched || old.truncated !== item.truncated || old.fragment !== item.fragment) {
         let end = 0, html = ''
         function mark(start, stop, index) {
           html += escapeHtml(text.slice(end, start)) + `<mark data-search-index="${index}" class="search-match${index === current ? ' is-current' : ''}">${escapeHtml(text.slice(start, stop))}</mark>`
@@ -68,10 +68,10 @@ export function createViewerBlockRenderer() {
           mark(start, Math.min(text.length, start + match.length), count + n)
         }
         html += escapeHtml(text.slice(end))
-        if (filtered && !item.separator) html = `${gap ? '<span class="line-gap" aria-hidden="true">⋯</span>\n' : ''}<span class="filter-line${item.matched ? ' is-matched' : ''}" data-line="${Number(item.lineNumber)}">${item.truncated ? '<span class="line-truncated-note" title="整行已参与匹配，当前只展示有界片段">[超长行，部分内容省略] </span>' : ''}${html}</span>`
+        if (filtered && !item.separator) html = `${gap ? '<span class="line-gap" aria-hidden="true">⋯</span>\n' : ''}<span class="filter-line${item.matched ? ' is-matched' : ''}${item.fragment ? ' is-fragment' : ''}" title="${item.fragment ? '片段行号 ' : '文件行号 '}${Number(item.lineNumber)}" data-line="${item.fragment ? '片段 ' : ''}${Number(item.lineNumber)}">${item.truncated ? '<span class="line-truncated-note" title="整行已参与匹配，当前只展示有界片段">[超长行，部分内容省略] </span>' : ''}${html}</span>`
         block = { key, html }
       }
-      next.set(key, { scan, base: count, current, gap, matched: item.matched, truncated: item.truncated, block })
+      next.set(key, { scan, base: count, current, gap, matched: item.matched, truncated: item.truncated, fragment: item.fragment, block })
       blocks.push(block); count += scan.matches.length; remaining = scan.nextRemaining; previousLine = item.lineNumber
     }
     blocks.matchCount = count; cache = next

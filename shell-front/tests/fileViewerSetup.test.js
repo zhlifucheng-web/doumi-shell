@@ -7,6 +7,7 @@ import * as helpers from '../src/utils/fileTypeHelper.js'
 import { createViewerTail } from '../src/composables/useViewerTail.js'
 import { createViewerSession, isViewerSessionError } from '../src/composables/useViewerSession.js'
 import { useViewerFilter } from '../src/composables/useViewerFilter.js'
+import { useViewerLocalFilter } from '../src/composables/useViewerLocalFilter.js'
 
 function mountViewer({ read, api = {}, standalone = true, encoding = 'UTF-8', automaticHistory = true } = {}) {
   const listeners = {}, timers = new Map(), copied = [], messages = [], sockets = []
@@ -28,6 +29,7 @@ function mountViewer({ read, api = {}, standalone = true, encoding = 'UTF-8', au
     },
     '@/utils/fileViewerText': text, '@/utils/fileTypeHelper': helpers,
     '@/composables/useViewerFilter': { useViewerFilter },
+    '@/composables/useViewerLocalFilter': { useViewerLocalFilter },
     '@/composables/useViewerSession': { createViewerSession, isViewerSessionError },
     '@/composables/useViewerTail': { createViewerTail: options => createViewerTail({ ...options, connect: () => {
       let source, terminal = false, pageSequence = 0
@@ -56,6 +58,8 @@ function mountViewer({ read, api = {}, standalone = true, encoding = 'UTF-8', au
   return { ...mounted, sockets, listeners, timers, body, copied, messages, select: s => { selected = s; listeners.selectionchange?.() } }
 }
 const flush = async () => { await new Promise(setImmediate); await vue.nextTick() }
+
+async function startWholeFilter(viewer, keyword) { viewer.state.searchMode.value = 'filter'; await vue.nextTick(); return viewer.state.startFilter(keyword) }
 
 test('initial file bottom enables Tail and upward reading pauses it', async () => {
   const viewer = mountViewer()
@@ -109,7 +113,7 @@ test('search tools toggle and Escape retain the current search and active filter
   try {
     await flush()
     viewer.state.searchKeyword.value = 'error'
-    await viewer.state.startFilter()
+    await startWholeFilter(viewer)
     await viewer.state.toggleSearchTools()
     assert.equal(viewer.state.toolsVisible.value, true)
     viewer.state.closeSearchTools()
@@ -142,7 +146,7 @@ test('filtering from Tail resumes incremental following only after full historic
   try {
     await flush()
     viewer.state.searchKeyword.value = 'hello'
-    await viewer.state.startFilter()
+    await startWholeFilter(viewer)
     assert.equal(viewer.state.autoFollow.value, true)
     assert.equal(viewer.state.filter.eof.value, true)
     viewer.state.filter.eof.value = false
@@ -172,7 +176,7 @@ test('invalid byte bounds or mismatched scan IDs stop Tail without corrupting co
   } finally { viewer.unmount() }
   const filtered = mountViewer()
   try {
-    await flush(); filtered.state.searchKeyword.value = 'x'; await filtered.state.startFilter(); await flush()
+    await flush(); filtered.state.searchKeyword.value = 'x'; await startWholeFilter(filtered); await flush()
     filtered.sockets.at(-1).frame({ type: 'data', sequence: 1, scanId: 'wrong', offset: 7, totalSize: 7, rows: [] }); await flush()
     assert.equal(filtered.state.autoFollow.value, false)
     assert.equal(filtered.messages.length, 1)
@@ -182,7 +186,7 @@ test('invalid byte bounds or mismatched scan IDs stop Tail without corrupting co
 test('a failed filtered Tail requires a fresh scan before following again', async () => {
   const viewer = mountViewer()
   try {
-    await flush(); viewer.state.searchKeyword.value = 'x'; await viewer.state.startFilter(); await flush()
+    await flush(); viewer.state.searchKeyword.value = 'x'; await startWholeFilter(viewer); await flush()
     viewer.sockets.at(-1).frame({ type: 'error', message: 'Tail 已失效，请重新筛选' }); await flush()
     assert.equal(viewer.state.canFilterTail.value, false)
     assert.match(viewer.state.filter.error.value, /请重新筛选/)
@@ -286,7 +290,7 @@ test('filtered Tail reset rescans the same keyword and resumes a new filter subs
     historyPage: async ({scanId}) => ({ scanId, rows: [{ lineNumber: 1, text: scanId, matched: true }], offset: 6, totalSize: 6, eof: true })
   } })
   try {
-    await flush(); viewer.state.searchKeyword.value = 'hit'; await viewer.state.startFilter(); await flush()
+    await flush(); viewer.state.searchKeyword.value = 'hit'; await startWholeFilter(viewer); await flush()
     viewer.sockets.at(-1).frame({ type: 'error', code: 'FILE_CHANGED', message: '文件已改变或截断' })
     await flush(); await flush()
     assert.deepEqual(keywords, ['hit', 'hit'])
@@ -405,7 +409,7 @@ test('filtered reset retains old results during failed reload and separates repe
     historyPage: async ({ scanId }) => ({ rows: [{ lineNumber: 1, text: scanId, matched: true }], offset: 3, totalSize: 3, eof: true })
   } })
   try {
-    await flush(); viewer.state.searchKeyword.value = 'x'; await viewer.state.startFilter(); await flush()
+    await flush(); viewer.state.searchKeyword.value = 'x'; await startWholeFilter(viewer); await flush()
     fail = true; viewer.sockets.at(-1).frame({ type: 'error', code: 'FILE_CHANGED' }); await flush()
     assert.equal(viewer.state.displayedText.value, 's1')
     fail = false; viewer.state.setFollowing(false); viewer.state.setFollowing(true); await flush(); await flush()
@@ -426,12 +430,12 @@ test('one entered keyword drives search and filtering while active recovery keep
   try {
     await flush(); viewer.state.searchKeyword.value = 'hello'
     assert.equal(viewer.state.matchCount.value, 1)
-    await viewer.state.startFilter(); await flush()
+    await startWholeFilter(viewer); await flush()
     assert.deepEqual(keywords, ['hello'])
     viewer.state.searchKeyword.value = 'other'
     viewer.sockets.at(-1).frame({ type: 'error', code: 'FILE_CHANGED' }); await flush(); await flush()
     assert.deepEqual(keywords, ['hello', 'hello'])
-    await viewer.state.startFilter(); await flush()
+    await startWholeFilter(viewer); await flush()
     assert.deepEqual(keywords, ['hello', 'hello', 'other'])
   } finally { viewer.unmount() }
 })
@@ -477,7 +481,7 @@ test('historical filtering waits for complete before live Tail and upward readin
   const viewer = mountViewer({ automaticHistory: false })
   try {
     await flush(); viewer.state.searchKeyword.value = 'x'
-    const running = viewer.state.startFilter(); await flush()
+    const running = startWholeFilter(viewer); await flush()
     const history = viewer.sockets.at(-1)
     assert.equal(history.sent[0].historical, true)
     viewer.body.scrollTop = 0; viewer.body.scrollHeight = 500; viewer.state.onViewerScroll()
@@ -495,7 +499,7 @@ test('canceling historical filtering resolves the awaiting viewer operation with
   const viewer = mountViewer({ automaticHistory: false })
   try {
     await flush(); viewer.state.searchKeyword.value = 'x'
-    const running = viewer.state.startFilter(); await flush()
+    const running = startWholeFilter(viewer); await flush()
     await viewer.state.cancelFilter(); await running
     assert.equal(viewer.state.filter.canceled.value, true); assert.equal(viewer.state.autoFollow.value, false)
   } finally { viewer.unmount() }
@@ -506,7 +510,7 @@ test('historical server errors preserve recovery codes and rebuild the filter be
   const viewer = mountViewer({ automaticHistory: false, api: { sftpFilterStart: async () => ({ scanId: `s${++scans}`, mode: 'sftp' }) } })
   try {
     await flush(); viewer.state.searchKeyword.value = 'x'
-    const run = viewer.state.startFilter(); await flush()
+    const run = startWholeFilter(viewer); await flush()
     assert.match(viewer.state.filterStatus.value, /SFTP兼容扫描/)
     viewer.sockets.at(-1).frame({ type: 'error', code: 'FILE_CHANGED', message: 'changed' }); await run; await flush()
     assert.equal(scans, 2); assert.equal(viewer.state.recovering.value, true)
@@ -525,7 +529,7 @@ test('upward reading during historical recovery pauses and resumes its current s
   const viewer = mountViewer({ automaticHistory: false, api: { sftpFilterStart: async () => ({ scanId: `s${++scans}`, mode: 'remote' }) } })
   try {
     await flush(); viewer.state.searchKeyword.value = 'x'
-    const first = viewer.state.startFilter(); await flush()
+    const first = startWholeFilter(viewer); await flush()
     viewer.sockets.at(-1).frame({ type: 'error', code: 'FILE_CHANGED', message: 'reset' }); await first; await flush()
     const history = viewer.sockets.at(-1)
     viewer.body.scrollTop = 0; viewer.body.scrollHeight = 500; viewer.state.onViewerScroll()
@@ -536,4 +540,108 @@ test('upward reading during historical recovery pauses and resumes its current s
     history.frame({ type: 'complete' }); await flush(); await flush()
     assert.equal(scans, 2); assert.equal(viewer.state.recovering.value, false); assert.equal(viewer.state.autoFollow.value, true)
   } finally { viewer.unmount() }
+})
+
+test('current-content filtering consumes only raw cache and keeps an existing normal Tail', async () => {
+  const reads = [], scans = [], cancels = []
+  const viewer = mountViewer({ read: async (...args) => { reads.push(args); return { offset: 0, length: 19, totalSize: 19, contentBase64: btoa('before\nhit partial') } },
+    api: { sftpFilterStart: async data => { scans.push(data); return { scanId: 'remote' } }, sftpFilterCancel: async data => cancels.push(data) } })
+  try {
+    await flush();const socket = viewer.sockets[0], io = reads.length, commands = socket.sent.length
+    viewer.state.searchKeyword.value = 'hit'; viewer.state.searchMode.value = 'local'; await flush()
+    assert.equal(viewer.state.localMode.value, true)
+    assert.equal(viewer.state.autoFollow.value, true)
+    assert.deepEqual(viewer.state.localFilter.rows.value.map(r => r.text), ['hit partial'])
+    assert.equal(reads.length, io); assert.equal(scans.length, 0); assert.equal(cancels.length, 0)
+    assert.equal(viewer.sockets.length, 1); assert.equal(socket.sent.length, commands)
+    socket.frame({ type: 'data', sequence: 1, content: ' done\nmiss\nhit next\n', offset: 42, totalSize: 42 }); await flush()
+    assert.deepEqual(viewer.state.localFilter.rows.value.map(r => r.text), ['hit partial done', 'hit next'])
+    assert.equal(viewer.state.combinedText.value, 'before\nhit partial done\nmiss\nhit next\n')
+    assert.equal(reads.length, io); assert.equal(scans.length, 0)
+  } finally { viewer.unmount() }
+})
+
+test('local filtering never starts a paused Tail or reads history when going to result bottom', async () => {
+  const viewer = mountViewer()
+  try {
+    await flush();viewer.state.setFollowing(false);const sockets = viewer.sockets.length, sent = viewer.sockets[0].sent.length
+    viewer.body.scrollTop = 31;viewer.state.searchMode.value = 'local';viewer.state.searchKeyword.value = 'hello';await flush()
+    await viewer.state.goBottom();viewer.state.onViewerScroll();await flush()
+    assert.equal(viewer.state.autoFollow.value, false);assert.equal(viewer.sockets.length,sockets);assert.equal(viewer.sockets[0].sent.length,sent)
+    viewer.state.searchKeyword.value = 'absent';await flush();assert.equal(viewer.state.localFilter.rows.value.length,0)
+    viewer.state.searchKeyword.value = 'hello';await flush();assert.equal(viewer.state.localFilter.rows.value.length,1)
+    await viewer.state.leaveFilter();assert.equal(viewer.state.searchMode.value,'find');assert.equal(viewer.body.scrollTop,31)
+    assert.equal(viewer.state.combinedText.value,'hello\n')
+  } finally { viewer.unmount() }
+})
+
+test('whole-file scanning requires explicit selection and start, while mode switches cancel exactly once', async () => {
+  const starts = [], cancels = [];const viewer = mountViewer({ api: { sftpFilterStart: async data => {starts.push(data);return {scanId:'s'}},sftpFilterCancel: async data => cancels.push(data) } })
+  try {
+    await flush();viewer.state.searchKeyword.value='hello';await flush();await viewer.state.startFilter();assert.equal(starts.length,0)
+    viewer.state.searchMode.value='filter';await flush();assert.equal(starts.length,0)
+    await viewer.state.startFilter();assert.equal(starts.length,1)
+    viewer.state.searchKeyword.value='other';await flush();assert.equal(starts.length,1)
+    viewer.state.searchMode.value='local';await flush();assert.equal(cancels.length,1);assert.equal(viewer.state.filter.active.value,false)
+    assert.equal(viewer.state.localFilter.rows.value.length,0)
+    viewer.state.searchKeyword.value='hello';await flush();assert.equal(viewer.state.localFilter.rows.value.length,1)
+    assert.equal(starts.length,1)
+  } finally { viewer.unmount() }
+})
+
+test('leaving a whole-file start in flight cancels its late cursor without opening a history socket', async () => {
+  let resolve;const response = new Promise(r => { resolve = r });const canceled = []
+  const viewer = mountViewer({ api: { sftpFilterStart: () => response, sftpFilterCancel: async data => canceled.push(data) } })
+  try {
+    await flush();viewer.state.searchKeyword.value='hello';viewer.state.searchMode.value='filter';await flush()
+    const run = viewer.state.startFilter();await flush();const oldSocketCount=viewer.sockets.length
+    viewer.state.searchMode.value='local';await flush();await run
+    resolve({ scanId:'late' });await flush()
+    assert.equal(viewer.sockets.length,oldSocketCount);assert.equal(canceled.length,1)
+    assert.equal(viewer.state.filter.active.value,false);assert.equal(viewer.state.localFilter.rows.value[0].text,'hello')
+  } finally { viewer.unmount() }
+})
+
+test('local refresh and encoding controls do not request additional file bytes', async () => {
+  let reads=0;const viewer=mountViewer({read:async()=>{reads++;return {offset:0,length:6,totalSize:6,contentBase64:btoa('hello\n')}}})
+  try {
+    await flush();viewer.state.setFollowing(false);viewer.state.searchKeyword.value='hello';viewer.state.searchMode.value='local';await flush();const baseline=reads
+    await viewer.state.refreshViewer();await viewer.state.changeEncoding();await viewer.state.jumpToHead();await viewer.state.loadLater();await flush()
+    assert.equal(reads,baseline);assert.equal(viewer.state.localFilter.rows.value.length,1)
+  } finally {viewer.unmount()}
+})
+
+test('pending whole-file query options never change its recovery scan until explicit restart', async () => {
+  const starts=[];const viewer=mountViewer({api:{sftpFilterStart:async data=>{starts.push(data);return {scanId:`s${starts.length}`}}}})
+  try {
+    await flush();viewer.state.searchKeyword.value='hello';viewer.state.caseSensitive.value=true;await startWholeFilter(viewer)
+    viewer.state.searchKeyword.value='other';viewer.state.caseSensitive.value=false;viewer.state.withContext.value=true;await flush()
+    assert.match(viewer.state.filterStatus.value,/尚未重新扫描/)
+    viewer.sockets.at(-1).frame({type:'error',code:'FILE_CHANGED'});await flush();await flush()
+    assert.equal(starts.length,2);assert.equal(starts[1].keyword,'hello');assert.equal(starts[1].caseSensitive,true);assert.equal(starts[1].contextLines,0)
+  } finally {viewer.unmount()}
+})
+
+test('a normal read finishing after local mode entry can populate cache without starting Tail', async () => {
+  let resolve;const waiting = new Promise(r => {resolve=r})
+  const viewer=mountViewer({read:()=>waiting})
+  try {
+    await flush();assert.equal(viewer.sockets.length,0)
+    viewer.state.searchMode.value='local';viewer.state.searchKeyword.value='hit';await flush()
+    resolve({offset:0,length:4,totalSize:4,contentBase64:btoa('hit\n')});await flush();await flush()
+    assert.equal(viewer.sockets.length,0);assert.equal(viewer.state.autoFollow.value,false)
+    assert.deepEqual(viewer.state.localFilter.rows.value.map(r=>r.text),['hit'])
+  } finally {viewer.unmount()}
+})
+
+test('dropdown exits from local restore the original raw reading position before any scan', async () => {
+  for(const next of ['find','filter']) {
+    const viewer=mountViewer()
+    try {
+      await flush();viewer.state.setFollowing(false);viewer.body.scrollTop=73
+      viewer.state.searchMode.value='local';viewer.state.searchKeyword.value='hello';await flush()
+      viewer.body.scrollTop=0;viewer.state.searchMode.value=next;await flush()
+      assert.equal(viewer.body.scrollTop,73);assert.equal(viewer.state.filter.active.value,false)
+    } finally {viewer.unmount()}
+  }
 })
