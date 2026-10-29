@@ -2,6 +2,7 @@ package com.doumiot.sshconsole.controller;
 
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
 import com.doumiot.sshconsole.service.SshCopyService;
+import com.doumiot.sshconsole.service.SshSftpService;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import java.io.IOException;
@@ -11,6 +12,14 @@ import java.io.IOException;
 @RequestMapping("/api/ssh-console/sftp/copy")
 public class SshCopyController {
     @Resource private SshCopyService copies;
+    @GetMapping("/target-users") public SshSftpService.SystemUsersAndGroups targetUsers(
+            @RequestParam String sessionToken,@RequestParam long targetAccountId) throws IOException {
+        return copies.targetUsers(sessionToken,targetAccountId);
+    }
+    @GetMapping("/target-directories") public SshSftpService.ListResult targetDirectories(
+            @RequestParam String sessionToken,@RequestParam long targetAccountId,@RequestParam(defaultValue="") String path) throws IOException {
+        return copies.targetDirectories(sessionToken,targetAccountId,path);
+    }
     @PostMapping("/start") public SshCopyService.State start(@RequestBody SshCopyService.Request request) throws IOException {
         return copies.start(request);
     }

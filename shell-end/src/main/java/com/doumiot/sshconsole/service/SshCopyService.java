@@ -19,6 +19,7 @@ public class SshCopyService {
     @Resource private SshSessionRegistry sessions;
     @Resource private SshAccountService accounts;
     @Resource private SshHostService hosts;
+    @Resource private SshSftpService sftp;
     private final ThreadPoolExecutor workers=new ThreadPoolExecutor(2,2,30,TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(32),r->{Thread thread=new Thread(r,"ssh-remote-copy");thread.setDaemon(true);return thread;});
     private Executor executor=workers;
@@ -33,6 +34,20 @@ public class SshCopyService {
     @Data public static class State {
         private String id,status,currentPath,error,warning;
         private long loaded,total;
+    }
+    public SshSftpService.SystemUsersAndGroups targetUsers(String sourceToken,long accountId) throws IOException {
+        return queryTarget(sourceToken,accountId,sftp::systemUsersAndGroups);
+    }
+    public SshSftpService.ListResult targetDirectories(String sourceToken,long accountId,String path) throws IOException {
+        return queryTarget(sourceToken,accountId,token->sftp.directories(token,path));
+    }
+    private interface TargetQuery<T> {T run(String token) throws IOException;}
+    private <T> T queryTarget(String sourceToken,long accountId,TargetQuery<T> query) throws IOException {
+        sessions.get(sourceToken);
+        if(accountId<=0)throw new IOException("请选择接收方账户");
+        String token=accounts.openSession(accountId).getSessionToken();
+        try {return query.run(token);}
+        finally {sessions.close(token);}
     }
     private static final class Job {
         final String id=UUID.randomUUID().toString();

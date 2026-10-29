@@ -10,7 +10,10 @@
         <div v-else-if="!loadingAccounts && !accounts.length" class="copy-hint">暂无可用账户，请先在服务器管理中配置并启用目标机器的 SSH 账户。</div>
       </el-form-item>
       <el-form-item label="目标目录" required>
-        <el-input v-model="form.targetPath" placeholder="/srv/data" autocomplete="off" />
+        <div class="copy-path-input">
+          <el-input v-model="form.targetPath" placeholder="/srv/data" autocomplete="off" />
+          <el-button :disabled="!form.targetAccountId" @click="openFolders">选择目录</el-button>
+        </div>
       </el-form-item>
       <div class="copy-options">
         <el-form-item label="传输方式">
@@ -22,7 +25,8 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item label="接收方属主">
-          <el-input v-model="form.owner" placeholder="默认" autocomplete="off" />
+          <el-autocomplete v-model="form.owner" :fetch-suggestions="suggestOwners" clearable :placeholder="loadingOwners ? '正在读取用户…' : '默认'" class="copy-full-width" />
+          <div v-if="ownerError" class="copy-error" role="alert">{{ ownerError }} <el-button link type="primary" @click="loadOwners">重试</el-button></div>
         </el-form-item>
       </div>
       <el-checkbox v-model="form.overwrite">覆盖同名文件</el-checkbox>
@@ -33,12 +37,29 @@
       <el-button type="primary" :disabled="loadingAccounts || !accounts.length" @click="submit">开始复制</el-button>
     </template>
   </el-dialog>
+  <el-dialog v-model="folderDialog" title="选择目标目录" width="min(580px, 94vw)" append-to-body @close="closeFolders">
+    <div class="copy-folder-toolbar">
+      <el-button :disabled="folderLoading || !folderPath || folderPath === '/'" @click="browseFolders(parentDirectory(folderPath))">上级目录</el-button>
+      <el-button :disabled="folderLoading" @click="browseFolders('')">用户主目录</el-button>
+      <el-button :disabled="folderLoading" @click="browseFolders('/')">根目录</el-button>
+    </div>
+    <div class="copy-folder-path font-mono-code">{{ folderPath }}</div>
+    <div v-if="folderError" class="copy-error" role="alert">{{ folderError }}</div>
+    <el-table :data="folders" height="300" v-loading="folderLoading" empty-text="没有子目录" @row-click="enterFolder">
+      <el-table-column prop="name" label="文件夹" show-overflow-tooltip />
+      <el-table-column width="70"><template #default="{ row }"><el-button link type="primary" :disabled="folderLoading" @click.stop="enterFolder(row)">进入</el-button></template></el-table-column>
+    </el-table>
+    <template #footer>
+      <el-button @click="closeFolders">取消</el-button>
+      <el-button type="primary" :disabled="folderLoading || !!folderError || !folderPath" @click="chooseFolder">选择当前目录</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
-import { reactive, ref, watch } from 'vue'
+import { onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { listScheduleAccounts, sftpCopy } from '@/api/sshConsole'
+import { listScheduleAccounts, sftpCopy, sftpCopyTargetUsers, sftpCopyTargetDirectories } from '@/api/sshConsole'
 import { useTransfers } from '@/composables/useTransfers'
 
 const props = defineProps({ source: { type: Object, required: true } })
@@ -46,7 +67,12 @@ const emit = defineEmits(['close', 'queued'])
 const { enqueueTransfer } = useTransfers()
 const form = reactive({ targetAccountId: null, targetPath: '', mode: 'RELAY', owner: '', overwrite: false })
 const accounts = ref([]), loadingAccounts = ref(false), accountsError = ref(''), formError = ref('')
+const owners = ref([]), loadingOwners = ref(false), ownerError = ref('')
+const folderDialog = ref(false), folderLoading = ref(false), folderPath = ref(''), folderError = ref(''), folders = ref([])
 let accountRequest = 0
+let ownerRequest = 0, folderRequest = 0
+const parentDirectory = path => path?.slice(0, path.lastIndexOf('/')) || '/'
+const suggestOwners = (query, callback) => callback(owners.value.filter(owner => owner.toLowerCase().includes(query.toLowerCase())).map(value => ({ value })))
 const accountLabel = account => `${account.hostName} / ${account.username}`
 async function loadAccounts() {
   const sequence = ++accountRequest
@@ -55,7 +81,50 @@ async function loadAccounts() {
   catch (error) { if (sequence === accountRequest) accountsError.value = error.message || '无法加载目标账户' }
   finally { if (sequence === accountRequest) loadingAccounts.value = false }
 }
-watch(() => props.source, () => { formError.value = ''; void loadAccounts() }, { immediate: true })
+watch(() => props.source, source => {
+  form.targetAccountId = null
+  form.targetPath = parentDirectory(source.sourcePath)
+  formError.value = ''; void loadAccounts()
+}, { immediate: true })
+watch(() => [props.source.sessionToken, form.targetAccountId], () => {
+  closeFolders(); folders.value = []; folderPath.value = ''; folderError.value = ''
+  form.owner = ''; void loadOwners()
+})
+async function loadOwners() {
+  const sequence = ++ownerRequest, token = props.source.sessionToken, accountId = form.targetAccountId
+  owners.value = []; ownerError.value = ''; loadingOwners.value = !!accountId
+  if (!accountId) return
+  try {
+    const result = await sftpCopyTargetUsers(token, accountId)
+    if (sequence === ownerRequest) owners.value = result?.users || []
+  } catch (error) {
+    if (sequence === ownerRequest) ownerError.value = error.message || '无法读取接收方用户，可手动输入'
+  } finally { if (sequence === ownerRequest) loadingOwners.value = false }
+}
+function closeFolders() { folderDialog.value = false; folderRequest++; folderLoading.value = false }
+async function openFolders() {
+  if (!form.targetAccountId) return
+  folderDialog.value = true
+  await browseFolders(form.targetPath.trim().startsWith('/') ? form.targetPath.trim() : '')
+}
+async function browseFolders(path) {
+  const sequence = ++folderRequest, token = props.source.sessionToken, accountId = form.targetAccountId
+  folderLoading.value = true; folderError.value = ''; folders.value = []; folderPath.value = ''
+  try {
+    const result = await sftpCopyTargetDirectories(token, accountId, path)
+    if (sequence !== folderRequest) return
+    folderPath.value = result.path; folders.value = result.items || []
+  } catch (error) { if (sequence === folderRequest) folderError.value = error.message || '无法读取接收方目录' }
+  finally { if (sequence === folderRequest) folderLoading.value = false }
+}
+function enterFolder(row) {
+  if (!folderLoading.value) return browseFolders(`${folderPath.value.replace(/\/$/, '')}/${row.name}`)
+}
+function chooseFolder() {
+  if (folderLoading.value || folderError.value || !folderPath.value) return
+  form.targetPath = folderPath.value; closeFolders()
+}
+onBeforeUnmount(() => { accountRequest++; ownerRequest++; folderRequest++ })
 function submit() {
   formError.value = ''
   const source = { ...props.source }, targetPath = form.targetPath.trim(), owner = form.owner.trim()
@@ -76,6 +145,11 @@ function submit() {
 
 <style scoped>
 .copy-full-width { width: 100%; }
+.copy-path-input { display: flex; gap: 8px; width: 100%; }
+.copy-path-input .el-input { flex: 1; min-width: 0; }
+.copy-folder-toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+.copy-folder-toolbar .el-button + .el-button { margin-left: 0; }
+.copy-folder-path { overflow-wrap: anywhere; margin: 12px 0; }
 .copy-source { overflow-wrap: anywhere; color: var(--el-text-color-regular); background: var(--el-fill-color-light); border-radius: 6px; padding: 12px; margin-bottom: 20px; }
 .copy-options { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 520px) { .copy-options { grid-template-columns: 1fr; gap: 0; } }

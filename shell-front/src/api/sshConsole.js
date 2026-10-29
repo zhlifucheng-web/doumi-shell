@@ -4,6 +4,14 @@ import { runRemoteCopy } from '@/composables/remoteCopy'
 
 const BASE = '/api/ssh-console'
 
+export function sftpCopyTargetUsers(sessionToken, targetAccountId) {
+  return get(`${BASE}/sftp/copy/target-users`, { sessionToken, targetAccountId }, { showSuccess: false, showFailure: false })
+}
+
+export function sftpCopyTargetDirectories(sessionToken, targetAccountId, path) {
+  return get(`${BASE}/sftp/copy/target-directories`, { sessionToken, targetAccountId, path }, { showSuccess: false, showFailure: false })
+}
+
 export function sftpCopy(snapshot, options = {}) {
   return runRemoteCopy(snapshot, options, (action, body) => handleApiResponse(
     action === 'status'
