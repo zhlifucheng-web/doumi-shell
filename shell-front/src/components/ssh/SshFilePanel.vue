@@ -318,12 +318,14 @@
           @open="enterDir"
           @folder-download="folderTransfer?.openDownload($event)"
           @rename="openRename"
+          @copy-to="openCopy"
           @chown="openChown"
           @delete="confirmDelete"
         />
       </div>
     </template>
 
+    <RemoteCopyDialog v-if="copySource" :source="copySource" @close="copySource = null" @queued="showTransfers = true" />
     <el-dialog v-model="showTransfers" title="文件传输 · 当前服务器" width="min(1080px, 94vw)" top="8vh" append-to-body destroy-on-close>
       <p v-if="transferHistoryWarning" role="alert" class="transfer-error">{{ transferHistoryWarning }}</p>
       <div class="transfer-heading">
@@ -495,6 +497,7 @@ import { storeToRefs } from 'pinia'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { isTransferActive, transferErrorMessage, transfersForServer } from '@/composables/transferHistory'
 import FolderTransfer from './FolderTransfer.vue'
+import RemoteCopyDialog from './RemoteCopyDialog.vue'
 import SshVirtualTable from './SshVirtualTable.vue'
 import SshFileEditorDialog from './SshFileEditorDialog.vue'
 import SshLargeFileViewerDialog from './SshLargeFileViewerDialog.vue'
@@ -528,6 +531,12 @@ watch(() => [props.accountId, props.hostId], ([accountId, hostId]) => {
 }, { immediate: true })
 const visibleTransfers = computed(() => transfersForServer(transfers?.value || transfers, props.hostId))
 const showTransfers = ref(false)
+const copySource = ref(null)
+function openCopy(row) {
+  if (!props.sessionToken || !loadedPath.value?.startsWith('/') || !row?.name || ['.', '..'].includes(row.name)) return
+  copySource.value = { sessionToken: props.sessionToken, sourcePath: `${loadedPath.value.replace(/\/$/, '')}/${row.name}`,
+    name: row.name, accountId: props.accountId, hostId: props.hostId }
+}
 const activeTransfers = computed(() => visibleTransfers.value.filter(isTransferActive))
 const activeTransferCount = computed(() => activeTransfers.value.length)
 
