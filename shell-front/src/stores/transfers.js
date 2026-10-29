@@ -85,10 +85,11 @@ export const useTransferStore = defineStore('transfers', () => {
       if (controller.signal.aborted) { task.status = '已取消'; return }
       task.status = '传输中'; const start = performance.now()
       try {
-        await run({ signal: controller.signal, onCommitting: () => { task.status = '保存中' }, onProgress: (loaded, currentTotal) => {
+        const result = await run({ signal: controller.signal, onCommitting: () => { task.status = '保存中' }, onProgress: (loaded, currentTotal) => {
           task.loaded = loaded; task.total = currentTotal || task.total; task.speed = loaded / Math.max((performance.now() - start) / 1000, 0.001)
         } })
-        task.status = controller.signal.aborted ? '已取消' : '已完成'
+        task.status = controller.signal.aborted && !result?.completed ? '已取消' : '已完成'
+        if (result?.warning) task.error = result.warning
       } catch (error) {
         const committing = task.status === '保存中'
         task.status = controller.signal.aborted || error.name === 'AbortError' ? '已取消' : committing ? '结果待确认' : '失败'

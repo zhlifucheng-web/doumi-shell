@@ -170,6 +170,7 @@
                   下载
                 </el-button>
               </template>
+              <el-button link type="primary" size="small" @click.stop="$emit('copy-to', row)">复制到</el-button>
               <el-button link size="small" @click.stop="$emit('rename', row)">
                 重命名
               </el-button>
@@ -231,6 +232,9 @@
           </div>
         </template>
         <div class="ctx-menu-divider" />
+        <div class="ctx-menu-item" @click="handleContextMenuAction('copy-to')">
+          <el-icon><DocumentCopy /></el-icon><span>复制到机器…</span>
+        </div>
         <!-- 复制 子菜单 (路径 / 文件名) -->
         <div
           class="ctx-menu-item has-submenu"
@@ -320,6 +324,7 @@ const emit = defineEmits([
   'download',
   'open',
   'folder-download',
+  'copy-to',
   'rename',
   'chown',
   'delete'
@@ -333,7 +338,7 @@ const viewportHeight = ref(400)
 const buffer = 8
 
 const isCompact = computed(() => props.embedded && !props.showDetails)
-const minTableWidth = computed(() => (isCompact.value ? '600px' : '1020px'))
+const minTableWidth = computed(() => (isCompact.value ? '650px' : '1105px'))
 
 const totalCount = computed(() => props.items?.length || 0)
 const totalHeight = computed(() => totalCount.value * props.rowHeight)
@@ -562,6 +567,9 @@ function handleContextMenuAction(action) {
     case 'rename':
       emit('rename', row)
       break
+    case 'copy-to':
+      emit('copy-to', row)
+      break
     case 'chown':
       emit('chown', row)
       break
@@ -670,7 +678,7 @@ onBeforeUnmount(() => {
 
 .virtual-header {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) 90px 80px 80px 105px 155px 155px 220px;
+  grid-template-columns: minmax(180px, 1fr) 90px 80px 80px 105px 155px 155px 260px;
   align-items: center;
   height: 38px;
   font-size: 12px;
@@ -680,7 +688,7 @@ onBeforeUnmount(() => {
 }
 
 .virtual-header.is-compact {
-  grid-template-columns: minmax(160px, 1fr) 85px 155px 200px;
+  grid-template-columns: minmax(160px, 1fr) 85px 155px 250px;
 }
 
 .v-th {
@@ -756,7 +764,7 @@ onBeforeUnmount(() => {
 
 .virtual-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) 90px 80px 80px 105px 155px 155px 220px;
+  grid-template-columns: minmax(180px, 1fr) 90px 80px 80px 105px 155px 155px 260px;
   align-items: center;
   border-bottom: 1px solid var(--el-border-color-lighter, #f0f2f5);
   font-size: 12px;
@@ -767,7 +775,7 @@ onBeforeUnmount(() => {
 }
 
 .virtual-row.is-compact {
-  grid-template-columns: minmax(160px, 1fr) 85px 155px 200px;
+  grid-template-columns: minmax(160px, 1fr) 85px 155px 250px;
 }
 
 .virtual-row.is-context-selected {
