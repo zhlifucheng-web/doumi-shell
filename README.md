@@ -75,7 +75,7 @@ AI 助手可读取服务器资源、排查进程、执行命令和管理文件�
 
 ### Windows
 
-1. 从 [GitHub Releases](https://github.com/zhlifucheng-web/doumi-shell/releases) 下载最新版本的 `Doumi Shell-*.msi` 并双击安装。
+1. 从 [GitHub Releases](https://github.com/zhlifucheng-web/doumi-shell/releases) 下载最新版本的 `Doumi.Shell-*.msi` 并双击安装。
 2. 选择安装目录，按需创建桌面和开始菜单快捷方式。
 3. 安装完成时勾选 **Open Doumi Shell in browser now**，或稍后通过快捷方式启动。
 4. 程序就绪后自动打开浏览器，也可以访问 **http://localhost/**。

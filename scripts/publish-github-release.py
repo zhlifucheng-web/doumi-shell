@@ -1,5 +1,6 @@
 """Publish the current Windows and Linux packages to the GitHub release for version.json."""
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -85,24 +86,30 @@ def main():
     uploaded = {asset.get('name') for asset in release.get('assets', [])}
     upload_url = release['upload_url'].split('{', 1)[0]
     for artifact in artifacts:
-        if artifact.name in uploaded:
-            print('Already uploaded:', artifact.name)
+        asset_name = artifact.name.replace(' ', '.')
+        if asset_name in uploaded:
+            print('Already uploaded:', asset_name)
             continue
         for attempt in range(3):
             try:
-                with artifact.open('rb') as stream:
-                    response = session.post(upload_url, params={'name': artifact.name},
+                if artifact.name.endswith('.sha256') and artifact.name.startswith('Doumi Shell-'):
+                    data = artifact.read_bytes().replace(b'Doumi Shell-', b'Doumi.Shell-')
+                    stream = io.BytesIO(data)
+                else:
+                    stream = artifact.open('rb')
+                with stream:
+                    response = session.post(upload_url, params={'name': asset_name},
                                             headers={'Content-Type': 'application/octet-stream'},
                                             data=stream, timeout=(20, 600))
                 if response.status_code != 201:
-                    raise RuntimeError(f'GitHub upload failed for {artifact.name}: HTTP {response.status_code}')
-                print('Uploaded:', artifact.name)
+                    raise RuntimeError(f'GitHub upload failed for {asset_name}: HTTP {response.status_code}')
+                print('Uploaded:', asset_name)
                 break
             except requests.RequestException:
                 release = call('GET', '/releases/tags/' + tag)
                 uploaded = {asset.get('name') for asset in release.get('assets', [])}
-                if artifact.name in uploaded:
-                    print('Upload confirmed after interrupted response:', artifact.name)
+                if asset_name in uploaded:
+                    print('Upload confirmed after interrupted response:', asset_name)
                     break
                 if attempt == 2:
                     raise

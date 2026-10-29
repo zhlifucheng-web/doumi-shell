@@ -20,7 +20,7 @@ class SshReleaseServiceTest {
         server = MockRestServiceServer.createServer((RestTemplate) ReflectionTestUtils.getField(service, "http"));
     }
     String release(String version) {
-        return "{\"tag_name\":\"v" + version + "\",\"html_url\":null,\"assets\":[{\"name\":\"Doumi Shell-" + version
+        return "{\"tag_name\":\"v" + version + "\",\"html_url\":null,\"assets\":[{\"name\":\"Doumi.Shell-" + version
                 + ".msi\"},{\"name\":\"doumi-shell-" + version + "-linux-x64.tar.gz\"}]}";
     }
     @Test void resolvesExactReleaseAndPlatformLinksWithoutHtmlUrl() {
@@ -29,7 +29,7 @@ class SshReleaseServiceTest {
         assertNull(latest.getError());
         assertEquals("1.0.18", latest.getVersion());
         assertEquals("https://github.com/zhlifucheng-web/doumi-shell/releases/tag/v1.0.18", latest.getUrl());
-        assertTrue(latest.getWindowsUrl().endsWith("/Doumi%20Shell-1.0.18.msi"));
+        assertTrue(latest.getWindowsUrl().endsWith("/Doumi.Shell-1.0.18.msi"));
         assertTrue(latest.getLinuxUrl().endsWith("/doumi-shell-1.0.18-linux-x64.tar.gz"));
         assertSame(latest, service.latest(false));
         server.verify();

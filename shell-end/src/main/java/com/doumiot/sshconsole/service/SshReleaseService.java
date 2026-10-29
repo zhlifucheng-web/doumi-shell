@@ -47,8 +47,8 @@ public class SshReleaseService {
             for (JsonNode asset : release.path("assets")) {
                 String name = asset.path("name").asText("");
                 // Build trusted links from the validated version rather than accepting arbitrary upstream URLs.
-                if (name.equals("Doumi Shell-" + version + ".msi"))
-                    latest.setWindowsUrl(REPOSITORY + "/releases/download/v" + version + "/Doumi%20Shell-" + version + ".msi");
+                if (name.equals("Doumi.Shell-" + version + ".msi"))
+                    latest.setWindowsUrl(REPOSITORY + "/releases/download/v" + version + "/Doumi.Shell-" + version + ".msi");
                 if (name.equals("doumi-shell-" + version + "-linux-x64.tar.gz"))
                     latest.setLinuxUrl(REPOSITORY + "/releases/download/v" + version + "/" + name);
             }

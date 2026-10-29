@@ -29,7 +29,7 @@ export async function requestLatestRelease(current, { apiBase = '', refresh = fa
     const version = normalizeVersion(result?.version)
     const repository = 'https://github.com/zhlifucheng-web/doumi-shell'
     return { version, url: `${repository}/releases/tag/v${version}`, newer: hasNewerVersion(version, current),
-      windowsUrl: `${repository}/releases/download/v${version}/Doumi%20Shell-${version}.msi`,
+      windowsUrl: `${repository}/releases/download/v${version}/Doumi.Shell-${version}.msi`,
       linuxUrl: `${repository}/releases/download/v${version}/doumi-shell-${version}-linux-x64.tar.gz` }
   } catch (error) {
     if (controller.signal.aborted) throw new Error('检查更新超时，请检查 Doumi Shell 服务与服务器网络，或打开 GitHub 下载页面')
