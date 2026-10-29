@@ -17,7 +17,7 @@ test('uses the local backend and exact trusted release/download addresses', asyn
     return reply({version:'1.0.18',url:'https://untrusted.invalid/'})
   } })
   assert.equal(result.newer, true)
-  assert.equal(result.url, 'https://gitee.com/hahadoumi/web-shell/releases/tag/v1.0.18')
+  assert.equal(result.url, 'https://github.com/zhlifucheng-web/doumi-shell/releases/tag/v1.0.18')
   assert.match(result.windowsUrl, /Doumi%20Shell-1.0.18.msi$/)
 })
 test('rate limits and server failures reject instead of returning up-to-date', async () => {
@@ -26,7 +26,7 @@ test('rate limits and server failures reject instead of returning up-to-date', a
   await assert.rejects(requestLatestRelease('1.0.17', { fetchImpl: async () => ({ok:true,json:async()=>({success:false,code:500,message:'服务错误'})}) }), /服务错误/)
 })
 test('network and malformed responses provide a manual-download fallback instruction', async () => {
-  await assert.rejects(requestLatestRelease('1.0.17', { fetchImpl: async () => { throw new TypeError('Failed to fetch') } }), /Gitee 下载页面/)
+  await assert.rejects(requestLatestRelease('1.0.17', { fetchImpl: async () => { throw new TypeError('Failed to fetch') } }), /GitHub 下载页面/)
   await assert.rejects(requestLatestRelease('1.0.17', { fetchImpl: async () => { throw new SyntaxError('bad json') } }), /运行中的程序和网页版本一致/)
   await assert.rejects(requestLatestRelease('1.0.17', { fetchImpl: async () => reply(null) }), /版本号格式无效/)
 })

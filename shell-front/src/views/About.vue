@@ -15,7 +15,7 @@
       <el-alert v-if="latest?.newer" type="success" :closable="false" show-icon>
         <template #title>{{ checkError ? '上次检测到' : '发现' }}新版本 v{{ latest.version }}</template>
         <template #default>
-          <el-link :href="latest.url" target="_blank" rel="noopener noreferrer" type="success">前往 Gitee 查看版本说明</el-link>
+          <el-link :href="latest.url" target="_blank" rel="noopener noreferrer" type="success">前往 GitHub 查看版本说明</el-link>
           <div class="platform-downloads">
             <el-link :href="latest.windowsUrl" target="_blank" rel="noopener noreferrer" type="primary">下载 Windows MSI</el-link>
             <el-link :href="latest.linuxUrl" target="_blank" rel="noopener noreferrer" type="primary">下载 Linux x64 包</el-link>
@@ -25,9 +25,9 @@
       <el-alert v-else-if="checked && !checkError" type="info" :closable="false" show-icon :title="`当前 v${appVersion}，未发现更新版本（最新发布 v${latest.version}）`" />
       <div class="about-actions">
         <el-button :loading="checking" @click="check()">检查更新</el-button>
-        <el-button tag="a" :href="releaseUrl" target="_blank" rel="noopener noreferrer">打开 Gitee 下载页面</el-button>
+        <el-button tag="a" :href="releaseUrl" target="_blank" rel="noopener noreferrer">打开 GitHub 下载页面</el-button>
         <el-button type="primary" tag="a" :href="repositoryUrl" target="_blank">
-          <el-icon><Star /></el-icon> 去 Gitee 点个 Star
+          <el-icon><Star /></el-icon> 去 GitHub 点个 Star
         </el-button>
       </div>
       <div class="upgrade-instructions">
@@ -66,8 +66,8 @@ async function check(showMessage = true) {
     checked.value = true
     if (showMessage) ElMessage.success(latest.value.newer ? `发现新版本 v${latest.value.version}，请下载安装` : '未发现更新版本')
   } catch (error) {
-    checkError.value = error.message || '无法完成版本检查，请打开 Gitee 下载页面查看'
-    if (showMessage) ElMessage.warning('检查更新失败，请查看页面提示或直接打开 Gitee 下载页面')
+    checkError.value = error.message || '无法完成版本检查，请打开 GitHub 下载页面查看'
+    if (showMessage) ElMessage.warning('检查更新失败，请查看页面提示或直接打开 GitHub 下载页面')
   }
 }
 

@@ -10,7 +10,7 @@ Doumi Shell 是一款支持 Windows 和 Linux 的 SSH 运维工作台。双击�
 
 Windows MSI 自带运行环境，Linux 部署需要 Java 17；访问端只需浏览器，无需安装 Java、Node.js 或 Doumi Shell。程序升级在部署机器上完成，其他设备重新打开网页即可使用新版界面。
 
-[下载安装](https://gitee.com/hahadoumi/web-shell/releases) · [使用教程](docs/user-guide.md) · [AI API](docs/ai-api.md) · [非商业许可](LICENSE)
+[GitHub 下载](https://github.com/zhlifucheng-web/doumi-shell/releases) · [GitHub 仓库](https://github.com/zhlifucheng-web/doumi-shell) · [使用教程](docs/user-guide.md) · [AI API](docs/ai-api.md) · [非商业许可](LICENSE)
 
 ## 亮点功能
 
@@ -75,14 +75,14 @@ AI 助手可读取服务器资源、排查进程、执行命令和管理文件�
 
 ### Windows
 
-1. 从 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载最新版本的 `Doumi Shell-*.msi` 并双击安装。
+1. 从 [GitHub Releases](https://github.com/zhlifucheng-web/doumi-shell/releases) 下载最新版本的 `Doumi Shell-*.msi` 并双击安装。
 2. 选择安装目录，按需创建桌面和开始菜单快捷方式。
 3. 安装完成时勾选 **Open Doumi Shell in browser now**，或稍后通过快捷方式启动。
 4. 程序就绪后自动打开浏览器，也可以访问 **http://localhost/**。
 
 ### Linux
 
-1. 在 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 下载最新版本的 `doumi-shell-*-linux-x64.tar.gz`。
+1. 在 [GitHub Releases](https://github.com/zhlifucheng-web/doumi-shell/releases) 下载最新版本的 `doumi-shell-*-linux-x64.tar.gz`。
 2. 解压并进入目录，确认已安装 Java 17，然后运行启动脚本：
 
    ```bash

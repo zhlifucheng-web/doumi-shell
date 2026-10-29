@@ -14,8 +14,8 @@ import org.springframework.web.client.RestTemplate;
 @Service
 @SshConsoleEnabled
 public class SshReleaseService {
-    private static final String REPOSITORY = "https://gitee.com/hahadoumi/web-shell";
-    static final String API = "https://gitee.com/api/v5/repos/hahadoumi/web-shell/releases/latest";
+    private static final String REPOSITORY = "https://github.com/zhlifucheng-web/doumi-shell";
+    static final String API = "https://api.github.com/repos/zhlifucheng-web/doumi-shell/releases/latest";
     private final RestTemplate http;
     private final ObjectMapper json = new ObjectMapper();
     private Latest cached;
@@ -37,10 +37,10 @@ public class SshReleaseService {
             headers.setCacheControl("no-cache");
             ResponseEntity<String> response = http.exchange(API, HttpMethod.GET, new HttpEntity<>(headers), String.class);
             JsonNode release = json.readTree(response.getBody());
-            if (release == null || release.isNull()) return failure("Gitee 暂未返回可用发布版本，请稍后重试或直接打开下载页面。");
+            if (release == null || release.isNull()) return failure("GitHub 暂未返回可用发布版本，请稍后重试或直接打开下载页面。");
             String version = release.path("tag_name").asText("").replaceFirst("^v", "");
             if (!version.matches("[0-9]+\\.[0-9]+\\.[0-9]+") || release.path("prerelease").asBoolean(false))
-                return failure("Gitee 返回的版本信息无效，无法判断是否有更新，请打开下载页面查看。");
+                return failure("GitHub 返回的版本信息无效，无法判断是否有更新，请打开下载页面查看。");
             Latest latest = new Latest();
             latest.setVersion(version);
             latest.setUrl(REPOSITORY + "/releases/tag/v" + version);
@@ -59,12 +59,12 @@ public class SshReleaseService {
             return latest;
         } catch (HttpStatusCodeException error) {
             int status = error.getRawStatusCode();
-            if (status == 403 || status == 429) return failure("Gitee 拒绝或限制了更新请求（HTTP " + status + "），请稍后重试或打开下载页面。");
-            return failure("Gitee 更新服务返回 HTTP " + status + "，无法确认最新版本，请稍后重试。");
+            if (status == 403 || status == 429) return failure("GitHub 拒绝或限制了更新请求（HTTP " + status + "），请稍后重试或打开下载页面。");
+            return failure("GitHub 更新服务返回 HTTP " + status + "，无法确认最新版本，请稍后重试。");
         } catch (ResourceAccessException error) {
-            return failure("部署 Doumi Shell 的机器无法连接 Gitee，可能是连接超时、DNS 或网络限制。请检查服务器网络，或直接打开下载页面。");
+            return failure("部署 Doumi Shell 的机器无法连接 GitHub，可能是连接超时、DNS 或网络限制。请检查服务器网络，或直接打开下载页面。");
         } catch (Exception error) {
-            return failure("无法解析 Gitee 版本信息，本次未能确认最新版本，请稍后重试或打开下载页面。");
+            return failure("无法解析 GitHub 版本信息，本次未能确认最新版本，请稍后重试或打开下载页面。");
         }
     }
 

@@ -2,7 +2,7 @@ import release from '../../public/version.json'
 import { hasNewerVersion as compareVersions, requestLatestRelease } from './releaseCheck'
 
 export const appVersion = release.version
-export const repositoryUrl = 'https://gitee.com/hahadoumi/web-shell'
+export const repositoryUrl = 'https://github.com/zhlifucheng-web/doumi-shell'
 export const releaseUrl = `${repositoryUrl}/releases`
 
 let latestResult = null

@@ -28,7 +28,7 @@ class SshReleaseServiceTest {
         SshReleaseService.Latest latest = service.latest(false);
         assertNull(latest.getError());
         assertEquals("1.0.18", latest.getVersion());
-        assertEquals("https://gitee.com/hahadoumi/web-shell/releases/tag/v1.0.18", latest.getUrl());
+        assertEquals("https://github.com/zhlifucheng-web/doumi-shell/releases/tag/v1.0.18", latest.getUrl());
         assertTrue(latest.getWindowsUrl().endsWith("/Doumi%20Shell-1.0.18.msi"));
         assertTrue(latest.getLinuxUrl().endsWith("/doumi-shell-1.0.18-linux-x64.tar.gz"));
         assertSame(latest, service.latest(false));
@@ -54,7 +54,7 @@ class SshReleaseServiceTest {
         server.expect(requestTo(SshReleaseService.API)).andRespond(request -> { throw new IOException("timed out"); });
         SshReleaseService.Latest result = service.latest(true);
         assertNull(result.getVersion());
-        assertTrue(result.getError().contains("部署 Doumi Shell 的机器无法连接 Gitee"));
+        assertTrue(result.getError().contains("部署 Doumi Shell 的机器无法连接 GitHub"));
     }
     @Test void missingAssetsAreReportedAsIncompleteRelease() {
         server.expect(requestTo(SshReleaseService.API)).andRespond(withSuccess("{\"tag_name\":\"v1.0.18\",\"assets\":[]}", MediaType.APPLICATION_JSON));
