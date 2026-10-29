@@ -76,8 +76,10 @@
 
     <div v-if="disconnected" class="reconnect-bar">
       <span>{{ manuallyDisconnected ? (connectionMode.includes('tmux') ? '已手动断开，远端 tmux 会话保留' : '已手动断开') : '会话已断开' }}</span>
-      <el-button size="small" type="primary" @click="reconnect">重新连接</el-button>
-      <el-button v-if="!shareToken" size="small" @click="reconnectPlainSsh">改用普通 SSH</el-button>
+      <template v-if="!connectionActionsInToolbar">
+        <el-button size="small" type="primary" @click="reconnect">重新连接</el-button>
+        <el-button v-if="!shareToken" size="small" @click="reconnectPlainSsh">改用普通 SSH</el-button>
+      </template>
     </div>
   </div>
 </template>
@@ -118,11 +120,13 @@ const props = defineProps({
   encoding: { type: String, default: 'UTF-8' },
   currentPath: { type: String, default: '' },
   active: { type: Boolean, default: true },
-  paused: { type: Boolean, default: false }
+  paused: { type: Boolean, default: false },
+  connectionActionsInToolbar: { type: Boolean, default: false }
 })
 
 const emit = defineEmits([
   'ready',
+  'connecting',
   'disconnected',
   'connection-error',
   'size-change',
@@ -699,6 +703,7 @@ function connect() {
   tmuxVersion.value = ''
   tmuxVersionSource.value = 'unknown'
   statusMessage.value = '连接中…'
+  emit('connecting')
   dataBound = false
 
   terminal = new Terminal({
@@ -858,7 +863,8 @@ defineExpose({
   clearScreen,
   focusTerminal,
   disconnect,
-  reconnect
+  reconnect,
+  reconnectPlainSsh
 })
 
 onMounted(() => {

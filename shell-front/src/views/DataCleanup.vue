@@ -1,5 +1,5 @@
 <template>
-  <el-scrollbar class="page-scroll"><div class="cleanup"><h2>清除数据</h2>
+  <el-scrollbar class="page-scroll"><div class="cleanup">
     <p>配置按创建时间筛选，执行历史按开始时间筛选。正在执行的数据及其配置、仍被保留数据引用的记录会受到保护。</p>
     <el-alert title="清除后无法恢复，建议先到“配置导入导出”备份配置。" type="warning" :closable="false" />
     <el-form label-position="top" class="form">

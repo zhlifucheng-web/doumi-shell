@@ -445,7 +445,7 @@
                       </el-dropdown>
                       <TerminalToolbar
                         :allow-disconnect="!!activeTerminalTab"
-                        :disconnect-disabled="!!activeTerminalTab?.manuallyDisconnected"
+                        :connection-state="activeTerminalTab?.connectionState || (activeTerminalTab?.token ? 'connected' : 'connecting')"
                         :snippet-visible="snippetBarVisible"
                         :is-split="isSplit"
                         :allow-split="terminalTabs.length > 1"
@@ -454,6 +454,8 @@
                         :encoding="activeTerminalTab?.encoding || terminalEncoding"
                         @clear="onClearActiveTerminal"
                         @disconnect="disconnectTerminalTab(activeTerminalId)"
+                        @reconnect="reconnectTerminalTab(activeTerminalId)"
+                        @reconnect-ssh="reconnectTerminalTab(activeTerminalId, true)"
                         @toggle-snippets="snippetBarVisible = !snippetBarVisible"
                         @toggle-split="isSplit = !isSplit"
                         @change-font-size="size => terminalFontSize = size"
@@ -479,6 +481,7 @@
                       <div class="terminal-pane main-pane">
                         <div v-for="tab in terminalTabs" :key="`terminal-${tab.tabId}`" v-show="activeTerminalId === tab.tabId" class="terminal-tab-content">
                           <SshTerminal :account-id="tab.accountId"
+                            connection-actions-in-toolbar
                             :active="activeTerminalId === tab.tabId"
                             :paused="!!tab.manuallyDisconnected"
                             :terminal-id="tab.terminalId || tab.tabId"
@@ -489,6 +492,7 @@
                             :current-path="tab.sftpPath || tab.defaultCwd || ''"
                             @drop-files="onTerminalDropFiles"
                             @ready="payload => onTerminalReady(tab.tabId, payload)"
+                            @connecting="onTerminalConnecting(tab.tabId)"
                             @disconnected="payload => onTerminalDisconnected(tab.tabId, payload)"
                             @size-change="onTerminalSizeChange"
                             @change-encoding="enc => onChangeEncoding(enc, tab.tabId)"
@@ -500,12 +504,17 @@
                         <div class="split-pane-header">
                           <span class="split-badge">分屏会话</span>
                           <span class="split-label">{{ splitTerminalTab.label }}</span>
-                          <button type="button" class="split-close-btn" :disabled="!!splitTerminalTab.manuallyDisconnected"
-                            title="断开此会话的连接，保留远端 tmux 会话" @click="disconnectTerminalTab(splitTerminalTab.tabId)">断开连接</button>
+                          <TerminalConnectionActions
+                            :state="splitTerminalTab.connectionState || (splitTerminalTab.token ? 'connected' : 'connecting')"
+                            @disconnect="disconnectTerminalTab(splitTerminalTab.tabId)"
+                            @reconnect="reconnectTerminalTab(splitTerminalTab.tabId)"
+                            @reconnect-ssh="reconnectTerminalTab(splitTerminalTab.tabId, true)"
+                          />
                           <button type="button" class="split-close-btn" title="关闭分屏" @click="isSplit = false">✕</button>
                         </div>
                         <div class="split-pane-content">
                           <SshTerminal :account-id="splitTerminalTab.accountId"
+                            connection-actions-in-toolbar
                             :active="isSplit"
                             :paused="!!splitTerminalTab.manuallyDisconnected"
                             :terminal-id="splitTerminalTab.terminalId || splitTerminalTab.tabId"
@@ -516,6 +525,7 @@
                             :current-path="splitTerminalTab.sftpPath || splitTerminalTab.defaultCwd || ''"
                             @drop-files="onTerminalDropFiles"
                             @ready="payload => onTerminalReady(splitTerminalTab.tabId, payload)"
+                            @connecting="onTerminalConnecting(splitTerminalTab.tabId)"
                             @disconnected="payload => onTerminalDisconnected(splitTerminalTab.tabId, payload)"
                             @change-encoding="enc => onChangeEncoding(enc, splitTerminalTab.tabId)" />
                         </div>
@@ -528,6 +538,7 @@
                   <SshFilePanel v-if="activeTerminalTab" ref="filePanelRef"
                     :tab-id="activeTerminalTab.tabId" :saved-path="activeTerminalTab.sftpPath || ''"
                     :account-id="activeTerminalTab.accountId" :host-id="activeTerminalTab.hostId"
+                    :server-address="getTabHostAddress(activeTerminalTab)"
                     :active="accountTab === 'terminal'" embedded
                     :session-token="sessionToken" :default-cwd="activeTerminalTab.defaultCwd || ''"
                     :opening-session="openingFileSession" @request-session="establishFileSession"
@@ -833,6 +844,7 @@ import {
 import { useWorkspaceStore } from '@/stores/workspace'
 import SshTerminal from '@/components/ssh/SshTerminal.vue'
 import TerminalToolbar from '@/components/ssh/TerminalToolbar.vue'
+import TerminalConnectionActions from '@/components/ssh/TerminalConnectionActions.vue'
 import TerminalConnectionStatus from '@/components/ssh/TerminalConnectionStatus.vue'
 import { tmuxCompatibility } from '@/utils/tmuxCompatibility'
 import TerminalShareDialog from '@/components/ssh/TerminalShareDialog.vue'
@@ -1095,6 +1107,12 @@ function disconnectTerminalTab(tabId) {
   // A split tab also has a mounted primary view; detach both clients.
   terminalRefs.get(tabId)?.disconnect()
   terminalRefs.get(`split-${tabId}`)?.disconnect()
+}
+
+function reconnectTerminalTab(tabId, plainSsh = false) {
+  const method = plainSsh ? 'reconnectPlainSsh' : 'reconnect'
+  terminalRefs.get(tabId)?.[method]()
+  terminalRefs.get(`split-${tabId}`)?.[method]()
 }
 
 function toggleTerminalFullscreen() {
@@ -1756,6 +1774,7 @@ async function loadAccountHostMeta(hostId) {
 // An account may have multiple tabs, so accountId alone is not enough to identify it.
 watch([detail, accountHostMeta, activeTerminalTab], () => {
   const tab = activeTerminalTab.value
+  workspaceStore.terminalConnected = Boolean(tab?.token)
   const raw = tab?.account || detail.value.raw
   if (tab?.accountId && raw) {
     const host = accountHostMeta.value
@@ -2081,10 +2100,18 @@ function closeTerminalTab(tabId) {
   persistTerminalTabs()
 }
 
+function onTerminalConnecting(tabId) {
+  const tab = terminalTabs.value.find(item => item.tabId === tabId)
+  if (!tab) return
+  tab.manuallyDisconnected = false
+  tab.connectionState = 'connecting'
+}
+
 function onTerminalReady(tabId, payload) {
   const tab = terminalTabs.value.find(item => item.tabId === tabId)
   if (!tab) return
   tab.manuallyDisconnected = false
+  tab.connectionState = 'connected'
   tab.token = payload?.sessionToken || ''
   tab.connectionMode = payload?.connectionMode || ''
   tab.tmuxVersion = payload?.tmuxVersion || ''
@@ -2094,6 +2121,7 @@ function onTerminalReady(tabId, payload) {
 
 function onTerminalDisconnected(tabId, payload) {
   const tab = terminalTabs.value.find(item => item.tabId === tabId)
+  if (tab) tab.connectionState = 'disconnected'
   if (tab && payload?.manual) tab.manuallyDisconnected = true
   if (tab) { tab.token = ''; tab.connectionMode = ''; tab.tmuxVersion = ''; tab.tmuxVersionSource = 'unknown' }
   if (activeTerminalId.value === tabId) sessionToken.value = ''

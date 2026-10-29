@@ -38,11 +38,6 @@
     <div class="transfer-hover-divider" />
 
     <!-- File list -->
-    <div class="transfer-hover-list-header">
-      <span>正在传输文件 ({{ transfers.length }})</span>
-      <span v-if="transfers.length > 5" class="list-hint">可向下滚动</span>
-    </div>
-
     <div class="transfer-hover-list">
       <div
         v-for="task in transfers"
@@ -230,21 +225,6 @@ function getTaskPercent(task) {
   height: 1px;
   background: var(--el-border-color-lighter, #ebeef5);
   margin: 10px 0 8px;
-}
-
-.transfer-hover-list-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 11px;
-  color: var(--el-text-color-secondary, #909399);
-  margin-bottom: 6px;
-  padding: 0 2px;
-}
-
-.list-hint {
-  font-size: 10px;
-  color: var(--el-text-color-placeholder, #a8abb2);
 }
 
 .transfer-hover-list {

@@ -13,27 +13,26 @@
         <!-- 深色/浅色配色方案独立绑定切换条 -->
         <div class="mode-binding-banner">
           <div class="mode-binding-header">
-            <span class="mode-binding-title">配置绑定目标：</span>
-            <el-radio-group v-model="configuringMode" size="small" class="mode-radios">
+            <el-radio-group v-model="configuringMode" size="small" class="mode-radios" aria-label="终端配色适用模式">
               <el-radio-button label="dark">
-                🌙 深色模式配色 ({{ darkTheme.name }})
+                深色模式 ({{ darkTheme.name }})
               </el-radio-button>
               <el-radio-button label="light">
-                ☀️ 浅色模式配色 ({{ lightTheme.name }})
+                浅色模式 ({{ lightTheme.name }})
               </el-radio-button>
             </el-radio-group>
           </div>
-          <div class="mode-binding-desc">
-            <span>当前系统：<strong>{{ effectiveDark ? '深色模式' : '浅色模式' }}</strong>。切换网页深/浅色时，终端将自动切换至对应设置过的独立配色方案。</span>
-          </div>
+          <details class="mode-binding-desc">
+            <summary>配色说明</summary>
+            <p>当前为{{ effectiveDark ? '深色' : '浅色' }}模式。终端会随网页模式切换，使用各自绑定的配色。</p>
+          </details>
         </div>
 
         <el-tabs v-model="activeTab" class="theme-tabs">
           <!-- Tab 1: 内置主流经典配色 -->
           <el-tab-pane label="经典预设" name="presets">
             <!-- 快捷分类筛选 -->
-            <div class="filter-bar">
-              <span class="filter-label">筛选:</span>
+            <div class="filter-bar" role="group" aria-label="筛选配色">
               <button
                 type="button"
                 class="filter-pill"
@@ -48,7 +47,7 @@
                 :class="{ 'is-active': categoryFilter === 'dark' }"
                 @click="categoryFilter = 'dark'"
               >
-                深色系 (🌙)
+                深色系
               </button>
               <button
                 type="button"
@@ -56,7 +55,7 @@
                 :class="{ 'is-active': categoryFilter === 'light' }"
                 @click="categoryFilter = 'light'"
               >
-                浅色系 (☀️)
+                浅色系
               </button>
               <button
                 v-if="customThemes.length"
@@ -490,15 +489,16 @@ function onConfirmImport() {
   gap: 8px;
   flex-wrap: wrap;
 }
-.mode-binding-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ws-text-primary);
-}
 .mode-binding-desc {
   font-size: 11px;
   color: var(--ws-text-muted);
   line-height: 1.4;
+}
+.mode-binding-desc summary {
+  cursor: pointer;
+}
+.mode-binding-desc p {
+  margin: 6px 0 0;
 }
 
 .filter-bar {
@@ -508,10 +508,6 @@ function onConfirmImport() {
   margin-bottom: 8px;
   padding: 2px 0;
   flex-wrap: wrap;
-}
-.filter-label {
-  font-size: 11px;
-  color: var(--ws-text-muted);
 }
 .filter-pill {
   padding: 2px 8px;

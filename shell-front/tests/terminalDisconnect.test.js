@@ -97,6 +97,7 @@ function mountTerminal(props = {}, { keepAliveVisible } = {}) {
     modules, keepAliveVisible,
     props: { accountId: 1, terminalId: 'persistent-terminal', encoding: 'UTF-8', active: true, ...props,
       onDisconnected: payload => events.push(['disconnected', payload]),
+      onConnecting: () => events.push(['connecting']),
       onConnectionError: payload => events.push(['error', payload]),
       onReady: payload => events.push(['ready', payload]) },
     globals: { WebSocket: Socket, document, window,
@@ -264,6 +265,23 @@ test('manual reconnect reuses the same terminal identity and ignores old connect
     assert.equal(panel.state.disconnected.value, false)
     assert.equal(panel.events.some(([type]) => type === 'error'), false)
     assert.equal(panel.events.at(-1)[1].sessionToken, 'new-token')
+  } finally { panel.unmount() }
+})
+
+test('toolbar reconnect publishes connecting state and SSH retry preserves the terminal identity', () => {
+  const panel = mountTerminal({ paused: true })
+  try {
+    panel.state.reconnectPlainSsh()
+    assert.deepEqual(panel.events.at(-1), ['connecting'])
+    assert.equal(panel.state.disconnected.value, false)
+    assert.equal(panel.urls[0].terminalId, 'persistent-terminal')
+    assert.equal(panel.urls[0].transport, 'ssh')
+    panel.sockets[0].frame({ type: 'ready', sessionToken: 'ssh-token', connectionMode: 'ssh' })
+    panel.sockets[0].onerror()
+    assert.equal(panel.events.at(-2)[0], 'disconnected')
+    panel.state.reconnect()
+    assert.deepEqual(panel.events.at(-1), ['connecting'])
+    assert.equal(panel.urls[1].transport, 'ssh')
   } finally { panel.unmount() }
 })
 

@@ -143,7 +143,6 @@
       :rows="workspaceStore.terminalRows"
       :session-active="workspaceStore.terminalConnected"
       @open-transfers="onOpenTransfers"
-      @open-ai="aiDialog = true"
     />
 
     <ThemeBackground v-model="backgroundDialog" />

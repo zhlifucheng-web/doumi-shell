@@ -2,25 +2,17 @@
   <footer class="app-status-bar font-mono-code" role="contentinfo" aria-label="状态栏">
     <div class="status-left">
       <!-- 连通状态 -->
-      <div class="status-item status-conn" :class="{ 'is-connected': isConnected }">
-        <span class="online-pulse-dot"></span>
-        <span class="font-sans font-medium">{{ isConnected ? 'SSH-2.0 已建立' : '会话就绪' }}</span>
+      <div class="status-item status-conn" :class="{ 'is-connected': sessionActive }">
+        <span v-if="sessionActive" class="online-pulse-dot"></span>
+        <span class="font-sans font-medium">{{ sessionActive ? '已连接' : '未连接' }}</span>
       </div>
 
-      <span class="status-sep">|</span>
-      <span class="status-item">
-        延迟: <strong class="text-online font-normal">18ms</strong>
-      </span>
-
-      <span class="status-sep">|</span>
-      <span class="status-item">
-        尺寸: <strong>{{ cols || 120 }} x {{ rows || 34 }}</strong>
-      </span>
-
-      <span class="status-sep">|</span>
-      <span class="status-item">
-        编码: <strong>UTF-8</strong>
-      </span>
+      <template v-if="sessionActive && cols > 0 && rows > 0">
+        <span class="status-sep">|</span>
+        <span class="status-item" title="终端列数 × 行数">
+          <strong>{{ cols }} × {{ rows }}</strong>
+        </span>
+      </template>
     </div>
 
     <div class="status-right">
@@ -35,41 +27,23 @@
         <el-icon><Upload /></el-icon>
         <span>传输: {{ activeTransferCount > 0 ? `${activeTransferCount} 进行中 · ${overallPercent}%` : '就绪' }}</span>
       </button>
-
-      <span class="status-sep">|</span>
-
-      <!-- AI 状态 -->
-      <button
-        type="button"
-        class="status-btn status-ai-btn"
-        title="打开 AI Copilot · Ctrl + Shift + K"
-        @click="$emit('open-ai')"
-      >
-        <span class="ai-sparkle-dot">✨</span>
-        <span class="font-sans font-medium">AI Ready</span>
-      </button>
     </div>
   </footer>
 </template>
 
 <script setup>
 import { computed } from 'vue'
-import { storeToRefs } from 'pinia'
 import { Upload } from '@element-plus/icons-vue'
-import { useWorkspaceStore } from '@/stores/workspace'
 import { useTransferStore } from '@/stores/transfers'
 import { isTransferActive } from '@/composables/transferHistory'
 
-const props = defineProps({
+defineProps({
   cols: { type: Number, default: 0 },
   rows: { type: Number, default: 0 },
   sessionActive: { type: Boolean, default: false }
 })
 
-defineEmits(['open-transfers', 'open-ai'])
-
-const workspaceStore = useWorkspaceStore()
-const { managedServer } = storeToRefs(workspaceStore)
+defineEmits(['open-transfers'])
 
 const transferStore = useTransferStore()
 const activeTransferCount = computed(() => {
@@ -86,10 +60,6 @@ const overallPercent = computed(() => {
     total += Math.max(0, Number(t.total) || 0)
   }
   return total > 0 ? Math.min(99, Math.floor((loaded / total) * 100)) : 0
-})
-
-const isConnected = computed(() => {
-  return Boolean(props.sessionActive || managedServer.value)
 })
 </script>
 
@@ -135,10 +105,6 @@ const isConnected = computed(() => {
   color: var(--ws-color-online);
 }
 
-.text-online {
-  color: var(--ws-color-online);
-}
-
 .status-sep {
   color: var(--ws-border);
   font-weight: 300;
@@ -166,12 +132,5 @@ const isConnected = computed(() => {
 .status-btn.has-transfers {
   color: var(--ws-accent);
   font-weight: 600;
-}
-
-.status-ai-btn {
-  color: var(--ws-accent);
-}
-.ai-sparkle-dot {
-  font-size: 11px;
 }
 </style>

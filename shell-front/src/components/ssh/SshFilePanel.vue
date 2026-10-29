@@ -20,7 +20,6 @@
           建立文件会话
         </el-button>
       </el-empty>
-      <p class="hint">也可先在「终端」Tab 连接，连接成功后会自动复用 sessionToken。</p>
       <el-popover
         trigger="hover"
         :width="350"
@@ -453,6 +452,7 @@
       :dir="loadedPath || currentPath || defaultCwd || '/'"
       :session-token="sessionToken"
       :account-id="accountId"
+      :server-address="serverAddress"
       @switch-to-editor="openFullEditor"
     />
   </div>
@@ -513,6 +513,7 @@ const props = defineProps({
   tabId: { type: String, default: '' },
   savedPath: { type: String, default: '' },
   hostId: { type: Number, default: null },
+  serverAddress: { type: String, default: '' },
   active: { type: Boolean, default: true },
   embedded: { type: Boolean, default: false },
   sessionToken: { type: String, default: '' },
@@ -992,6 +993,7 @@ function openStandaloneViewer(row) {
     query: {
       token: props.sessionToken,
       accountId: props.accountId,
+      host: props.serverAddress,
       path: filePath,
       name: row.name,
       size: row.size
@@ -1363,12 +1365,6 @@ function formatMtime(sec) {
 }
 .no-session {
   padding: 24px;
-}
-.hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  text-align: center;
-  margin-top: 8px;
 }
 .terminal-sync-notice {
   display: flex;
