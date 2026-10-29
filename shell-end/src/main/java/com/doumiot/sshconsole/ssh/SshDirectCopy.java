@@ -2,9 +2,11 @@ package com.doumiot.sshconsole.ssh;
 
 import net.schmizz.sshj.connection.channel.direct.Session;
 import net.schmizz.sshj.connection.channel.direct.Signal;
+import net.schmizz.sshj.connection.ConnectionException;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /** Data stays between the two servers. Uses only the source server's existing SSH identity. */
 public final class SshDirectCopy {
@@ -35,7 +37,11 @@ public final class SshDirectCopy {
             try {
                 do {
                     tick.run();
-                    cmd.join(250,TimeUnit.MILLISECONDS);
+                    try {cmd.join(250,TimeUnit.MILLISECONDS);}
+                    catch(ConnectionException errorWaiting) {
+                        // SSHJ throws when this polling interval expires; the command may still be healthy.
+                        if(!(errorWaiting.getCause() instanceof TimeoutException))throw errorWaiting;
+                    }
                     if(System.nanoTime()>deadline) throw new IOException("直连复制超时");
                 } while(cmd.getExitStatus()==null && cmd.isOpen());
                 try {stderr.join(1000);stdout.join(1000);}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IOException("直连复制已中断",e);}
