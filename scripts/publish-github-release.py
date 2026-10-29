@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 import requests
 
@@ -51,10 +52,16 @@ def main():
     })
 
     def call(method, path, **kwargs):
-        response = session.request(method, API + path, timeout=(20, 600), **kwargs)
-        if not response.ok:
-            raise RuntimeError(f'GitHub {method} {path} failed: HTTP {response.status_code}')
-        return response.json()
+        for attempt in range(3):
+            try:
+                response = session.request(method, API + path, timeout=(20, 600), **kwargs)
+                if not response.ok:
+                    raise RuntimeError(f'GitHub {method} {path} failed: HTTP {response.status_code}')
+                return response.json()
+            except requests.RequestException:
+                if attempt == 2:
+                    raise
+                time.sleep(2 * (attempt + 1))
 
     try:
         release = call('GET', '/releases/tags/' + tag)
@@ -81,13 +88,25 @@ def main():
         if artifact.name in uploaded:
             print('Already uploaded:', artifact.name)
             continue
-        with artifact.open('rb') as stream:
-            response = session.post(upload_url, params={'name': artifact.name},
-                                    headers={'Content-Type': 'application/octet-stream'},
-                                    data=stream, timeout=(20, 600))
-        if response.status_code != 201:
-            raise RuntimeError(f'GitHub upload failed for {artifact.name}: HTTP {response.status_code}')
-        print('Uploaded:', artifact.name)
+        for attempt in range(3):
+            try:
+                with artifact.open('rb') as stream:
+                    response = session.post(upload_url, params={'name': artifact.name},
+                                            headers={'Content-Type': 'application/octet-stream'},
+                                            data=stream, timeout=(20, 600))
+                if response.status_code != 201:
+                    raise RuntimeError(f'GitHub upload failed for {artifact.name}: HTTP {response.status_code}')
+                print('Uploaded:', artifact.name)
+                break
+            except requests.RequestException:
+                release = call('GET', '/releases/tags/' + tag)
+                uploaded = {asset.get('name') for asset in release.get('assets', [])}
+                if artifact.name in uploaded:
+                    print('Upload confirmed after interrupted response:', artifact.name)
+                    break
+                if attempt == 2:
+                    raise
+                time.sleep(2 * (attempt + 1))
     print(f'Release: https://github.com/{REPOSITORY}/releases/tag/{tag}')
 
 
