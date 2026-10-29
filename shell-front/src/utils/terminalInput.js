@@ -10,6 +10,10 @@ export function encodeTerminalText(data) {
 
 export function bindTerminalInput(terminal, send, getEncoding) {
   terminal.onData(data => {
+    if (data === '\r' || data === '\n' || data === '\r\n') {
+      const buffer = terminal.buffer?.active
+      if (buffer && buffer.viewportY < buffer.baseY) terminal.scrollToBottom()
+    }
     send({ type: 'input', data: encodeTerminalText(data), encoding: mouseReport.test(data) ? 'UTF-8' : getEncoding() })
   })
   // xterm uses onBinary for the original X10 mouse protocol (including tmux 1.6).

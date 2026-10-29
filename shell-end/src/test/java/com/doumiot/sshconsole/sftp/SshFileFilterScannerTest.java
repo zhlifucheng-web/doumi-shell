@@ -31,10 +31,43 @@ class SshFileFilterScannerTest {
         assertEquals(Arrays.asList("2:hit more:true", "3:after:false"), rows(scanner.accept(" more\nafter".getBytes(StandardCharsets.UTF_8), true)));
         assertEquals(Arrays.asList("3:after done:false", "4:last:false"), rows(scanner.accept(" done\nlast\n".getBytes(StandardCharsets.UTF_8), true)));
     }
-    @Test void failsExplicitlyOnLongLineInsteadOfDroppingSuffixMatch() {
-        byte[] bytes = new byte[65537]; Arrays.fill(bytes, (byte)'a');
-        Exception error = assertThrows(java.io.IOException.class, () -> new SshFileFilterScanner("hit", "UTF-8", true, 0).accept(bytes, true));
-        assertTrue(error.getMessage().contains("行"));
+    private static String repeat(char ch,int count) {char[] chars=new char[count];Arrays.fill(chars,ch);return new String(chars);}
+    @Test void scansBeyondLongUnmatchedLinesAndFindsSuffixMatches() throws Exception {
+        SshFileFilterScanner scanner=new SshFileFilterScanner("needle","UTF-8",true,0);
+        for(int i=0;i<32;i++) assertTrue(scanner.accept(repeat('a',65536).getBytes(StandardCharsets.UTF_8),false).isEmpty());
+        List<SshFileFilterScanner.Row> found=scanner.accept("needle suffix\nneedle next\n".getBytes(StandardCharsets.UTF_8),true);
+        assertEquals(2,found.size());assertEquals(1,found.get(0).getLineNumber());assertTrue(found.get(0).getText().contains("needle suffix"));assertTrue(found.get(0).isTruncated());
+        assertEquals("needle next",found.get(1).getText());assertEquals(2,found.get(1).getLineNumber());assertFalse(found.get(1).isTruncated());assertFalse(scanner.isLimited());
+    }
+    @Test void findsKeywordAcrossPreviewAndBatchBoundariesWithoutCuttingIt() throws Exception {
+        SshFileFilterScanner scanner=new SshFileFilterScanner("needle","UTF-8",false,0);
+        assertTrue(scanner.accept((repeat('a',65534)+"Nee").getBytes(StandardCharsets.UTF_8),true).isEmpty());
+        SshFileFilterScanner.Row row=scanner.accept("DLE suffix\n".getBytes(StandardCharsets.UTF_8),true).get(0);
+        assertTrue(row.isMatched());assertTrue(row.isTruncated());assertTrue(row.getText().contains("NeeDLE suffix"));assertTrue(row.getText().length()<=65536);
+        String keyword=repeat('k',65536);scanner=new SshFileFilterScanner(keyword,"UTF-8",true,0);
+        scanner.accept(repeat('a',80000).getBytes(StandardCharsets.UTF_8),false);
+        row=scanner.accept((keyword+" ending\n").getBytes(StandardCharsets.UTF_8),true).get(0);
+        assertEquals(keyword,row.getText());assertTrue(row.isTruncated());
+    }
+    @Test void tailUpdatesTruncationFlagEvenWhenThePreviewTextStaysTheSame() throws Exception {
+        SshFileFilterScanner scanner=new SshFileFilterScanner("hit","UTF-8",true,0);
+        SshFileFilterScanner.Row first=scanner.accept(("hit"+repeat('a',65533)).getBytes(StandardCharsets.UTF_8),true).get(0);
+        assertFalse(first.isTruncated());
+        SshFileFilterScanner.Row update=scanner.accept("more".getBytes(StandardCharsets.UTF_8),true).get(0);
+        assertEquals(first.getText(),update.getText());assertTrue(update.isTruncated());assertEquals(first.getLineNumber(),update.getLineNumber());
+        assertTrue(scanner.accept(new byte[0],true).isEmpty());
+        assertEquals(2,scanner.accept("\nhit next\n".getBytes(StandardCharsets.UTF_8),true).get(0).getLineNumber());
+    }
+    @Test void preservesLongContextAndCrLfAndKeepsUnicodePreviewValid() throws Exception {
+        SshFileFilterScanner scanner=new SshFileFilterScanner("hit","UTF-8",true,2);
+        List<SshFileFilterScanner.Row> context=scanner.accept((repeat('a',70000)+"\r\nhit\r\n"+repeat('b',70000)+"\n").getBytes(StandardCharsets.UTF_8),true);
+        assertEquals(3,context.size());assertTrue(context.get(0).isTruncated());assertTrue(context.get(2).isTruncated());assertEquals("hit",context.get(1).getText());
+        scanner=new SshFileFilterScanner("hit","UTF-8",true,0);
+        SshFileFilterScanner.Row unicode=scanner.accept(("hit"+repeat('a',65532)+"😀tail\n").getBytes(StandardCharsets.UTF_8),true).get(0);
+        assertFalse(Character.isHighSurrogate(unicode.getText().charAt(unicode.getText().length()-1)));assertTrue(unicode.isTruncated());
+        scanner=new SshFileFilterScanner("\r","UTF-8",true,0);
+        assertTrue(scanner.accept("a\r".getBytes(StandardCharsets.UTF_8),true).isEmpty());assertTrue(scanner.accept("\n".getBytes(StandardCharsets.UTF_8),true).isEmpty());
+        assertTrue(scanner.accept("b\r".getBytes(StandardCharsets.UTF_8),true).isEmpty());assertEquals("b\rx",scanner.accept("x".getBytes(StandardCharsets.UTF_8),true).get(0).getText());
     }
     @Test void stopsAtTenThousandUniqueRows() throws Exception {
         SshFileFilterScanner scanner = new SshFileFilterScanner("x", "UTF-8", true, 0);

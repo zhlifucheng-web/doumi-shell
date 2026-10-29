@@ -1,0 +1,1 @@
+<script setup>import { useTerminalFileContext } from 'context';const props=defineProps(['token','tab','active','blocked']);const context=useTerminalFileContext({sessionToken:()=>props.token,tabId:()=>props.tab,active:()=>props.active,blocked:()=>props.blocked,currentPath:()=>'/initial',request:request,onNavigate:path=>calls.push(path),schedule,unschedule,storage});</script>

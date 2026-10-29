@@ -86,7 +86,7 @@
 import { createTerminalConnectionGuard } from '@/utils/terminalConnectionGuard'
 import { bindTerminalInput, encodeTerminalText } from '@/utils/terminalInput'
 import { bindTerminalSelection } from '@/utils/terminalSelection'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef, watch } from 'vue'
 import { Upload } from '@element-plus/icons-vue'
 import EditorScrollbar from '@/components/EditorScrollbar.vue'
 import TerminalHistory from './TerminalHistory.vue'
@@ -102,6 +102,7 @@ import { enhanceTerminalOutput } from '@/utils/terminalColorEnhancer'
 import { useBackground } from '@/composables/useBackground'
 import { useTheme } from '@/composables/useTheme'
 import { useTerminalTheme } from '@/composables/useTerminalTheme'
+import { parseTabSwitchShortcut } from '@/utils/terminalTabShortcut'
 
 const { background } = useBackground()
 const { effectiveDark } = useTheme()
@@ -116,6 +117,7 @@ const props = defineProps({
   lightTone: { type: String, default: 'paper' }, // 'paper' | 'hybrid'
   encoding: { type: String, default: 'UTF-8' },
   currentPath: { type: String, default: '' },
+  active: { type: Boolean, default: true },
   paused: { type: Boolean, default: false }
 })
 
@@ -199,6 +201,13 @@ let connectionGuard = null
 let dataBound = false
 let connectGen = 0
 let searchAddon = null
+let lastMeasuredSize = null
+let lastSentSize = null
+let resizeFrame = null
+let resizeQueued = false
+let resizeForced = false
+let resizeGeneration = 0
+let layoutActive = true
 
 function createDecoder(enc) {
   try {
@@ -350,7 +359,7 @@ watch(
   (newSize) => {
     if (terminal && newSize >= 12 && newSize <= 24) {
       terminal.options.fontSize = newSize
-      fitAddon?.fit()
+      requestResize()
     }
   }
 )
@@ -466,20 +475,67 @@ function findPrevious() {
 }
 function onSearchEnter(event) { if (event.shiftKey) findPrevious(); else findNext() }
 
-function sendResize() {
-  if (!terminal || !fitAddon || !ws || ws.readyState !== WebSocket.OPEN || !dataBound) {
-    return
-  }
+function canMeasureTerminal() {
+  const container = termContainer.value
+  return layoutActive && props.active && document.visibilityState !== 'hidden' && container
+    && container.clientWidth > 0 && container.clientHeight > 0 && container.getClientRects().length > 0
+}
+
+function validSize(size) {
+  return size && Number.isInteger(size.cols) && size.cols >= 2 && Number.isInteger(size.rows) && size.rows >= 1
+}
+
+function measureTerminal() {
+  if (!terminal || !fitAddon || !canMeasureTerminal() || !validSize(fitAddon.proposeDimensions())) return false
   fitAddon.fit()
-  sendJson({ type: 'resize', cols: terminal.cols, rows: terminal.rows })
-  emit('size-change', { cols: terminal.cols, rows: terminal.rows })
+  if (!validSize(terminal)) return false
+  lastMeasuredSize = { cols: terminal.cols, rows: terminal.rows }
+  return true
+}
+
+// Wait for Vue's layout, then merge observer/visibility/ready events into one frame.
+function requestResize(force = false, retries = 2) {
+  if (!terminal || !dataBound || !ws || ws.readyState !== WebSocket.OPEN || !canMeasureTerminal()) return
+  resizeForced ||= force
+  if (resizeQueued || resizeFrame !== null) return
+  resizeQueued = true
+  const generation = resizeGeneration
+  nextTick(() => {
+    if (generation !== resizeGeneration) return
+    resizeQueued = false
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = null
+      if (generation !== resizeGeneration || !dataBound || !ws || ws.readyState !== WebSocket.OPEN || !canMeasureTerminal()) return
+      const forced = resizeForced
+      resizeForced = false
+      if (!measureTerminal()) {
+        // xterm may need another paint to measure its font after being revealed.
+        if (retries > 0) requestResize(forced, retries - 1)
+        return
+      }
+      const size = lastMeasuredSize
+      if (!forced && lastSentSize?.cols === size.cols && lastSentSize?.rows === size.rows) return
+      sendJson({ type: 'resize', ...size })
+      lastSentSize = size
+      emit('size-change', size)
+    })
+  })
+}
+
+function cancelResize() {
+  ++resizeGeneration
+  if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
+  resizeFrame = null
+  resizeQueued = false
+  resizeForced = false
+  lastSentSize = null
 }
 
 function bindTerminalData() {
   if (!terminal || dataBound) return
   dataBound = true
   bindTerminalInput(terminal, sendJson, () => props.encoding)
-  sendResize()
+  requestResize(true)
 }
 
 function activateSession(frame) {
@@ -492,12 +548,14 @@ function activateSession(frame) {
     emit('ready', { sessionToken: frame.sessionToken, label: frame.label, connectionMode: frame.connectionMode, tmuxVersion: tmuxVersion.value, tmuxVersionSource: tmuxVersionSource.value })
     connectionGuard?.ready()
   }
+  const generation = connectGen
   nextTick(() => {
-    terminal?.focus()
+    if (generation === connectGen && canMeasureTerminal()) terminal?.focus()
   })
 }
 
 function closeConnection() {
+  cancelResize()
   cancelHistory()
   connectionGuard?.dispose()
   connectionGuard = null
@@ -605,6 +663,8 @@ function connect() {
   dataBound = false
 
   terminal = new Terminal({
+    cols: lastMeasuredSize?.cols || 80,
+    rows: lastMeasuredSize?.rows || 24,
     cursorBlink: true,
     macOptionClickForcesSelection: true,
     fontSize: props.fontSize || 14,
@@ -615,6 +675,15 @@ function connect() {
     scrollback: TERMINAL_SCROLLBACK
   })
   terminal.attachCustomKeyEventHandler((event) => {
+    const tabAction = parseTabSwitchShortcut(event)
+    if (tabAction) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.type === 'keydown') {
+        window.dispatchEvent(new CustomEvent('doumi-switch-terminal-tab', { detail: tabAction }))
+      }
+      return false
+    }
     if ((event.ctrlKey || event.metaKey) && (event.key?.toLowerCase() === 'k' || event.code === 'KeyK') && !event.altKey) {
       event.preventDefault()
       event.stopPropagation()
@@ -667,7 +736,7 @@ function connect() {
   terminal.open(termContainer.value)
   terminalSelection = bindTerminalSelection(terminal)
   scrollTarget.value = termContainer.value.querySelector('.xterm-viewport')
-  fitAddon.fit()
+  measureTerminal()
 
   const url = buildTerminalWsUrl(props.accountId, {
     cols: terminal.cols,
@@ -697,7 +766,7 @@ function connect() {
   socket.onerror = () => { if (isCurrent()) guard.fail('WebSocket 连接失败') }
   socket.onclose = () => { if (isCurrent()) guard.fail('会话已断开') }
 
-  resizeObserver = new ResizeObserver(() => sendResize())
+  resizeObserver = new ResizeObserver(() => requestResize())
   resizeObserver.observe(termContainer.value)
 }
 
@@ -723,6 +792,7 @@ function reconnectPlainSsh() {
 
 function focusTerminal() {
   closeContextMenu()
+  requestResize(true)
   terminal?.focus()
 }
 
@@ -753,13 +823,34 @@ defineExpose({
 })
 
 onMounted(() => {
+  document.addEventListener('visibilitychange', restoreTerminalSize)
+  window.addEventListener('focus', restoreTerminalSize)
+  window.addEventListener('pageshow', restoreTerminalSize)
+  window.addEventListener('resize', onWindowResize)
+  window.visualViewport?.addEventListener('resize', onWindowResize)
+  document.fonts?.addEventListener('loadingdone', restoreTerminalSize)
   if (props.paused) disconnect()
   else connect()
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', restoreTerminalSize)
+  window.removeEventListener('focus', restoreTerminalSize)
+  window.removeEventListener('pageshow', restoreTerminalSize)
+  window.removeEventListener('resize', onWindowResize)
+  window.visualViewport?.removeEventListener('resize', onWindowResize)
+  document.fonts?.removeEventListener('loadingdone', restoreTerminalSize)
   disposeTerminal()
 })
+
+function onWindowResize() { requestResize() }
+function restoreTerminalSize() { requestResize(true) }
+onActivated(() => { layoutActive = true; requestResize(true) })
+onDeactivated(() => { layoutActive = false; cancelResize() })
+watch(() => props.active, active => {
+  if (active) requestResize(true)
+  else cancelResize()
+}, { flush: 'post' })
 
 watch(
   () => props.accountId,

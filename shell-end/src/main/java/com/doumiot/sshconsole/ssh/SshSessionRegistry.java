@@ -162,6 +162,10 @@ public class SshSessionRegistry {
         private Instant lastAccessAt;
         /** 短命令 exec 与 Shell 通道互斥 */
         private final Object execLock = new Object();
+        /** Independent, coalesced read-only context probes; never blocks terminal input. */
+        private final Object terminalContextLock = new Object();
+        private volatile SshTerminalContextProbe.Context terminalContext;
+        private volatile long terminalContextCheckedAt;
 
         void touch() {
             lastAccessAt = Instant.now();

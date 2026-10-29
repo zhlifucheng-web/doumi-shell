@@ -60,6 +60,14 @@ public final class SshTmuxSession {
         return boundedCommand("exec tmux capture-pane -p -S -50000 -t " + quote(sessionName + ":"), 8);
     }
 
+    /** Resolve only this session's active window/pane, including tmux 1.6. */
+    public String contextPidCommand() throws IOException {
+        if (sessionName == null) throw new IOException("tmux 会话未就绪");
+        return "tmux list-panes -t " + quote(sessionName + ":")
+                + " -F '#{pane_active}|#{pane_pid}' | while IFS='|' read -r active pid; do "
+                + "[ \"$active\" = 1 ] || continue; printf '%s' \"$pid\"; break; done";
+    }
+
     public void prepare(String name, String cwd, int cols, int rows, boolean shared) throws IOException {
         SshRemoteExec.ExecResult exists = run("exec tmux has-session -t " + quote(name), 3);
         if (exists.getExitStatus() != 0) {

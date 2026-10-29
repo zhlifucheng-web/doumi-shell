@@ -1,157 +1,173 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { useViewerFilter } from '../src/composables/useViewerFilter.js'
+import { createViewerTail } from '../src/composables/useViewerTail.js'
 
-function fixture(api) {
-  const errors = []
-  const filter = useViewerFilter({ source: () => ({ sessionToken: 'token', path: '/app.log', encoding: 'UTF-8' }), onError: e => errors.push(e), api })
-  return { filter, errors }
-}
+const flush = () => new Promise(setImmediate)
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
+function fixture(api = {}) {
+  const sockets = [], timers = [], errors = [], canceled = []
+  const filter = useViewerFilter({ source: () => ({ sessionToken: 'token', path: '/app.log', encoding: 'UTF-8' }),
+    onError: (message, frame) => errors.push({ message, code: frame?.code }),
+    api: { start: async () => ({ scanId: 'a', mode: 'remote' }), cancel: async id => canceled.push(id),
+      next: () => assert.fail('history must use WebSocket'), ...api,
+      stream: options => createViewerTail({ ...options, url: () => 'ws://local',
+        connect: () => { const s = { readyState: 0, sent: [], send(v) { this.sent.push(JSON.parse(v)) }, close() { this.readyState = 3 }, open() { this.readyState = 1; this.onopen() }, frame(v) { this.onmessage({ data: JSON.stringify(v) }) } }; sockets.push(s); return s },
+        schedule: fn => { timers.push(fn); return fn }, unschedule: fn => { const i = timers.indexOf(fn); if (i >= 0) timers.splice(i, 1) } }) } })
+  async function open() { await flush(); const socket = sockets.at(-1); assert.ok(socket, 'history opens a WebSocket'); socket.open(); socket.frame({ type: 'ready', tailId: 't' }); return socket }
+  function data(socket, page = {}, sequence = 1) { socket.frame({ type: 'data', sequence, scanId: 'a', rows: [], offset: 10, totalSize: 10, eof: true, ...page }) }
+  async function complete(socket, page = {}) { data(socket, page); await flush(); socket.frame({ type: 'complete' }); await flush() }
+  return { filter, sockets, timers, errors, canceled, open, data, complete }
+}
 
-test('whole-file scan accumulates pages and upserts a partial last line during tail', async () => {
-  const pages = [
-    { rows: [{ lineNumber: 2, text: 'error', matched: true }], offset: 8, totalSize: 20, eof: false },
-    { rows: [{ lineNumber: 7, text: 'error last', matched: true }], offset: 20, totalSize: 20, eof: true },
-    { rows: [{ lineNumber: 7, text: 'error last appended', matched: true }], offset: 29, totalSize: 29, eof: true }
-  ]
-  const { filter } = fixture({ start: async () => ({ scanId: 'a' }), next: async () => pages.shift(), cancel: async () => {} })
-  await filter.start({ keyword: 'error', contextLines: 2, caseSensitive: false })
-  assert.equal(filter.eof.value, true)
-  assert.equal(filter.offset.value, 20)
-  assert.deepEqual(filter.rows.value.map(r => r.lineNumber), [2, 7])
-  filter.applyTail({ ...pages.shift(), scanId: 'a' })
-  assert.deepEqual(filter.rows.value.map(r => r.text), ['error', 'error last appended'])
-  await filter.close()
+test('historical DATA is merged and ACKed before complete releases Tail handoff', async () => {
+  const s = fixture(); let settled = false
+  const run = s.filter.start({ keyword: 'error' }).then(() => { settled = true }); const ws = await s.open()
+  assert.deepEqual(ws.sent[0], { type: 'start', sessionToken: 'token', path: '/app.log', encoding: 'UTF-8', offset: 0, scanId: 'a', historical: true })
+  s.data(ws, { rows: [{ lineNumber: 2, text: 'error' }] }); await flush()
+  assert.deepEqual(s.filter.rows.value.map(r => r.text), ['error'])
+  assert.deepEqual(ws.sent.at(-1), { type: 'ack', sequence: 1 })
+  assert.equal(s.filter.readyForTail.value, false); assert.equal(settled, false)
+  ws.frame({ type: 'complete' }); await run
+  assert.equal(s.filter.readyForTail.value, true); assert.deepEqual(s.filter.tailSource(), { scanId: 'a' })
+  assert.equal(ws.sent.some(f => f.type === 'close'), false)
+  await s.filter.close()
 })
 
-test('cancel ignores an in-flight page and retains previously displayed results', async () => {
-  const waiting = deferred(); const canceled = []; let started
-  const ready = new Promise(r => { started = r })
-  const { filter } = fixture({ start: async () => ({ scanId: 'old' }), next: () => { started(); return waiting.promise }, cancel: async id => canceled.push(id) })
-  const running = filter.start({ keyword: 'x' }); await ready
-  await filter.cancel()
-  waiting.resolve({ rows: [{ lineNumber: 1, text: 'late x' }], offset: 5, totalSize: 5, eof: true })
-  await running
-  assert.deepEqual(filter.rows.value, [])
-  assert.equal(filter.canceled.value, true)
-  assert.equal(filter.scanning.value, false)
-  assert.deepEqual(canceled, ['old'])
+test('empty EOF and limited history both finish only after complete', async () => {
+  for (const limited of [false, true]) {
+    const s = fixture(); const run = s.filter.start({ keyword: 'x' }); const ws = await s.open()
+    s.data(ws, { rows: [], limited, eof: !limited }); await flush()
+    assert.equal(ws.readyState, 1); assert.equal(s.filter.scanning.value, true)
+    ws.frame({ type: 'complete' }); await run
+    assert.equal(s.filter.scanning.value, false); assert.equal(s.filter.readyForTail.value, !limited)
+    assert.equal(s.filter.limited.value, limited); await s.filter.close()
+  }
 })
 
-test('a start response arriving after close is canceled and never repaints', async () => {
-  const waiting = deferred(); const canceled = []
-  const { filter } = fixture({ start: () => waiting.promise, next: () => assert.fail('stale scan'), cancel: async id => canceled.push(id) })
-  const running = filter.start({ keyword: 'x' })
-  await filter.close()
-  waiting.resolve({ scanId: 'stale' }); await running
-  assert.equal(filter.active.value, false)
-  assert.deepEqual(canceled, ['stale'])
+test('pause retains an in-flight history frame without merge or ACK and resume continues the same socket', async () => {
+  const s = fixture(); const run = s.filter.start({ keyword: 'x' }); const ws = await s.open()
+  s.filter.pause(true); s.data(ws, { rows: [{ lineNumber: 1, text: 'held' }] }); await flush()
+  assert.deepEqual(s.filter.rows.value, []); assert.equal(ws.sent.at(-1).type, 'pause')
+  s.filter.pause(false); await flush()
+  assert.deepEqual(s.filter.rows.value.map(r => r.text), ['held']); assert.deepEqual(ws.sent.at(-1), { type: 'ack', sequence: 1 })
+  assert.equal(s.sockets.length, 1); ws.frame({ type: 'complete' }); await run; await s.filter.close()
 })
 
-test('limited results and errors stop further tail requests', async () => {
-  let calls = 0
-  const { filter } = fixture({ start: async () => ({ scanId: 'a' }), next: async () => { calls++; return { rows: [], offset: 10, totalSize: 100, limited: true, eof: false } }, cancel: async () => {} })
-  await filter.start({ keyword: 'x' }); assert.equal(filter.tailSource(), null)
-  assert.equal(filter.limited.value, true)
-  assert.equal(filter.eof.value, false)
-  assert.equal(calls, 1)
-  await filter.close()
+test('cancel settles start immediately and ignores a late API response or old socket frames', async () => {
+  const waiting = deferred(); const s = fixture({ start: () => waiting.promise })
+  const run = s.filter.start({ keyword: 'x' }); await s.filter.cancel(); await run
+  waiting.resolve({ scanId: 'stale' }); await flush()
+  assert.deepEqual(s.canceled, ['stale']); assert.equal(s.sockets.length, 0)
+  const t = fixture(); const pending = t.filter.start({ keyword: 'x' }); const ws = await t.open()
+  await t.filter.cancel(); await pending; t.data(ws, { rows: [{ lineNumber: 1, text: 'stale' }] }); await flush()
+  assert.deepEqual(t.filter.rows.value, []); assert.equal(t.filter.readyForTail.value, false)
 })
 
-test('Tail continues bounded reads after appended content spans several pages', async () => {
-  let calls = 0
-  const pages = [
-    { rows: [], offset: 10, totalSize: 10, eof: true },
-    { rows: [], offset: 20, totalSize: 40, eof: false },
-    { rows: [{ lineNumber: 8, text: 'x' }], offset: 40, totalSize: 40, eof: true }
-  ]
-  const { filter } = fixture({ start: async () => ({ scanId: 'a' }), next: async () => { calls++; return pages.shift() }, cancel: async () => {} })
-  await filter.start({ keyword: 'x' })
-  filter.applyTail({ ...pages.shift(), scanId: 'a' })
-  assert.equal(calls, 1, 'Tail push never issues more HTTP next requests')
-  assert.equal(filter.readyForTail.value, true)
-  filter.applyTail({ ...pages.shift(), scanId: 'a' })
-  assert.equal(filter.rows.value[0].lineNumber, 8)
-  await filter.close()
+test('reconnecting history replays the accepted sequence without duplicate rows', async () => {
+  const s = fixture(); const run = s.filter.start({ keyword: 'x' }); const ws = await s.open()
+  s.data(ws, { rows: [{ lineNumber: 1, text: 'once' }], eof: false }); await flush()
+  const first = s.filter.rows.value[0]
+  ws.onclose(); s.timers.shift()(); const next = await s.open()
+  assert.deepEqual(next.sent[0], { type: 'resume', sessionToken: 'token', tailId: 't', sequence: 1 })
+  s.data(next, { rows: [{ lineNumber: 1, text: 'once' }], eof: false }); await flush()
+  assert.equal(s.filter.rows.value[0], first)
+  s.data(next, { rows: [], eof: true }, 2); await flush(); next.frame({ type: 'complete' }); await run
+  assert.equal(s.filter.rows.value.length, 1); await s.filter.close()
 })
 
-test('a closing old scan cannot hide a newer scan while its cancel is pending', async () => {
-  const waiting = deferred(); let n = 0
-  const { filter } = fixture({ start: async () => ({ scanId: ++n }), next: async () => ({ rows: [], offset: 0, totalSize: 0, eof: true }), cancel: () => waiting.promise })
-  await filter.start({ keyword: 'old' })
-  const closing = filter.close()
-  await filter.start({ keyword: 'new' })
-  waiting.resolve(); await closing
-  assert.equal(filter.active.value, true)
+test('new generation closes its predecessor and stale completion cannot unlock Tail', async () => {
+  let scan = 0; const s = fixture({ start: async () => ({ scanId: `s${++scan}` }) })
+  const old = s.filter.start({ keyword: 'old' }); const ws = await s.open()
+  const fresh = s.filter.start({ keyword: 'new' }); await old; const current = await s.open()
+  ws.frame({ type: 'complete' }); assert.equal(s.filter.readyForTail.value, false)
+  await s.complete(current, { scanId: 's2', rows: [{ lineNumber: 1, text: 'new' }] }); await fresh
+  assert.deepEqual(s.filter.rows.value.map(r => r.text), ['new']); await s.filter.close()
 })
 
-test('a new scan waits for the old in-flight page and then reaches EOF with its own results', async () => {
-  const oldPage = deferred(), oldStarted = deferred(); let n = 0
-  const { filter } = fixture({
-    start: async () => ({ scanId: ++n }),
-    next: async id => { if (id === 1) { oldStarted.resolve(); return oldPage.promise }; return { rows: [{ lineNumber: 3, text: 'new result' }], offset: 5, totalSize: 5, eof: true } },
-    cancel: async () => {}
-  })
-  const old = filter.start({ keyword: 'old' }); await oldStarted.promise
-  const fresh = filter.start({ keyword: 'new' })
-  oldPage.resolve({ rows: [{ lineNumber: 1, text: 'stale result' }], offset: 5, totalSize: 5, eof: true })
-  await Promise.all([old, fresh])
-  assert.equal(filter.eof.value, true)
-  assert.equal(filter.scanning.value, false)
-  assert.deepEqual(filter.rows.value.map(r => r.text), ['new result'])
-  await filter.close()
+test('recoverable streaming errors forward their code, settle history and prevent Tail', async () => {
+  const s = fixture(); const run = s.filter.start({ keyword: 'x' }); const ws = await s.open()
+  ws.frame({ type: 'error', code: 'FILE_CHANGED', message: 'reset' }); await run
+  assert.deepEqual(s.errors, [{ message: 'reset', code: 'FILE_CHANGED' }]); assert.equal(s.filter.tailSource(), null)
+  await s.filter.close()
 })
 
-test('Tail upserts only changed rows and keeps the existing array and row identities', async () => {
-  const { filter } = fixture({ start: async () => ({ scanId: 'a' }), next: async () => ({ rows: [{ lineNumber: 1, text: 'x' }, { lineNumber: 3, text: 'x partial' }], offset: 10, totalSize: 10, eof: true }), cancel: async () => {} })
-  await filter.start({ keyword: 'x' })
-  const rows = filter.rows.value, first = rows[0]
-  filter.applyTail({ scanId: 'a', rows: [{ lineNumber: 3, text: 'x partial completed' }, { lineNumber: 5, text: 'x new' }], offset: 20, totalSize: 20, eof: true })
-  assert.equal(filter.rows.value, rows)
-  assert.equal(filter.rows.value[0], first)
-  assert.deepEqual(rows.map(row => row.text), ['x', 'x partial completed', 'x new'])
-  await filter.close()
+test('filtered Tail upserts a partial row in place while retaining unrelated rows', async () => {
+  const s = fixture(); const run = s.filter.start({ keyword: 'x' }); const ws = await s.open()
+  await s.complete(ws, { rows: [{ lineNumber: 1, text: 'x' }, { lineNumber: 3, text: 'x partial' }] }); await run
+  const rows = s.filter.rows.value, first = rows[0]
+  assert.equal(s.filter.applyTail({ scanId: 'a', rows: [{ lineNumber: 3, text: 'x partial completed' }, { lineNumber: 5, text: 'x new' }], offset: 20, totalSize: 20, eof: true }), true)
+  assert.equal(s.filter.rows.value, rows); assert.equal(rows[0], first)
+  assert.deepEqual(rows.map(r => r.text), ['x', 'x partial completed', 'x new']); await s.filter.close()
 })
 
-
-test('a historical page arriving while selected is retained until resume and applied exactly once', async () => {
-  const pending = deferred(), started = deferred(); let calls = 0
-  const { filter } = fixture({ start: async () => ({ scanId: 'a' }), next: () => { calls++; started.resolve(); return pending.promise }, cancel: async () => {} })
-  const scan = filter.start({ keyword: 'x' }); await started.promise
-  filter.pause(true)
-  pending.resolve({ rows: [{ lineNumber: 1, text: 'x', matched: true }], offset: 2, totalSize: 2, eof: true })
-  await scan
-  assert.deepEqual(filter.rows.value, [])
-  filter.pause(false); await new Promise(setImmediate)
-  assert.equal(calls, 1)
-  assert.deepEqual(filter.rows.value.map(r => r.text), ['x'])
-  assert.equal(filter.readyForTail.value, true)
-  await filter.close()
+test('reset preserves old results until an unpaused frame and separates repeated line numbers', async () => {
+  let scan = 0; const s = fixture({ start: async () => ({ scanId: `s${++scan}` }) })
+  let run = s.filter.start({ keyword: 'x' }); let ws = await s.open()
+  await s.complete(ws, { scanId: 's1', rows: [{ lineNumber: 1, text: 'old' }] }); await run
+  run = s.filter.start({ keyword: 'x' }, { preserveHistory: true, truncated: true }); ws = await s.open(); s.filter.pause(true)
+  s.data(ws, { scanId: 's2', rows: [{ lineNumber: 1, text: 'new' }] }); await flush()
+  assert.deepEqual(s.filter.displayRows.value.map(r => r.text), ['old'])
+  s.filter.pause(false); await flush(); ws.frame({ type: 'complete' }); await run
+  assert.deepEqual(s.filter.displayRows.value.map(r => r.text), ['old', '===================truncated===================', 'new']); await s.filter.close()
 })
 
-test('reset history waits for the first successful unpaused page and keeps repeated line numbers separate', async () => {
-  const pending = deferred(); let scan = 0
-  const { filter } = fixture({ start: async () => ({ scanId: `s${++scan}` }), next: async id => id === 's1' ? { rows: [{ lineNumber: 1, text: 'old' }], offset: 4, totalSize: 4, eof: true } : pending.promise, cancel: async () => {} })
-  await filter.start({ keyword: 'x' })
-  const restarting = filter.start({ keyword: 'x' }, { preserveHistory: true, truncated: true })
-  await new Promise(setImmediate); filter.pause(true)
-  pending.resolve({ rows: [{ lineNumber: 1, text: 'new' }], offset: 4, totalSize: 4, eof: true }); await restarting
-  assert.deepEqual(filter.displayRows.value.map(r => r.text), ['old'])
-  filter.pause(false); await new Promise(setImmediate)
-  assert.deepEqual(filter.displayRows.value.map(r => r.text), ['old', '===================truncated===================', 'new'])
-  filter.applyTail({ scanId: 's2', rows: [{ lineNumber: 1, text: 'new appended' }], offset: 13, totalSize: 13, eof: true })
-  assert.deepEqual(filter.displayRows.value.map(r => r.text), ['old', '===================truncated===================', 'new appended'])
-  await filter.close()
+test('history and resets share the result cap and evict oldest history first', async () => {
+  let scan = 0; const s = fixture({ start: async () => ({ scanId: `s${++scan}` }) })
+  for (let n = 1; n <= 2; n++) {
+    const run = s.filter.start({ keyword: 'x' }, { preserveHistory: n > 1, truncated: true }); const ws = await s.open()
+    await s.complete(ws, { scanId: `s${n}`, rows: Array.from({ length: 6000 }, (_, i) => ({ lineNumber: i + 1, text: `s${n}-${i}` })) }); await run
+  }
+  assert.equal(s.filter.displayRows.value.length, 10000); assert.equal(s.filter.rows.value.length, 6000)
+  assert.equal(s.filter.displayRows.value.at(-1).text, 's2-5999'); assert.equal(s.filter.limited.value, false)
+  await s.filter.close()
 })
 
-test('reset history shares the existing row limit and evicts old history before new results', async () => {
-  let scan = 0
-  const { filter } = fixture({ start: async () => ({ scanId: `s${++scan}` }), next: async () => ({ rows: Array.from({ length: 6000 }, (_, n) => ({ lineNumber: n + 1, text: `s${scan}-${n}` })), offset: 6000, totalSize: 6000, eof: true }), cancel: async () => {} })
-  await filter.start({ keyword: 'x' }); await filter.start({ keyword: 'x' }, { preserveHistory: true, truncated: true })
-  assert.equal(filter.displayRows.value.length, 10000)
-  assert.equal(filter.rows.value.length, 6000)
-  assert.equal(filter.displayRows.value.at(-1).text, 's2-5999')
-  assert.equal(filter.limited.value, false)
-  await filter.close()
+test('the server selected remote or SFTP compatibility mode remains observable during the scan', async () => {
+  for (const mode of ['remote', 'sftp']) {
+    const s = fixture({ start: async () => ({ scanId: 'a', mode }) })
+    const run = s.filter.start({ keyword: 'x' }); const ws = await s.open()
+    assert.equal(s.filter.mode.value, mode)
+    await s.complete(ws); await run; await s.filter.close()
+  }
+})
+
+test('a lost complete is resumed after final ACK without reopening Tail early', async () => {
+  const s = fixture(); const run = s.filter.start({ keyword: 'x' }); const ws = await s.open()
+  s.data(ws, { rows: [{ lineNumber: 1, text: 'once' }] }); await flush()
+  ws.onclose(); s.timers.shift()(); const next = await s.open()
+  assert.equal(s.filter.readyForTail.value, false)
+  assert.deepEqual(next.sent[0], { type: 'resume', sessionToken: 'token', tailId: 't', sequence: 1 })
+  next.frame({ type: 'complete' }); await run
+  assert.equal(s.filter.readyForTail.value, true); assert.equal(s.filter.rows.value.length, 1)
+  await s.filter.close()
+})
+
+test('cancel preserves merged partial results and refuses every late frame', async () => {
+  const s = fixture(); const run = s.filter.start({ keyword: 'x' }); const ws = await s.open()
+  s.data(ws, { rows: [{ lineNumber: 1, text: 'keep' }], eof: false }); await flush()
+  await s.filter.cancel(); await run
+  s.data(ws, { rows: [{ lineNumber: 2, text: 'late' }] }, 2); ws.frame({ type: 'complete' }); await flush()
+  assert.deepEqual(s.filter.rows.value.map(row => row.text), ['keep']); assert.equal(s.filter.tailSource(), null)
+})
+
+test('an operational native fallback updates the visible mode without changing row or ACK identity', async () => {
+  const s=fixture({start:async()=>({scanId:'a',mode:'native'})});const run=s.filter.start({keyword:'x'}),ws=await s.open()
+  s.data(ws,{rows:[{lineNumber:2,text:'x'}],mode:'sftp',reason:'原生命令资源限制，回退兼容扫描'});await flush()
+  assert.equal(s.filter.mode.value,'sftp');assert.match(s.filter.reason.value,/资源限制/)
+  assert.equal(s.filter.rows.value[0].lineNumber,2);assert.deepEqual(ws.sent.at(-1),{type:'ack',sequence:1})
+  ws.frame({type:'complete'});await run;await s.filter.close()
+})
+
+test('normal SFTP Tail after native history does not mislabel the completed history as a fallback', async () => {
+  const s=fixture({start:async()=>({scanId:'a',mode:'native'})}),run=s.filter.start({keyword:'x'}),ws=await s.open()
+  await s.complete(ws,{mode:'native'});await run
+  assert.equal(s.filter.applyTail({scanId:'a',rows:[],offset:20,totalSize:20,eof:true,mode:'sftp',reason:null}),true)
+  assert.equal(s.filter.mode.value,'native');await s.filter.close()
+})
+
+test('initial SFTP eligibility reason remains visible when ordinary pages omit a new reason', async () => {
+  const s=fixture({start:async()=>({scanId:'a',mode:'sftp',reason:'所选编码使用SFTP扫描'})}),run=s.filter.start({keyword:'x'}),ws=await s.open()
+  s.data(ws,{mode:'sftp',reason:null});await flush();assert.equal(s.filter.reason.value,'所选编码使用SFTP扫描')
+  ws.frame({type:'complete'});await run;await s.filter.close()
 })

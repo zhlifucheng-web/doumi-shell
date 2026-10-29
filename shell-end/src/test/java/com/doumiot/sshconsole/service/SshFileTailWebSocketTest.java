@@ -60,13 +60,92 @@ class SshFileTailWebSocketTest {
             doAnswer(c -> {closed++; return null;}).when(sftp).close();
             return sftp;
         });
-        ReflectionTestUtils.setField(files,"sessionRegistry",registry); ReflectionTestUtils.setField(filters,"files",files);
+        ReflectionTestUtils.setField(files,"sessionRegistry",registry); ReflectionTestUtils.setField(filters,"files",files); ReflectionTestUtils.setField(filters,"remoteScans",mock(com.doumiot.sshconsole.ssh.SshFileFilterRemoteFactory.class));
         handler = new SshFileTailWebSocketHandler(files,filters,registry);
         ReflectionTestUtils.setField(handler,"clock",clock);
         ReflectionTestUtils.setField(handler,"executor",(java.util.concurrent.Executor)Runnable::run);
         socket = socket("first",frames);
     }
-    @AfterEach void cleanup() {handler.closeAll();}
+    @AfterEach void cleanup() {handler.closeAll();filters.closeAll();}
+    @Test void nativePauseAckAndDisconnectControlActualBackendIndependentlyOfReads() throws Exception {
+        bytes="hit\n".getBytes(StandardCharsets.UTF_8);
+        com.doumiot.sshconsole.ssh.SshFileFilterRemoteFactory factory=mock(com.doumiot.sshconsole.ssh.SshFileFilterRemoteFactory.class);
+        com.doumiot.sshconsole.ssh.SshFileFilterRemoteCursor cursor=mock(com.doumiot.sshconsole.ssh.SshFileFilterRemoteCursor.class);
+        when(factory.openNative(anyString(),anyString(),anyString(),anyString(),anyBoolean(),anyInt(),any(),any())).thenReturn(new com.doumiot.sshconsole.ssh.SshFileFilterRemoteFactory.Attempt(cursor,null));
+        when(cursor.size()).thenReturn(4L);
+        when(cursor.next(anyString())).thenAnswer(c->new SshFileFilterService.Batch(c.getArgument(0),Collections.singletonList(new com.doumiot.sshconsole.sftp.SshFileFilterScanner.Row(1,"hit",true)),3,4,false,false));
+        ReflectionTestUtils.setField(filters,"remoteScans",factory);
+        String scan=filters.start("owner","/app.log","hit","UTF-8",true,0).getScanId();
+        send(socket,"{\"type\":\"start\",\"sessionToken\":\"owner\",\"path\":\"/app.log\",\"offset\":0,\"scanId\":\""+scan+"\",\"historical\":true}");
+        check();verify(cursor,atLeastOnce()).pause(true); // pending ACK applies remote STOP
+        clearInvocations(cursor);send(socket,"{\"type\":\"pause\"}");verify(cursor).pause(true);
+        clearInvocations(cursor);send(socket,"{\"type\":\"resume\"}");verify(cursor,never()).pause(false); // unacked page still holds STOP
+        send(socket,"{\"type\":\"ack\",\"sequence\":1}");verify(cursor,atLeastOnce()).pause(false);
+        clearInvocations(cursor);handler.afterConnectionClosed(socket,CloseStatus.NORMAL);verify(cursor,atLeastOnce()).pause(true);
+    }
+    private String emptyNativeScan(com.doumiot.sshconsole.ssh.SshFileFilterRemoteCursor cursor) throws Exception {
+        bytes="hit\n".getBytes(StandardCharsets.UTF_8);
+        com.doumiot.sshconsole.ssh.SshFileFilterRemoteFactory factory=mock(com.doumiot.sshconsole.ssh.SshFileFilterRemoteFactory.class);
+        when(factory.openNative(anyString(),anyString(),anyString(),anyString(),anyBoolean(),anyInt(),any(),any())).thenReturn(new com.doumiot.sshconsole.ssh.SshFileFilterRemoteFactory.Attempt(cursor,null));
+        when(cursor.size()).thenReturn(4L);when(cursor.next(anyString())).thenAnswer(c->new SshFileFilterService.Batch(c.getArgument(0),Collections.emptyList(),0,4,false,false));
+        ReflectionTestUtils.setField(filters,"remoteScans",factory);return filters.start("owner","/app.log","hit","UTF-8",true,0).getScanId();
+    }
+    @Test void disconnectedNativeHistoryWithoutPendingDataIsCanceledAtResumeExpiry() throws Exception {
+        com.doumiot.sshconsole.ssh.SshFileFilterRemoteCursor cursor=mock(com.doumiot.sshconsole.ssh.SshFileFilterRemoteCursor.class);String scan=emptyNativeScan(cursor);
+        send(socket,"{\"type\":\"start\",\"sessionToken\":\"owner\",\"path\":\"/app.log\",\"offset\":0,\"scanId\":\""+scan+"\",\"historical\":true}");check();
+        handler.afterConnectionClosed(socket,CloseStatus.NORMAL);clock.millis+=60001;check();
+        verify(cursor).close();assertThrows(IOException.class,()->filters.next("owner",scan));
+    }
+    @Test void longPauseReclaimsNativeProcessWithoutDroppingItsJavaReplayState() throws Exception {
+        com.doumiot.sshconsole.ssh.SshFileFilterRemoteCursor cursor=mock(com.doumiot.sshconsole.ssh.SshFileFilterRemoteCursor.class);String scan=emptyNativeScan(cursor);
+        send(socket,"{\"type\":\"start\",\"sessionToken\":\"owner\",\"path\":\"/app.log\",\"offset\":0,\"scanId\":\""+scan+"\",\"historical\":true}");
+        send(socket,"{\"type\":\"pause\"}");clock.millis+=30001;check();verify(cursor).close();
+        assertThrows(IOException.class,()->filters.next("owner",scan),"Tail still owns its replay state after remote resources close");
+    }
+    @Test void pauseRacingAnEmptyNativeReadLeavesRemoteGroupStopped() throws Exception {
+        com.doumiot.sshconsole.ssh.SshFileFilterRemoteCursor cursor=mock(com.doumiot.sshconsole.ssh.SshFileFilterRemoteCursor.class);String scan=emptyNativeScan(cursor);
+        java.util.List<Boolean> signals=java.util.Collections.synchronizedList(new java.util.ArrayList<>());doAnswer(c->{signals.add(c.getArgument(0));return null;}).when(cursor).pause(anyBoolean());
+        SshFileFilterService observed=spy(filters);java.util.concurrent.CountDownLatch entered=new java.util.concurrent.CountDownLatch(1),proceed=new java.util.concurrent.CountDownLatch(1);
+        doAnswer(c->{entered.countDown();assertTrue(proceed.await(5,java.util.concurrent.TimeUnit.SECONDS));return c.callRealMethod();}).when(observed).nextTail(any(),any());
+        handler.closeAll();handler=new SshFileTailWebSocketHandler(files,observed,registry);ReflectionTestUtils.setField(handler,"clock",clock);
+        java.util.concurrent.ExecutorService worker=java.util.concurrent.Executors.newSingleThreadExecutor();ReflectionTestUtils.setField(handler,"executor",worker);
+        try {
+            send(socket,"{\"type\":\"start\",\"sessionToken\":\"owner\",\"path\":\"/app.log\",\"offset\":0,\"scanId\":\""+scan+"\",\"historical\":true}");worker.submit(()->{}).get(2,java.util.concurrent.TimeUnit.SECONDS);
+            clock.millis+=1000;handler.poll();assertTrue(entered.await(2,java.util.concurrent.TimeUnit.SECONDS));
+            send(socket,"{\"type\":\"pause\"}");proceed.countDown();worker.submit(()->{}).get(2,java.util.concurrent.TimeUnit.SECONDS);
+            assertFalse(signals.isEmpty());assertTrue(signals.get(signals.size()-1),"pause must win even when the read emitted no progress/data");
+        }finally{proceed.countDown();worker.shutdownNow();}
+    }
+    @Test void historicalStreamCatchesUpOnAckAndCompletesOnlyAfterFinalAck() throws Exception {
+        bytes=new byte[600000];Arrays.fill(bytes,(byte)'\n');byte[] hit="hit\n".getBytes(StandardCharsets.UTF_8);System.arraycopy(hit,0,bytes,599996,4);
+        String scan=filters.start("owner","/app.log","hit","UTF-8",true,0).getScanId();
+        send(socket,"{\"type\":\"start\",\"sessionToken\":\"owner\",\"path\":\"/app.log\",\"offset\":0,\"scanId\":\""+scan+"\",\"historical\":true}");
+        check();assertFalse(last().path("eof").asBoolean());int readBefore=reads;check();assertEquals(readBefore,reads);
+        send(socket,"{\"type\":\"ack\",\"sequence\":1}");assertEquals(2,last().path("sequence").asLong());
+        send(socket,"{\"type\":\"ack\",\"sequence\":2}");assertTrue(last().path("eof").asBoolean());
+        assertThrows(IOException.class,()->filters.claimTail("owner",scan));
+        send(socket,"{\"type\":\"ack\",\"sequence\":3}");assertEquals("complete",last().path("type").asText());
+        SshFileFilterService.TailLease lease=filters.claimTail("owner",scan);filters.releaseTail(lease);
+    }
+    @Test void emptyHistoricalStreamStillSendsFinalProgressAndReplaysCompletion() throws Exception {
+        bytes=new byte[0];String scan=filters.start("owner","/app.log","hit","UTF-8",true,0).getScanId();
+        send(socket,"{\"type\":\"start\",\"sessionToken\":\"owner\",\"path\":\"/app.log\",\"offset\":0,\"scanId\":\""+scan+"\",\"historical\":true}");
+        String id=last().path("tailId").asText();check();assertEquals("data",last().path("type").asText());assertTrue(last().path("eof").asBoolean());
+        send(socket,"{\"type\":\"ack\",\"sequence\":1}");assertEquals("complete",last().path("type").asText());
+        handler.afterConnectionClosed(socket,CloseStatus.NORMAL);List<JsonNode> replay=new ArrayList<>();WebSocketSession replacement=socket("new",replay);
+        send(replacement,"{\"type\":\"resume\",\"sessionToken\":\"owner\",\"tailId\":\""+id+"\",\"sequence\":1}");
+        assertEquals("complete",replay.get(replay.size()-1).path("type").asText());assertEquals(0,replay.stream().filter(f->"data".equals(f.path("type").asText())).count());
+    }
+    @Test void completedHistoriesDoNotConsumeActiveTailSlotsAndReplayCacheIsBounded() throws Exception {
+        bytes=new byte[0];
+        for(int i=0;i<40;i++) {
+            String scan=filters.start("owner","/app.log","hit","UTF-8",true,0).getScanId();frames.clear();socket=socket("history-"+i,frames);
+            send(socket,"{\"type\":\"start\",\"sessionToken\":\"owner\",\"path\":\"/app.log\",\"offset\":0,\"scanId\":\""+scan+"\",\"historical\":true}");
+            assertEquals("ready",last().path("type").asText());check();send(socket,"{\"type\":\"ack\",\"sequence\":1}");
+            assertEquals("complete",last().path("type").asText());filters.cancel("owner",scan);
+        }
+        assertTrue(((Map<?,?>)ReflectionTestUtils.getField(handler,"completed")).size()<=32);
+    }
     @Test void reusesOneChannelAndWaitsForAckBeforeReadingAgain() throws Exception {
         start(2,null); assertEquals("ready",frames.get(0).path("type").asText());
         bytes="a\nhello\n".getBytes(StandardCharsets.UTF_8); mtime++;

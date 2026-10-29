@@ -108,7 +108,7 @@
           >
             <!-- Name Cell -->
             <div class="v-td col-name" :title="row.name">
-              <el-icon class="row-ico" :class="{ 'is-dir': row.dir }">
+              <el-icon class="row-ico" :class="[getFileTypeClass(row), { 'is-dir': row.dir }]">
                 <Folder v-if="row.dir" />
                 <Document v-else />
               </el-icon>
@@ -599,6 +599,18 @@ function formatTime(sec) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
+function getFileTypeClass(row) {
+  if (!row) return ''
+  if (row.dir) return 'is-dir'
+  const name = (row.name || '').toLowerCase()
+  if (name.endsWith('.sh') || name.endsWith('.bash')) return 'is-sh'
+  if (name.endsWith('.js') || name.endsWith('.ts') || name.endsWith('.vue')) return 'is-code'
+  if (name.endsWith('.json') || name.endsWith('.yaml') || name.endsWith('.yml') || name.endsWith('.conf') || name.endsWith('.ini')) return 'is-config'
+  if (name.endsWith('.tar.gz') || name.endsWith('.zip') || name.endsWith('.tar') || name.endsWith('.gz') || name.endsWith('.tgz')) return 'is-archive'
+  if (name.endsWith('.log') || name.endsWith('.out')) return 'is-log'
+  return ''
+}
+
 let resizeObserver = null
 onMounted(() => {
   window.addEventListener('pointerdown', onGlobalPointerDown)
@@ -827,13 +839,36 @@ onBeforeUnmount(() => {
   box-shadow: -3px 0 6px -2px rgba(0, 0, 0, 0.08);
 }
 
+.virtual-row .col-actions.sticky-right {
+  opacity: 0.65;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
 .virtual-header .col-actions.sticky-right {
   background: var(--el-fill-color-light, #f5f7fa);
   z-index: 11;
 }
 
-.virtual-row:hover .col-actions.sticky-right {
+.virtual-row:hover .col-actions.sticky-right,
+.virtual-row.is-context-selected .col-actions.sticky-right {
   background: var(--el-fill-color-light, #f5f7fa);
+  opacity: 1;
+}
+
+.row-ico.is-sh {
+  color: #10b981;
+}
+.row-ico.is-code {
+  color: #3b82f6;
+}
+.row-ico.is-config {
+  color: #06b6d4;
+}
+.row-ico.is-archive {
+  color: #a855f7;
+}
+.row-ico.is-log {
+  color: #f59e0b;
 }
 
 .col-actions :deep(.el-button) {

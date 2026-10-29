@@ -23,11 +23,15 @@ public class SshFolderTransferService {
     private long limit() { return properties.getUploadMaxSizeMb()*1024L*1024L; }
     public long maxBytes() { return limit(); }
     public void mkdir(String token,String path,String relative) throws IOException {
+        mkdir(token, path, relative, null, null);
+    }
+    public SftpStreams.UploadResult mkdir(String token,String path,String relative,Long ownerUid,Long ownerGid) throws IOException {
+        SftpStreams.Ownership owner=SftpStreams.Ownership.of(ownerUid,ownerGid);
         validateRelative(relative);
         SshSessionRegistry.SessionEntry session=sessions.get(token);
         try(SFTPClient sftp=session.getClient().newSFTPClient()) {
             String base=sftp.canonicalize(SshSftpPathResolver.resolveForList(path,session.getDefaultCwd(),session.getHomeDir()));
-            prepareTarget(sftp,base,relative,true);
+            return prepareTarget(sftp,base,relative,true,owner);
         }
     }
 
@@ -90,32 +94,45 @@ public class SshFolderTransferService {
         return zip;
     }
     public void uploadFile(String token,String path,String relative,MultipartFile file) throws IOException {
+        uploadFile(token,path,relative,file,null,null);
+    }
+    public SftpStreams.UploadResult uploadFile(String token,String path,String relative,MultipartFile file,Long ownerUid,Long ownerGid) throws IOException {
+        SftpStreams.Ownership owner=SftpStreams.Ownership.of(ownerUid,ownerGid);
         validateRelative(relative);
         if(file.getSize()>limit())throw new IOException("文件超过传输大小限制");
         SshSessionRegistry.SessionEntry session=sessions.get(token);
+        String resolved=SshSftpPathResolver.resolveForList(path,session.getDefaultCwd(),session.getHomeDir());
         Path tmp=Files.createTempFile("doumi-folder-file-", ".tmp");
         try(SFTPClient sftp=session.getClient().newSFTPClient()) {
-            String base=sftp.canonicalize(SshSftpPathResolver.resolveForList(path,session.getDefaultCwd(),session.getHomeDir()));
-            prepareTarget(sftp,base,relative,false);
-            file.transferTo(tmp);SftpStreams.put(sftp,tmp,base+"/"+relative);
+            String base=sftp.canonicalize(resolved);
+            SftpStreams.UploadResult directories=prepareTarget(sftp,base,relative,false,owner);
+            file.transferTo(tmp);
+            return directories.merge(SftpStreams.put(sftp,tmp,base+"/"+relative,owner));
         }finally{Files.deleteIfExists(tmp);}
     }
     public void uploadArchive(String token,String path,MultipartFile file) throws IOException {
+        uploadArchive(token,path,file,null,null);
+    }
+    public SftpStreams.UploadResult uploadArchive(String token,String path,MultipartFile file,Long ownerUid,Long ownerGid) throws IOException {
+        SftpStreams.Ownership owner=SftpStreams.Ownership.of(ownerUid,ownerGid);
+        SshSessionRegistry.SessionEntry session=sessions.get(token);
+        String resolved=SshSftpPathResolver.resolveForList(path,session.getDefaultCwd(),session.getHomeDir());
         if(file.getSize()>limit())throw new IOException("压缩包超过传输大小限制");
         Path temp=Files.createTempDirectory("doumi-folder-upload-");
         try {
             List<String> entries=extract(file.getInputStream(),temp,limit());
-            SshSessionRegistry.SessionEntry session=sessions.get(token);
             try(SFTPClient sftp=session.getClient().newSFTPClient()) {
-                String base=sftp.canonicalize(SshSftpPathResolver.resolveForList(path,session.getDefaultCwd(),session.getHomeDir()));
+                String base=sftp.canonicalize(resolved);
+                SftpStreams.UploadResult result=SftpStreams.UploadResult.success(false,null);
                 // Check every target before writing any file, including preexisting symlink ancestors.
                 for(String name:entries)checkTarget(sftp,base,name);
                 for(String name:entries) {
                     Path local=temp.resolve(name);
                     boolean dir=Files.isDirectory(local);
-                    prepareTarget(sftp,base,name,dir);
-                    if(!dir)SftpStreams.put(sftp,local,base+"/"+name);
+                    result=result.merge(prepareTarget(sftp,base,name,dir,owner));
+                    if(!dir)result=result.merge(SftpStreams.put(sftp,local,base+"/"+name,owner));
                 }
+                return result;
             }
         }finally{
             try(java.util.stream.Stream<Path> paths=Files.walk(temp)) {
@@ -166,11 +183,31 @@ public class SshFolderTransferService {
             if(attrs.getType()==FileMode.Type.SYMLINK||i<parts.length-1&&attrs.getType()!=FileMode.Type.DIRECTORY)throw new IOException("目标路径包含符号链接或非目录："+current);
         }
     }
-    private static void prepareTarget(SFTPClient sftp,String base,String name,boolean directory) throws IOException {
+    private static SftpStreams.UploadResult prepareTarget(SFTPClient sftp,String base,String name,boolean directory,
+            SftpStreams.Ownership owner) throws IOException {
         checkTarget(sftp,base,name);
-        int slash=name.lastIndexOf('/');
-        if(directory)sftp.mkdirs(base+"/"+name);
-        else if(slash>=0)sftp.mkdirs(base+"/"+name.substring(0,slash));
+        String[] parts=name.split("/");
+        int count=directory?parts.length:parts.length-1;
+        String current=base;
+        SftpStreams.UploadResult result=SftpStreams.UploadResult.success(false,null);
+        for(int i=0;i<count;i++) {
+            current+="/"+parts[i];
+            FileAttributes existing=null;
+            try {existing=sftp.lstat(current);}
+            catch(SFTPException e) {if(e.getStatusCode()!=Response.StatusCode.NO_SUCH_FILE)throw e;}
+            if(existing!=null) {
+                if(existing.getType()!=FileMode.Type.DIRECTORY)throw new IOException("目标路径不是普通目录："+current);
+                continue; // Existing directories never acquire the optional upload owner.
+            }
+            try {sftp.mkdir(current);}
+            catch(SFTPException e) {
+                // A racing creator owns this directory; never chown it as part of this upload.
+                if(sftp.lstat(current).getType()!=FileMode.Type.DIRECTORY)throw e;
+                continue;
+            }
+            result=result.merge(SftpStreams.applyOwnership(sftp,current,owner));
+        }
+        return result;
     }
     @Data public static class Tree {private String name,path;private long bytes;private List<Item> items=new ArrayList<>();}
     @Data public static class Item {private String path;private boolean directory;private long size;}

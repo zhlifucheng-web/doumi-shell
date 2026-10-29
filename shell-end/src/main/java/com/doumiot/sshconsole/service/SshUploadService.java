@@ -29,6 +29,11 @@ public class SshUploadService {
     @Resource private SshSessionRegistry sessionRegistry;
 
     public synchronized String start(String token, String path, String name, long total) throws IOException {
+        return start(token, path, name, total, null, null);
+    }
+
+    public synchronized String start(String token, String path, String name, long total, Long ownerUid, Long ownerGid) throws IOException {
+        SftpStreams.Ownership owner = SftpStreams.Ownership.of(ownerUid, ownerGid);
         if (!StringUtils.hasText(name) || name.contains("/") || name.contains("\\") || name.indexOf('\0') >= 0
                 || ".".equals(name) || "..".equals(name) || total < 0) throw new IOException("无效文件名或文件大小");
         if (uploads.size() >= 256) throw new IOException("未结束的上传过多，请稍后重试");
@@ -37,7 +42,7 @@ public class SshUploadService {
         String id = UUID.randomUUID().toString();
         Upload upload = new Upload(token, entry, total,
                 SshSftpPathResolver.resolveChildDir(dir, name, entry.getDefaultCwd(), entry.getHomeDir()),
-                SshSftpPathResolver.resolveChildDir(dir, ".doumi-upload-" + id + ".part", entry.getDefaultCwd(), entry.getHomeDir()));
+                SshSftpPathResolver.resolveChildDir(dir, ".doumi-upload-" + id + ".part", entry.getDefaultCwd(), entry.getHomeDir()), owner);
         try (SFTPClient sftp = entry.getClient().newSFTPClient();
              RemoteFile ignored = SftpStreams.createTemporary(sftp, upload.temp)) {
             uploads.put(id, upload);
@@ -77,6 +82,10 @@ public class SshUploadService {
     }
 
     public void complete(String token, String id) throws IOException {
+        completeResult(token, id);
+    }
+
+    public SftpStreams.UploadResult completeResult(String token, String id) throws IOException {
         Upload upload = require(token, id);
         synchronized (upload) {
             checkActive(id, upload);
@@ -84,8 +93,9 @@ public class SshUploadService {
             if (upload.offset != upload.total) throw new IOException("文件尚未上传完整");
             try (SFTPClient sftp = upload.entry.getClient().newSFTPClient()) {
                 if (sftp.size(upload.temp) != upload.total) throw new IOException("临时文件大小不一致");
-                SftpStreams.commit(sftp, upload.temp, upload.target);
+                SftpStreams.UploadResult result = SftpStreams.commit(sftp, upload.temp, upload.target, upload.owner);
                 uploads.remove(id, upload);
+                return result;
             } finally { upload.touched = System.currentTimeMillis(); }
         }
     }
@@ -140,11 +150,12 @@ public class SshUploadService {
         final String token, target, temp;
         final SshSessionRegistry.SessionEntry entry;
         final long total;
+        final SftpStreams.Ownership owner;
         long offset;
         volatile long touched = System.currentTimeMillis();
         volatile boolean cancelled;
-        Upload(String token, SshSessionRegistry.SessionEntry entry, long total, String target, String temp) {
-            this.token = token; this.entry = entry; this.total = total; this.target = target; this.temp = temp;
+        Upload(String token, SshSessionRegistry.SessionEntry entry, long total, String target, String temp, SftpStreams.Ownership owner) {
+            this.token = token; this.entry = entry; this.total = total; this.target = target; this.temp = temp; this.owner = owner;
         }
     }
 }

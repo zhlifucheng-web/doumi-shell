@@ -3,7 +3,7 @@ import { parse, compileScript } from '@vue/compiler-sfc'
 import * as vue from 'vue'
 
 // Run the complete production setup inside Vue without requiring a browser DOM.
-export function mountSfcSetup(filename, { modules = {}, globals = {}, props = {}, onSetup } = {}) {
+export function mountSfcSetup(filename, { modules = {}, globals = {}, props = {}, onSetup, keepAliveVisible } = {}) {
   const { descriptor } = parse(readFileSync(filename, 'utf8'), { filename: filename.pathname })
   const compiled = compileScript(descriptor, { id: filename.pathname }).content
   const executable = compiled.replace(/^import\s+['"][^'"]+['"];?\s*$/gm, '').replace(/import\s+([\s\S]*?)\s+from\s+['"]([^'"]+)['"]/g, (_, bindings, source) => {
@@ -16,7 +16,7 @@ export function mountSfcSetup(filename, { modules = {}, globals = {}, props = {}
   const reactiveProps = vue.reactive(props)
   let state
   const renderer = vue.createRenderer({
-    createComment: () => ({}), insert: () => {}, remove: () => {}, parentNode: () => null, nextSibling: () => null
+    createElement: () => ({}), createComment: () => ({}), insert: () => {}, remove: () => {}, parentNode: () => null, nextSibling: () => null
   })
   const setupComponent = {
     ...component,
@@ -26,7 +26,9 @@ export function mountSfcSetup(filename, { modules = {}, globals = {}, props = {}
       return () => null
     }
   }
-  const app = renderer.createApp({ render: () => vue.h(setupComponent, reactiveProps) })
+  const app = renderer.createApp({ render: () => keepAliveVisible
+    ? vue.h(vue.KeepAlive, null, { default: () => keepAliveVisible.value ? vue.h(setupComponent, reactiveProps) : null })
+    : vue.h(setupComponent, reactiveProps) })
   app.config.errorHandler = error => { throw error }
   app.mount({})
   return { get state() { return state }, props: reactiveProps, unmount: () => app.unmount() }

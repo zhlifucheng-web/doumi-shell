@@ -30,7 +30,7 @@ class SshUploadServiceTest {
         when(sftp.open(anyString(), anySet())).thenReturn(remote);
         when(sftp.open(anyString(), anySet(), any(FileAttributes.class))).thenReturn(remote);
         when(sftp.version()).thenReturn(5);
-        when(sftp.statExistence(anyString())).thenReturn(FileAttributes.EMPTY);
+        when(sftp.statExistence(anyString())).thenAnswer(i -> ((String) i.getArgument(0)).endsWith(".part") ? FileAttributes.EMPTY : null);
         ReflectionTestUtils.setField(service, "sessionRegistry", registry);
     }
     MockMultipartFile bytes(int count) { return new MockMultipartFile("file", new byte[count]); }
@@ -89,7 +89,7 @@ class SshUploadServiceTest {
     @Test void preservesExistingExecutablePermissionsBeforeReplacement() throws Exception {
         String id = service.start("token", "/tmp", "script", 0);
         when(sftp.statExistence("/tmp/script")).thenReturn(new FileAttributes.Builder()
-                .withType(FileMode.Type.REGULAR).withPermissions(0750).build());
+                .withType(FileMode.Type.REGULAR).withPermissions(0750).withUIDGID(1001, 1002).build());
         service.complete("token", id);
         org.mockito.InOrder order = inOrder(sftp);
         order.verify(sftp).chmod(temp(id), 0750);
@@ -101,13 +101,34 @@ class SshUploadServiceTest {
                 .withType(FileMode.Type.REGULAR).withPermissions(0640).withUIDGID(1001, 1002).build());
         service.complete("token", id);
         verify(sftp).setattr(eq(temp(id)), argThat(attrs ->
-                attrs.getMode().getPermissionsMask() == 0640
-                        && attrs.getUID() == 1001
+                attrs.getUID() == 1001
                         && attrs.getGID() == 1002));
         verify(sftp).rename(eq(temp(id)), eq("/tmp/service.conf"), anySet());
     }
+    @Test void failedOwnershipRestoreLeavesOriginalUntouched() throws Exception {
+        String id = service.start("token", "/tmp", "protected", 0);
+        when(sftp.statExistence("/tmp/protected")).thenReturn(new FileAttributes.Builder()
+                .withType(FileMode.Type.REGULAR).withPermissions(06750).withUIDGID(1001, 1002).build());
+        doThrow(new IOException("chown denied")).when(sftp).setattr(eq(temp(id)), any(FileAttributes.class));
+        assertThrows(IOException.class, () -> service.complete("token", id));
+        verify(sftp, never()).rename(anyString(), anyString(), anySet());
+        verify(sftp, never()).rm("/tmp/protected");
+    }
+    @Test void restoresOwnershipBeforeFinalPermissions() throws Exception {
+        String id = service.start("token", "/tmp", "protected", 0);
+        when(sftp.statExistence("/tmp/protected")).thenReturn(new FileAttributes.Builder()
+                .withType(FileMode.Type.REGULAR).withPermissions(06750).withUIDGID(1001, 1002).build());
+        service.complete("token", id);
+        org.mockito.InOrder order = inOrder(sftp);
+        order.verify(sftp).setattr(eq(temp(id)), argThat(attrs -> attrs.has(FileAttributes.Flag.UIDGID)
+                && !attrs.has(FileAttributes.Flag.MODE) && attrs.getUID() == 1001 && attrs.getGID() == 1002));
+        order.verify(sftp).chmod(temp(id), 06750);
+        order.verify(sftp).rename(eq(temp(id)), eq("/tmp/protected"), anySet());
+    }
     @Test void unsupportedOverwriteNeverDeletesOriginal() throws Exception {
         String id = service.start("token", "/tmp", "file", 0);
+        when(sftp.statExistence("/tmp/file")).thenReturn(new FileAttributes.Builder()
+                .withType(FileMode.Type.REGULAR).withPermissions(0644).withUIDGID(0, 0).build());
         when(sftp.version()).thenReturn(3);
         when(sftp.getSFTPEngine()).thenReturn(mock(SFTPEngine.class));
         IOException error = assertThrows(IOException.class, () -> service.complete("token", id));

@@ -3,11 +3,12 @@ import assert from 'node:assert/strict'
 import { mountSfcSetup } from './helpers/mountSfcSetup.js'
 import * as vue from 'vue'
 import * as fileTypes from '../src/utils/fileTypeHelper.js'
+import * as terminalContext from '../src/composables/useTerminalFileContext.js'
 import * as transferHistory from '../src/composables/transferHistory.js'
 
 const filename = new URL('../src/components/ssh/SshFilePanel.vue', import.meta.url)
 
-function mountPanel(props = {}, listDirectory, fileLocation = vue.ref(null), loadUsers) {
+function mountPanel(props = {}, listDirectory, fileLocation = vue.ref(null), loadUsers, extra = {}) {
   const fileSearchContext = vue.ref(null)
   const requests = []
   const events = []
@@ -15,16 +16,20 @@ function mountPanel(props = {}, listDirectory, fileLocation = vue.ref(null), loa
   const warnings = []
   const errors = []
   const invalid = []
+  const queued = [], successes=[]
   const modules = {
     '@/utils/fileTypeHelper': fileTypes,
+    '@/composables/useTerminalFileContext': { useTerminalFileContext: options=>terminalContext.useTerminalFileContext({...options,...extra.contextOptions}) },
     '@/composables/transferHistory': transferHistory,
-    'element-plus': { ElMessage: { warning: message => warnings.push(message), error: message => errors.push(message) } },
+    'element-plus': { ElMessage: { success: message => successes.push(message), warning: message => warnings.push(message), error: message => errors.push(message) } },
     'vue-router': { useRouter: () => ({}) },
     '@/composables/useAiChanges': { useAiChanges: () => {} },
-    '@/composables/useTransfers': { useTransfers: () => ({ transfers: vue.ref([]), assignTransferHost: () => {} }) },
+    '@/composables/useTransfers': { useTransfers: () => ({ transfers: vue.ref([]), assignTransferHost: () => {}, enqueueTransfer: task=>queued.push(task) }) },
     pinia: { storeToRefs: store => store },
     '@/stores/workspace': { useWorkspaceStore: () => ({ fileLocation, fileSearchContext }) },
     '@/api/sshConsole': {
+      getTerminalContext: extra.getTerminalContext || (async()=>({available:false,message:'Unavailable'})),
+      sftpUploadLarge: extra.sftpUploadLarge,
       sftpList: async (token, path) => {
         requests.push({ token, path })
         if (listDirectory) return listDirectory(token, path)
@@ -34,10 +39,10 @@ function mountPanel(props = {}, listDirectory, fileLocation = vue.ref(null), loa
     }
   }
   const mounted = mountSfcSetup(filename, {
-    modules, globals: { localStorage: { getItem: () => null } },
+    modules, globals: { localStorage: { getItem: () => null, setItem:()=>{} } },
     props: { ...props, onPathChange: (path, tabId) => { events.push(path); pathEvents.push({ path, tabId }) }, onSessionInvalid: () => invalid.push(true) }
   })
-  return { ...mounted, fileSearchContext, requests, events, pathEvents, warnings, errors, invalid }
+  return { ...mounted, fileSearchContext, requests, events, pathEvents, warnings, errors, invalid, queued, successes }
 }
 
 test('SFTP panel initializes before a session exists and does not request a directory', () => {
@@ -306,4 +311,73 @@ test('directory navigation withdraws quick-open results until the new listing co
     assert.equal(panel.fileSearchContext.value, null)
     assert.equal(current.openFile(current.files[0]), false)
   } finally { panel.unmount() }
+})
+
+
+test('terminal context follows latest cwd after an open viewer closes and manual navigation turns follow off',async()=>{
+  const timers=new Map();let id=0
+  let response={available:true,cwd:'/srv/alice',terminalUser:'alice',terminalUid:1000,terminalGid:1000,fileUser:'root'}
+  const panel=mountPanel({sessionToken:'s',tabId:'a'},undefined,vue.ref(null),undefined,{
+    getTerminalContext:async()=>response,
+    contextOptions:{schedule:fn=>{timers.set(++id,fn);return id},unschedule:key=>timers.delete(key)}
+  })
+  async function poll(){const fn=timers.values().next().value;timers.clear();await fn();await flush()}
+  try{
+    await flush();assert.equal(panel.state.loadedPath.value,'/srv/alice');assert.equal(panel.state.terminalContext.value.fileUser,'root')
+    panel.state.showLargeViewer.value=true
+    response={...response,cwd:'/srv/bob',terminalUser:'bob'};await poll()
+    assert.equal(panel.state.loadedPath.value,'/srv/alice');assert.equal(panel.state.terminalContext.value.terminalUser,'bob')
+    panel.state.showLargeViewer.value=false;await flush();assert.equal(panel.state.loadedPath.value,'/srv/bob')
+    assert.equal(panel.fileSearchContext.value.path,'/srv/bob')
+    panel.state.enterDir('docs');await flush();assert.equal(panel.state.followTerminal.value,false)
+    response={...response,cwd:'/srv/new'};await poll();assert.equal(panel.state.loadedPath.value,'/srv/bob/docs')
+  }finally{panel.unmount()}
+})
+
+test('queued file input and dropped uploads pin destination, token and selected uid/gid and retain commit warnings',async()=>{
+  const uploads=[]
+  const panel=mountPanel({sessionToken:'old',tabId:'a'},undefined,vue.ref(null),undefined,{
+    getTerminalContext:async()=>({available:true,cwd:'/srv/alice',terminalUser:'alice',terminalUid:1000,terminalGid:1001,fileUser:'root'}),
+    sftpUploadLarge:async(...args)=>{uploads.push(args);return {uploaded:true,ownershipApplied:false,warning:'ownership denied'}}
+  })
+  try{
+    await flush();panel.state.assignUploadOwner.value=true
+    panel.state.uploadFiles({target:{files:[new File(['x'],'input.txt')],value:'selected'}})
+    await panel.state.processDroppedDataTransfer({files:[new File(['x'],'drop.txt')]})
+    panel.props.sessionToken='new';panel.props.tabId='b';await flush()
+    for(const task of panel.queued)await task.run({onProgress(){}})
+    assert.equal(uploads.length,2)
+    for(const [token,path,file,options] of uploads){assert.equal(token,'old');assert.equal(path,'/srv/alice');assert.equal(options.ownerUid,1000);assert.equal(options.ownerGid,1001)}
+    assert.equal(panel.warnings.filter(w=>w.includes('ownership denied')).length,2)
+    assert.equal(panel.errors.length,0)
+  }finally{panel.unmount()}
+})
+
+test('checked ownership rejects new uploads when the current probe is unavailable',async()=>{
+  const panel=mountPanel({sessionToken:'s'})
+  try{
+    await flush();panel.state.assignUploadOwner.value=true
+    panel.state.uploadFiles({target:{files:[new File(['x'],'input.txt')],value:'selected'}})
+    assert.equal(panel.queued.length,0);assert.equal(panel.warnings.length,1)
+  }finally{panel.unmount()}
+})
+
+
+test('remembered upload ownership waits for fresh identity and applies the current user after reopen',async()=>{
+ const saved=new Map(),storage={getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)}
+ let panel=mountPanel({sessionToken:'old'},undefined,vue.ref(null),undefined,{contextOptions:{storage}})
+ try {panel.state.assignUploadOwner.value=true;await flush()} finally {panel.unmount()}
+ let resolve;const uploaded=[]
+ panel=mountPanel({sessionToken:'new',savedPath:'/srv/new'},undefined,vue.ref(null),undefined,{
+  contextOptions:{storage},getTerminalContext:()=>new Promise(done=>{resolve=done}),sftpUploadLarge:async(...args)=>{uploaded.push(args)}
+ })
+ try {
+  await flush();assert.equal(panel.state.assignUploadOwner.value,true)
+  panel.state.uploadFiles({target:{files:[new File(['x'],'blocked.txt')],value:'selected'}})
+  assert.equal(panel.queued.length,0)
+  resolve({available:true,cwd:'/srv/new',terminalUser:'bob',terminalUid:2000,terminalGid:2001,fileUser:'root'});await flush()
+  panel.state.uploadFiles({target:{files:[new File(['x'],'current.txt')],value:'selected'}})
+  assert.equal(panel.queued.length,1);await panel.queued[0].run({})
+  assert.equal(uploaded[0][3].ownerUid,2000);assert.equal(uploaded[0][3].ownerGid,2001)
+ } finally {panel.unmount()}
 })
