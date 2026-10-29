@@ -1,5 +1,6 @@
 package com.doumiot.sshconsole.service;
 
+import com.doumiot.sshconsole.update.UpdateSettings;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -20,16 +21,17 @@ class SshReleaseServiceTest {
         server = MockRestServiceServer.createServer((RestTemplate) ReflectionTestUtils.getField(service, "http"));
     }
     String release(String version) {
-        return "{\"tag_name\":\"v" + version + "\",\"html_url\":null,\"assets\":[{\"name\":\"Doumi Shell-" + version
-                + ".msi\"},{\"name\":\"doumi-shell-" + version + "-linux-x64.tar.gz\"}]}";
+        return "{\"tag_name\":\"v" + version + "\",\"html_url\":null,\"assets\":[{\"name\":\"Doumi.Shell-" + version
+                + ".msi\"},{\"name\":\"Doumi.Shell-" + version + ".msi.sha256\"},{\"name\":\"doumi-shell-" + version + "-linux-x64.tar.gz\"},{\"name\":\"doumi-shell-" + version + "-linux-x64.tar.gz.sha256\"}]}";
     }
     @Test void resolvesExactReleaseAndPlatformLinksWithoutHtmlUrl() {
         server.expect(requestTo(SshReleaseService.API)).andRespond(withSuccess(release("1.0.18"), MediaType.APPLICATION_JSON));
         SshReleaseService.Latest latest = service.latest(false);
         assertNull(latest.getError());
         assertEquals("1.0.18", latest.getVersion());
-        assertEquals("https://gitee.com/hahadoumi/web-shell/releases/tag/v1.0.18", latest.getUrl());
-        assertTrue(latest.getWindowsUrl().endsWith("/Doumi%20Shell-1.0.18.msi"));
+        assertEquals("https://github.com/zhlifucheng-web/doumi-shell/releases/tag/v1.0.18", latest.getUrl());
+        assertTrue(latest.getWindowsUrl().endsWith("/Doumi.Shell-1.0.18.msi"));
+        assertTrue(latest.getWindowsChecksumUrl().endsWith(".msi.sha256"));
         assertTrue(latest.getLinuxUrl().endsWith("/doumi-shell-1.0.18-linux-x64.tar.gz"));
         assertSame(latest, service.latest(false));
         server.verify();
@@ -54,7 +56,7 @@ class SshReleaseServiceTest {
         server.expect(requestTo(SshReleaseService.API)).andRespond(request -> { throw new IOException("timed out"); });
         SshReleaseService.Latest result = service.latest(true);
         assertNull(result.getVersion());
-        assertTrue(result.getError().contains("部署 Doumi Shell 的机器无法连接 Gitee"));
+        assertTrue(result.getError().contains("部署 Doumi Shell 的机器无法连接 GitHub"));
     }
     @Test void missingAssetsAreReportedAsIncompleteRelease() {
         server.expect(requestTo(SshReleaseService.API)).andRespond(withSuccess("{\"tag_name\":\"v1.0.18\",\"assets\":[]}", MediaType.APPLICATION_JSON));
@@ -69,4 +71,23 @@ class SshReleaseServiceTest {
             assertNotNull(result.getError());
         }
     }
+    @Test void requiresChecksumsAndRejectsDrafts() {
+        for(String body:new String[]{release("1.0.63").replace(".msi.sha256", ".wrong"),release("1.0.63").replaceFirst("\\{", "{\"draft\":true,")}) {
+            server.reset();server.expect(requestTo(SshReleaseService.API)).andRespond(withSuccess(body,MediaType.APPLICATION_JSON));
+            assertNotNull(service.latest(true).getError());
+        }
+    }
+    @Test void fallsBackToConfiguredProxyWhenGithubApiIsUnavailableAndInvalidatesCacheOnChange() throws Exception {
+        java.nio.file.Path data=java.nio.file.Files.createTempDirectory("doumi-proxy-test");
+        UpdateSettings settings=new UpdateSettings(data,"https://gh-proxy.com/","");
+        ReflectionTestUtils.setField(service,"settings",settings);
+        server.expect(requestTo(SshReleaseService.API)).andRespond(withStatus(HttpStatus.BAD_GATEWAY));
+        server.expect(requestTo("https://gh-proxy.com/"+SshReleaseService.API)).andRespond(withSuccess(release("1.0.63"),MediaType.APPLICATION_JSON));
+        assertEquals("1.0.63",service.latest(false).getVersion());
+        server.verify();server.reset();settings.saveProxy("");
+        server.expect(requestTo(SshReleaseService.API)).andRespond(withSuccess(release("1.0.64"),MediaType.APPLICATION_JSON));
+        assertEquals("1.0.64",service.latest(false).getVersion());
+        server.verify();com.doumiot.updater.UpdateFiles.delete(data);
+    }
+
 }

@@ -5,6 +5,11 @@ logging:
     com.doumiot.sshconsole: INFO
 
 doumi:
+  update:
+    enabled: ${DOUMI_UPDATE_ENABLED:true}
+    proxy: ${DOUMI_UPDATE_PROXY:}
+    token: ${DOUMI_UPDATE_TOKEN:}
+
   storage:
     data-dir: ${DOUMI_DATA_DIR:./data}
 

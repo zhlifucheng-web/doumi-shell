@@ -25,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @SshConsoleEnabled
 public class SshUploadService {
     private static final long IDLE_MS = 30 * 60 * 1000L;
+    public synchronized int activeCount(){return uploads.size();}
     private final Map<String, Upload> uploads = new ConcurrentHashMap<>();
     @Resource private SshSessionRegistry sessionRegistry;
 

@@ -51,6 +51,7 @@ try {
     $inputDirectory = Join-Path $buildDirectory 'doumi-msi-input'
     New-Item -ItemType Directory -Force -Path $inputDirectory | Out-Null
     Copy-Item -LiteralPath $jarPath -Destination (Join-Path $inputDirectory 'doumi-shell.jar') -Force
+    Copy-Item -LiteralPath (Join-Path $releaseDirectory 'doumi-updater.jar') -Destination (Join-Path $inputDirectory 'doumi-updater.jar') -Force
     Copy-Item -LiteralPath (Join-Path $Root 'README.md') -Destination $inputDirectory -Force
     Copy-Item -LiteralPath (Join-Path $Root 'LICENSE') -Destination $inputDirectory -Force
     Copy-Item -LiteralPath (Join-Path $Root 'docs') -Destination $inputDirectory -Recurse -Force
@@ -76,10 +77,12 @@ try {
     )
     & (Join-Path $JdkHome 'bin/jpackage.exe') @jpackageArgs
     if ($LASTEXITCODE -ne 0) { throw 'MSI packaging failed' }
-    $msiPath = Join-Path $releaseDirectory "Doumi Shell-$Version.msi"
+    $generatedMsi = Join-Path $releaseDirectory "Doumi Shell-$Version.msi"
+    $msiPath = Join-Path $releaseDirectory "Doumi.Shell-$Version.msi"
+    Move-Item -LiteralPath $generatedMsi -Destination $msiPath -Force
     if (-not (Test-Path -LiteralPath $msiPath)) { throw 'MSI output missing' }
     $hash = (Get-FileHash -LiteralPath $msiPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    Set-Content -LiteralPath "$msiPath.sha256" -Value "$hash  Doumi Shell-$Version.msi" -Encoding ascii
+    Set-Content -LiteralPath "$msiPath.sha256" -Value "$hash  Doumi.Shell-$Version.msi" -Encoding ascii
     Write-Host "MSI ready: $msiPath"
 } finally {
     $env:JAVA_HOME = $previousJava

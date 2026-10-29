@@ -36,6 +36,12 @@ public class SshScriptExecutionService {
             new ArrayBlockingQueue<>(16), r -> { Thread t=new Thread(r,"script-execution"); t.setDaemon(true); return t; });
     private final ConcurrentMap<String, CopyOnWriteArrayList<DetailSubscription>> detailSubscribers = new ConcurrentHashMap<>();
     private volatile boolean closing;
+    private boolean updating;
+    public void beginUpdate() { synchronized(maintenanceLock) {
+        if(!active.isEmpty())throw new IllegalStateException("仍有脚本任务在执行，请等待任务结束后再更新");
+        updating=true;
+    }}
+    public void endUpdate(){synchronized(maintenanceLock){updating=false;}}
     private static final String ACTIVE = "('QUEUED','RUNNING','CANCELLING')";
 
     @Order(2) @EventListener(ApplicationReadyEvent.class)
@@ -46,7 +52,7 @@ public class SshScriptExecutionService {
 
     public Map<String,Object> start(long scriptId, long accountId, String source) {
         synchronized (maintenanceLock) {
-            if (closing) throw new IllegalArgumentException("服务正在关闭");
+            if (closing || updating) throw new IllegalArgumentException("服务正在关闭");
             SshScript script=scripts.selectById(scriptId);
             if(script==null) throw new IllegalArgumentException("脚本不存在");
             SshAccount account=accounts.requireAccount(accountId);

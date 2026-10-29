@@ -39,6 +39,7 @@ try {
     $outputPath = [IO.Path]::GetFullPath($outputPath)
     New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
     Copy-Item -LiteralPath (Join-Path $backendBuild 'shell-end-1.0.0-SNAPSHOT.jar') -Destination (Join-Path $outputPath 'doumi-shell.jar') -Force
+    Copy-Item -LiteralPath (Join-Path $backendBuild 'shell-end-1.0.0-SNAPSHOT-updater.jar') -Destination (Join-Path $outputPath 'doumi-updater.jar') -Force
     foreach ($scriptName in @('run-windows.bat', 'run-linux.sh')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $scriptName) -Destination $outputPath -Force
     }
