@@ -1,6 +1,7 @@
 package com.doumiot.sshconsole.ai;
 
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
+import com.doumiot.sshconsole.config.SshConsoleProperties;
 import com.doumiot.sshconsole.crypto.CredentialCipher;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -32,13 +33,14 @@ public class AiChatService {
             + "不要将用户附件中的密码写到普通备注字段。对批量导入优先一次提交完整快照，使引用一致并可回滚。"
             + "不要索取AI厂商API Key，它由应用在服务端管理。备份导出和文件下载返回链接时，将链接提供给用户点击保存。"
             + "创建或管理自定义监控卡片时先调用monitor_dashboard_list识别目标账户中的面板，并用dashboardId精确定位。系统卡片开关、面板内卡片关联、排序和趋势查看设置使用monitor_dashboard_update，不能修改其他面板的布局。卡片脚本是账户级共享定义，面板只保存显示关联；monitor_card_create必须提供dashboardId，列表返回每张卡片的dashboardIds；update指定dashboardId和visible可只改变该面板显示状态，delete指定dashboardId只解除此面板关联，省略dashboardId才永久删除账户级卡片。修改名称、脚本、类型和emptyText会影响引用该卡片的所有面板。创建必须调用monitor_card_create并显式选择type，不能只返回脚本让用户复制；管理已有卡片时使用monitor_card_list/get/update/delete，先读取并确认面板归属再修改或删除。先确认目标账户，并结合用户目标和数据形态选最合适类型：单一数值指标随时间变化选line（脚本每次输出当前value，面板累积趋势）；类别间数量对比选bar；组成占比选pie；单个关键数值选value；百分比进度或容量使用率选progress；多个字段的结构化状态选json；简短状态或文本选text。不要默认text；创建或修改前保证脚本输出与类型匹配。emptyText用于图表首次采样、脚本没有返回有效数据时显示，建议写清楚用户该看到的状态。脚本只读且只输出一行合法JSON：text={text:string}，value={value:number,unit?,label?}，progress={value:0-100,label?}，json为对象，line每次采样推荐输出{value:number}或{series:[{name,value:number}]}以形成最近30分钟时间趋势，line/bar也支持{labels?,series:[{name,data:number[]或{x,y}[]}],xAxisName?,yAxisName?}，pie={data:[{name,value:number}]}。"
-            + "工具输出被截断时使用筛选、分页或分段读取。一次最多12轮工具调用，到达上限时说明尚未完成的工作。";
+            + "工具输出被截断时使用筛选、分页或分段读取。单次请求最多执行若干轮工具调用，达到服务端配置上限时说明尚未完成的工作。";
     @Resource private AiProviderService providers;
     @Resource private AiCompletionClient completion;
     @Resource private AiTools tools;
     @Resource private AiFiles files;
     @Resource private JdbcTemplate jdbc;
     @Resource private CredentialCipher cipher;
+    @Resource private SshConsoleProperties properties;
     private final Map<String,Conversation> conversations = new ConcurrentHashMap<>();
     private final ExecutorService workers = new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(8),r->{Thread t=new Thread(r,"doumi-ai-chat");t.setDaemon(true);return t;});
     private static class PendingCall { String callId, actionId, name; JsonNode arguments; }
@@ -184,7 +186,7 @@ public class AiChatService {
             if(s.running||!s.pending.isEmpty())throw new IllegalArgumentException("请等待当前回复或先处理待确认操作");
             String text=request==null?null:request.text;
             if(text==null||text.trim().isEmpty()||text.length()>24000)throw new IllegalArgumentException("消息须为1至24000个字符");
-            if(s.messages.size()>200||s.messages.toString().length()>512*1024)throw new IllegalArgumentException("本次会话上下文已达上限，请开启新会话");
+            if(s.messages.size()>contextMessageLimit()||s.messages.toString().length()>contextCharLimit())throw new IllegalArgumentException("本次会话上下文已达上限，请开启新会话");
             if(request.workspace!=null)setServerContext(s,request.workspace.path("server"));
             JsonNode attached=files.context(id,request.attachmentIds);
             JsonNode workspace=request.workspace==null?AiJson.object():AiJson.mask(request.workspace);
@@ -197,6 +199,9 @@ public class AiChatService {
             catch (IllegalArgumentException e) { s.transientAttachmentContext=null;s.messages.remove(s.messages.size()-1);s.events.remove(s.events.size()-1);s.sequence--;throw e; }
             return snapshot(s,0);
         }
+    }
+    public JsonNode limits() {
+        return AiJson.object("maxRounds", roundLimit(), "maxContextMessages", contextMessageLimit(), "maxContextChars", contextCharLimit(), "maxToolCalls", toolCallLimit());
     }
     public JsonNode status(String id,int since) {Conversation s=require(id);synchronized(s){return snapshot(s,Math.max(0,since));}}
     public JsonNode approve(String id,List<String> actionIds,boolean approved) {
@@ -249,11 +254,15 @@ public class AiChatService {
             finally{synchronized(s){s.running=false;s.touched=System.currentTimeMillis();if(s.cancelled){cancelPending(s);s.transientAttachmentContext=null;}else if(!s.pending.isEmpty())s.state="awaiting_confirmation";else {s.transientAttachmentContext=null;if(!s.state.equals("error"))s.state="idle";}persist(s);}}
         });}catch(RejectedExecutionException e){s.running=false;s.state="error";throw new IllegalArgumentException("AI 正在处理其他会话，请稍后重试");}
     }
+    private int roundLimit(){ return Math.max(1, Math.min(properties.getAiMaxRounds(), 200)); }
+    private int contextMessageLimit(){ return Math.max(20, Math.min(properties.getAiMaxContextMessages(), 4000)); }
+    private int contextCharLimit(){ return Math.max(32768, Math.min(properties.getAiMaxContextChars(), 8 * 1024 * 1024)); }
+    private int toolCallLimit(){ return Math.max(1, Math.min(properties.getAiMaxToolCalls(), 256)); }
     private void run(Conversation s) {
-        for(int round=0;round<12&&!s.cancelled;round++) {
+        for(int round=0;round<roundLimit()&&!s.cancelled;round++) {
             List<JsonNode> messages;
             synchronized(s){
-                if(s.messages.size()>200||s.messages.toString().length()>512*1024)throw new IllegalArgumentException("本次会话上下文已达上限，请开启新会话；已经执行的操作不会撤回");
+                if(s.messages.size()>contextMessageLimit()||s.messages.toString().length()>contextCharLimit())throw new IllegalArgumentException("本次会话上下文已达上限，请开启新会话；已经执行的操作不会撤回");
                 messages=new ArrayList<>(s.messages);
                 if(s.transientAttachmentContext!=null&&!s.transientAttachmentContext.isEmpty()&&!messages.isEmpty()) {
                     int last=messages.size()-1;JsonNode original=messages.get(last);ObjectNode enriched=original.deepCopy();
@@ -267,7 +276,7 @@ public class AiChatService {
             String text=content(raw.path("content"));
             if(text.isEmpty())text=content(raw.path("refusal"));
             JsonNode calls=raw.path("tool_calls");
-            if(calls.size()>AiCompletionClient.MAX_TOOL_CALLS)throw new IllegalArgumentException("AI 单轮工具调用超过"+AiCompletionClient.MAX_TOOL_CALLS+"项，请缩小任务范围后重试");
+            if(calls.size()>toolCallLimit())throw new IllegalArgumentException("AI 单轮工具调用超过"+toolCallLimit()+"项，请缩小任务范围后重试");
             if(text.isEmpty()&&calls.size()==0)throw new IllegalArgumentException("AI 未返回文本或工具操作，请检查模型兼容性后重试");
             ObjectNode assistant=AiJson.object("role","assistant","content",text);
             if(raw.path("reasoning_content").isTextual())assistant.set("reasoning_content",raw.get("reasoning_content"));

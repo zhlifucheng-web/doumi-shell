@@ -2,6 +2,7 @@ import { get, post, put, del, API_BASE } from '@/utils/apiHandler'
 const root = '/api/ssh-console/ai'
 const quiet = { showSuccess: false, silent: true }
 export const aiApi = {
+  limits: () => get(`${root}/limits`, {}, quiet),
   providers: () => get(`${root}/providers`, {}, quiet),
   saveProvider: data => post(`${root}/providers`, data, quiet),
   deleteProvider: id => del(`${root}/providers/${id}`, quiet),

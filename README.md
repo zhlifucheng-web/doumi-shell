@@ -113,6 +113,8 @@ AI 助手可读取服务器资源、排查进程、执行命令和管理文件�
 
 对话可以查看服务器资源、文件、进程、存储和脚本，创建及修改分组、主机与账户，也可以执行命令、编辑文件、管理定时任务及导入导出配置。
 
+复杂任务的执行轮次和上下文限制支持服务端配置。默认单次请求最多 24 轮模型/工具调用、400 条上下文消息、约 1 MB 上下文字符、单轮 64 个工具调用；可在外置 `config/application.yml` 中调整，或使用环境变量 `DOUMI_AI_MAX_ROUNDS`、`DOUMI_AI_MAX_CONTEXT_MESSAGES`、`DOUMI_AI_MAX_CONTEXT_CHARS`、`DOUMI_AI_MAX_TOOL_CALLS` 覆盖。应用会在 AI 助手的使用说明中显示当前生效限制。限制不能超过所选模型自身的上下文窗口，厂商返回上下文超限时应降低配置或新建会话。
+
 ## 数据位置
 
 - Windows 数据保存在 `%LOCALAPPDATA%\DoumiShell\data`

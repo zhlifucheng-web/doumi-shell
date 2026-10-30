@@ -1,6 +1,7 @@
 package com.doumiot.sshconsole.ai;
 
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
+import com.doumiot.sshconsole.config.SshConsoleProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.http.*;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -20,9 +21,12 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 @Service @SshConsoleEnabled
 public class AiCompletionClient {
     static final int MAX_TOOL_CALLS = 64;
+    private final int maxToolCalls;
 
     private final RestTemplate http;
-    public AiCompletionClient() {
+    public AiCompletionClient() { this(new SshConsoleProperties()); }
+    public AiCompletionClient(SshConsoleProperties properties) {
+        this.maxToolCalls = Math.max(1, Math.min(properties.getAiMaxToolCalls(), 256));
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory() {
             @Override protected void prepareConnection(java.net.HttpURLConnection connection, String method) throws java.io.IOException {
                 super.prepareConnection(connection, method);
@@ -109,7 +113,7 @@ public class AiCompletionClient {
         };
     }
     private JsonNode readStream(InputStream input,Consumer<String> onText,StreamControl control)throws IOException {
-        StreamResult result=new StreamResult(onText);
+        StreamResult result=new StreamResult(onText,maxToolCalls);
         BufferedReader reader=new BufferedReader(new InputStreamReader(input,StandardCharsets.UTF_8));
         String line;StringBuilder event=new StringBuilder();boolean done=false;
         while(!done&&(line=reader.readLine())!=null) {
@@ -123,8 +127,9 @@ public class AiCompletionClient {
     private static class StreamResult {
         final StringBuilder content=new StringBuilder(),reasoning=new StringBuilder(),refusal=new StringBuilder();
         final SortedMap<Integer,ObjectNode> calls=new TreeMap<>();final Consumer<String> onText;
+        final int maxToolCalls;
         String finishReason;
-        StreamResult(Consumer<String> onText){this.onText=onText;}
+        StreamResult(Consumer<String> onText,int maxToolCalls){this.onText=onText;this.maxToolCalls=maxToolCalls;}
         boolean accept(String encoded)throws IOException {
             if(encoded.equals("[DONE]"))return true;
             JsonNode packet=AiJson.JSON.readTree(encoded);
@@ -152,7 +157,7 @@ public class AiCompletionClient {
             if(value!=null&&!value.isNull()) {
                 if(!value.isIntegralNumber()||!value.canConvertToInt())throw new IllegalArgumentException("AI 流式工具索引格式无效");
                 int index=value.intValue();
-                if(index<0||index>=MAX_TOOL_CALLS)throw new IllegalArgumentException("AI 单轮工具调用超过"+MAX_TOOL_CALLS+"项，索引="+index);
+                if(index<0||index>=maxToolCalls)throw new IllegalArgumentException("AI 单轮工具调用超过"+maxToolCalls+"项，索引="+index);
                 return index;
             }
 
@@ -160,7 +165,7 @@ public class AiCompletionClient {
             if(!id.isEmpty()) {
                 for(Map.Entry<Integer,ObjectNode> entry:calls.entrySet())
                     if(id.equals(entry.getValue().path("id").asText()))return entry.getKey();
-                for(int index=0;index<MAX_TOOL_CALLS;index++)if(!calls.containsKey(index))return index;
+                for(int index=0;index<maxToolCalls;index++)if(!calls.containsKey(index))return index;
             } else if(calls.size()==1) {
                 return calls.firstKey();
             }

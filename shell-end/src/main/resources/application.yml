@@ -19,6 +19,11 @@ doumi:
     monitor-disk-interval-ms: 60000
     script-run-timeout-sec: 0
     tmux-enabled: true
+    # AI 限制可通过外置 config/application.yml 或环境变量覆盖
+    ai-max-rounds: ${DOUMI_AI_MAX_ROUNDS:24}
+    ai-max-context-messages: ${DOUMI_AI_MAX_CONTEXT_MESSAGES:400}
+    ai-max-context-chars: ${DOUMI_AI_MAX_CONTEXT_CHARS:1048576}
+    ai-max-tool-calls: ${DOUMI_AI_MAX_TOOL_CALLS:64}
 
 spring:
   mvc:

@@ -37,4 +37,16 @@ public class SshConsoleProperties {
      * Linux 终端优先使用 tmux 承载远端 shell。tmux 未安装时自动回退到普通 SSH shell。
      */
     private boolean tmuxEnabled = true;
+
+    /** AI 单次请求最多执行的模型/工具循环次数。 */
+    private int aiMaxRounds = 24;
+
+    /** AI 会话最多保留的消息条数（含系统、助手、工具消息）。 */
+    private int aiMaxContextMessages = 400;
+
+    /** AI 会话上下文最大字符数，超过后拒绝继续请求。 */
+    private int aiMaxContextChars = 1024 * 1024;
+
+    /** AI 单轮最多允许的工具调用数量。 */
+    private int aiMaxToolCalls = 64;
 }
