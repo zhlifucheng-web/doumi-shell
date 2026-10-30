@@ -107,3 +107,21 @@ test('tab focus dispatches to the selected connection protocol', () => {
   focus('desktop'); focus('ssh')
   assert.deepEqual(calls, ['rdp:desktop', 'ssh:ssh'])
 })
+
+test('Ctrl+K selection opens an RDP node without confusing a matching SSH account ID', async () => {
+  const names=['onGlobalOpenAccount','connectHostAccount']
+  const source=names.map(name=>{
+    const node=compiled.scriptSetupAst.find(node=>node.type==='FunctionDeclaration' && node.id.name===name)
+    return descriptor.scriptSetup.content.slice(node.start,node.end)
+  }).join('\n')
+  const selectedNode=ref(null),opened=[],routes=[]
+  const deps={selectedNode,treeCurrentNodeKey:ref(''),treeRef:ref(null),detail:ref({raw:{}}),
+    isRdp:value=>value.protocol==='RDP',loadDetail:async node=>opened.push(node),
+    router:{meta:{},currentRoute:{},push:path=>routes.push(path)},route:{meta:{panel:'terminal'}}}
+  const select=new Function(...Object.keys(deps),`${source};return onGlobalOpenAccount`)(...Object.values(deps))
+  await select({detail:{accountId:7,protocol:'RDP',accountName:'财务桌面',username:'Administrator',hostId:3,groupId:1,hostName:'Windows'}})
+  assert.equal(opened[0].nodeType,'RDP_ACCOUNT');assert.equal(opened[0].key,'r:7');assert.equal(opened[0].id,7)
+  assert.equal(opened[0].label,'财务桌面');assert.equal(opened[0].extra.hostId,3)
+  await select({detail:{accountId:7,protocol:'SSH',username:'root',hostId:3}})
+  assert.equal(opened[1].nodeType,'ACCOUNT');assert.equal(opened[1].key,'a:7')
+})

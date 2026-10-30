@@ -186,3 +186,14 @@ test('GB18030 four-byte characters are not mislabeled as GBK before editing', ()
   assert.equal(detectFileEncoding(bytes), 'GB18030')
   assert.equal(decodeFileBuffer(bytes, detectFileEncoding(bytes)), '😀')
 })
+
+test('encoding detection distinguishes GB18030 even when the runtime aliases GBK to its decoder', () => {
+  const NativeTextDecoder=globalThis.TextDecoder
+  try {
+    globalThis.TextDecoder=class extends NativeTextDecoder {
+      constructor(label,options) { super(label==='gbk'?'gb18030':label,options) }
+    }
+    assert.equal(detectFileEncoding(Uint8Array.of(0x94,0x39,0xfc,0x36)),'GB18030')
+    assert.equal(detectFileEncoding(Uint8Array.of(0xc4,0xe3,0xba,0xc3)),'GBK')
+  } finally { globalThis.TextDecoder=NativeTextDecoder }
+})

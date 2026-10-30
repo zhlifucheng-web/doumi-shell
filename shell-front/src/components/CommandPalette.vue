@@ -42,6 +42,7 @@
                 <div class="palette-item-meta">
                   <div class="palette-item-row-top">
                     <span class="palette-item-label">{{ item.label }}</span>
+                    <span v-if="item.protocol" class="palette-protocol-pill">{{ item.protocol }}</span>
                     <span v-if="item.ip" class="palette-ip-pill" :class="{ 'is-match': item.ipMatched }">
                       {{ item.ip }}{{ item.port ? `:${item.port}` : '' }}
                     </span>
@@ -194,6 +195,9 @@ const filteredItems = computed(() => {
     const hostAddr = String(item.hostAddress || '').toLowerCase()
     const hostName = String(item.hostName || '').toLowerCase()
     const user = String(item.username || '').toLowerCase()
+    const accountName = String(item.accountName || '').toLowerCase()
+    const protocol = item.protocol === 'RDP' ? 'RDP' : 'SSH'
+    const protocolTerms = protocol === 'RDP' ? 'rdp 远程桌面' : 'ssh'
     const group = String(item.groupName || '').toLowerCase()
     const accRemark = String(item.accountRemark || '').toLowerCase()
     const hostRemark = String(item.hostRemark || '').toLowerCase()
@@ -206,6 +210,8 @@ const filteredItems = computed(() => {
       endpoint.includes(term) ||
       hostName.includes(term) ||
       user.includes(term) ||
+      accountName.includes(term) ||
+      (item.accountId != null && protocolTerms.includes(term)) ||
       group.includes(term) ||
       accRemark.includes(term) ||
       hostRemark.includes(term) ||
@@ -216,22 +222,23 @@ const filteredItems = computed(() => {
     if (isMatch) {
       const isIpMatch = terms.some(t => hostAddr.includes(t) || endpoint.includes(t))
       const hasAccount = Boolean(item.accountId && item.username)
-      const label = hasAccount
-        ? `${item.username}@${item.hostName || item.hostAddress}`
-        : (item.hostName || item.hostAddress)
+      const isRdp = hasAccount && protocol === 'RDP'
+      const accountLabel = `${item.username}@${item.hostName || item.hostAddress}`
+      const label = isRdp ? (item.accountName || accountLabel) : hasAccount ? accountLabel : (item.hostName || item.hostAddress)
 
       const remarks = [item.hostRemark, item.accountRemark].filter(Boolean).join(' · ')
-      const sub = remarks || (hasAccount ? `端口: ${item.hostPort || 22}` : '未配置登录账户')
+      const sub = isRdp ? [accountLabel, remarks].filter(Boolean).join(' · ') : remarks || (hasAccount ? `端口: ${item.hostPort || 22}` : '未配置登录账户')
 
       matchedTargets.push({
-        id: hasAccount ? `acc-${item.accountId}` : `host-${item.hostId}`,
+        id: hasAccount ? `${isRdp ? 'rdp' : 'acc'}-${item.accountId}` : `host-${item.hostId}`,
         label,
         sub,
         ip: item.hostAddress || '',
         port: item.hostPort || 22,
         groupName: item.groupName || '',
         ipMatched: isIpMatch,
-        icon: hasAccount ? User : Monitor,
+        icon: hasAccount && !isRdp ? User : Monitor,
+        protocol: hasAccount ? protocol : null,
         type: hasAccount ? 'account' : 'host',
         target: item
       })
@@ -518,7 +525,7 @@ html.dark .palette-item-ico {
   color: var(--el-color-primary, #6366f1);
   font-weight: 600;
 }
-.palette-group-pill {
+.palette-group-pill, .palette-protocol-pill {
   font-size: 10.5px;
   padding: 1px 5px;
   border-radius: 4px;

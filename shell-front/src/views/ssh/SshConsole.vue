@@ -1608,7 +1608,7 @@ async function onGlobalOpenAccount(e) {
       username: target.username,
       hostId: target.hostId,
       groupId: target.groupId,
-      label: target.username ? `${target.username}@${target.hostName || target.hostAddress}` : (target.hostName || target.hostAddress)
+      label: target.protocol === 'RDP' && target.accountName ? target.accountName : target.username ? `${target.username}@${target.hostName || target.hostAddress}` : (target.hostName || target.hostAddress)
     }
     await connectHostAccount(acc)
   } else if (target.hostId) {
