@@ -49,8 +49,9 @@ def publish_workflow_release():
     else:
         gh('release', 'create', args.tag, '--draft', '--verify-tag', '--title', f'Doumi Shell {args.tag[1:]}', '--generate-notes')
     gh('release', 'upload', args.tag, *[str(args.directory / name) for name in names], '--clobber')
-    # API asset lists exclude GitHub's generated source archives.
-    remote = subprocess.run(['gh', 'api', f'repos/{repo}/releases/tags/{args.tag}'], check=True, capture_output=True, text=True)
+    # gh resolves draft releases too; the public tag endpoint cannot see them.
+    # Its asset list excludes GitHub's generated source archives.
+    remote = gh('release', 'view', args.tag, '--json', 'assets')
     release = json.loads(remote.stdout)
     assets = {asset['name']: asset for asset in release['assets']}
     for name in names:
