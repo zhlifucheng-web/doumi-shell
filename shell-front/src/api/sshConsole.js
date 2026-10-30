@@ -1,7 +1,25 @@
 import { del, get, patch, post, put, apiClient, API_BASE, handleApiResponse } from '@/utils/apiHandler'
 import { buildTerminalWsQuery } from '@/utils/terminalShareHelper'
+import { runRemoteCopy } from '@/composables/remoteCopy'
 
 const BASE = '/api/ssh-console'
+
+export function sftpCopyTargetUsers(sessionToken, targetAccountId) {
+  return get(`${BASE}/sftp/copy/target-users`, { sessionToken, targetAccountId }, { showSuccess: false, showFailure: false })
+}
+
+export function sftpCopyTargetDirectories(sessionToken, targetAccountId, path) {
+  return get(`${BASE}/sftp/copy/target-directories`, { sessionToken, targetAccountId, path }, { showSuccess: false, showFailure: false })
+}
+
+export function sftpCopy(snapshot, options = {}) {
+  return runRemoteCopy(snapshot, options, (action, body) => handleApiResponse(
+    action === 'status'
+      ? apiClient.get(`${BASE}/sftp/copy/status`, { params: body, timeout: 15000 })
+      : apiClient.post(`${BASE}/sftp/copy/${action}`, body, { timeout: 15000 }),
+    { showSuccess: false, showFailure: false }
+  ))
+}
 
 export function getMonitorConfig(accountId) { return get(`${BASE}/host/monitor-config`, { accountId }, { showSuccess: false }) }
 export function saveMonitorConfig(accountId, config) { return put(`${BASE}/host/monitor-config?accountId=${encodeURIComponent(accountId)}`, config, { showSuccess: false, showFailure: false }) }

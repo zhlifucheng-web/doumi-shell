@@ -1,7 +1,7 @@
 <template>
   <el-dialog v-model="visible" title="文件查看" width="min(1400px, 96vw)" top="3vh" append-to-body destroy-on-close :close-on-click-modal="false" class="ssh-large-file-dialog" @open-auto-focus="focusViewer">
     <div class="dialog-viewer">
-      <SshFileViewer ref="viewerRef" v-if="visible && file" :key="fullPath" :session-token="sessionToken" :account-id="accountId" :path="fullPath" :name="file.name" :size="file.size" @close="visible = false" @standalone="openStandalone" @edit="switchToEditor" />
+      <SshFileViewer ref="viewerRef" v-if="visible && file" :key="fullPath" :session-token="sessionToken" :account-id="accountId" :server-address="serverAddress" :path="fullPath" :name="file.name" :size="file.size" @close="visible = false" @standalone="openStandalone" @edit="switchToEditor" />
     </div>
   </el-dialog>
 </template>
@@ -10,7 +10,7 @@
 import { computed, nextTick, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import SshFileViewer from './SshFileViewer.vue'
-const props = defineProps({ modelValue: Boolean, accountId: Number, file: Object, dir: { type: String, default: '/' }, sessionToken: { type: String, default: '' } })
+const props = defineProps({ modelValue: Boolean, accountId: Number, serverAddress: { type: String, default: '' }, file: Object, dir: { type: String, default: '/' }, sessionToken: { type: String, default: '' } })
 const emit = defineEmits(['update:modelValue', 'switch-to-editor'])
 const router = useRouter()
 const viewerRef = ref(null)
@@ -22,7 +22,7 @@ async function focusViewer() {
 const visible = computed({ get: () => props.modelValue, set: value => emit('update:modelValue', value) })
 const fullPath = computed(() => props.file?.path || `${props.dir.replace(/\/$/, '')}/${props.file?.name || ''}`)
 function openStandalone(encoding) {
-  const route = router.resolve({ path: '/file-viewer', query: { token: props.sessionToken, accountId: props.accountId, path: fullPath.value, name: props.file.name, size: props.file.size, enc: encoding } })
+  const route = router.resolve({ path: '/file-viewer', query: { token: props.sessionToken, accountId: props.accountId, host: props.serverAddress, path: fullPath.value, name: props.file.name, size: props.file.size, enc: encoding } })
   window.open(route.href, '_blank', 'width=1280,height=860,resizable=yes,scrollbars=yes')
 }
 function switchToEditor() { visible.value = false; emit('switch-to-editor', props.file) }

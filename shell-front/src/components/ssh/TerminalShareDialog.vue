@@ -1,7 +1,7 @@
 <template>
   <el-dialog
     :model-value="modelValue"
-    title="🔗 共享终端会话 (tmux 协同)"
+    title="共享终端"
     width="580px"
     destroy-on-close
     append-to-body
@@ -10,19 +10,10 @@
     @open="onDialogOpen"
   >
     <div class="share-dialog-content">
-      <!-- 提示说明 -->
-      <div class="share-tip-box">
-        <el-icon class="tip-icon"><InfoFilled /></el-icon>
-        <div class="tip-text">
-          <span>通过共享链接，协作者可以在其浏览器中<strong>实时加入当前终端会话</strong>（基于远端 tmux 多终端绑定）。支持双向实时操作协同或只读观看。</span>
-        </div>
-      </div>
-
       <!-- 会话目标提示 -->
       <div class="target-session-banner">
         <span class="target-label">当前终端：</span>
         <span class="target-val">{{ terminalTab?.label || '默认主终端' }}</span>
-        <span class="target-sub">(会话标识: {{ terminalTab?.terminalId || 'default' }})</span>
         <span class="target-encoding font-mono-code">编码: {{ currentEncoding }}</span>
       </div>
 
@@ -31,8 +22,8 @@
         <div class="form-row">
           <label class="form-label">协同权限：</label>
           <el-radio-group v-model="form.permission" size="default">
-            <el-radio-button label="READ_WRITE">✍️ 读写协同 (可操作)</el-radio-button>
-            <el-radio-button label="READ_ONLY">👁️ 只读观看 (仅屏幕)</el-radio-button>
+            <el-radio-button label="READ_WRITE">读写协同</el-radio-button>
+            <el-radio-button label="READ_ONLY">只读观看</el-radio-button>
           </el-radio-group>
         </div>
 
@@ -41,15 +32,15 @@
           <el-select v-model="form.expireMinutes" style="width: 220px">
             <el-option :value="30" label="30 分钟" />
             <el-option :value="60" label="1 小时" />
-            <el-option :value="120" label="2 小时 (推荐)" />
-            <el-option :value="1440" label="24 小时 (1 天)" />
+            <el-option :value="120" label="2 小时" />
+            <el-option :value="1440" label="24 小时" />
             <el-option :value="0" label="永久有效 (直到手动关闭)" />
           </el-select>
         </div>
 
         <div class="form-action-row">
           <el-button type="primary" :loading="creating" @click="handleCreateShare">
-            🚀 生成分享链接
+            生成分享链接
           </el-button>
         </div>
       </div>
@@ -132,7 +123,6 @@
 
 <script setup>
 import { ref, reactive, computed } from 'vue'
-import { InfoFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { createShareSession, listShareSessions, revokeShareSession } from '@/api/sshConsole'
 import { buildShareUrl } from '@/utils/terminalShareHelper'
@@ -248,25 +238,6 @@ function onDialogOpen() {
   gap: 16px;
 }
 
-.share-tip-box {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  background: var(--el-color-primary-light-9, rgba(64, 158, 255, 0.1));
-  border: 1px solid var(--el-color-primary-light-7, rgba(64, 158, 255, 0.25));
-  border-radius: 6px;
-  padding: 10px 14px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--el-color-primary, #409eff);
-}
-
-.tip-icon {
-  font-size: 16px;
-  margin-top: 2px;
-  flex-shrink: 0;
-}
-
 .target-session-banner {
   display: flex;
   align-items: center;
@@ -284,11 +255,6 @@ function onDialogOpen() {
 .target-val {
   font-weight: 500;
   color: var(--el-text-color-primary, #c9d1d9);
-}
-
-.target-sub {
-  font-size: 11px;
-  color: var(--el-text-color-placeholder, #6e7681);
 }
 
 .target-encoding {

@@ -1,6 +1,5 @@
 <template>
   <el-scrollbar class="page-scroll"><div class="configuration">
-    <h2>配置导入导出</h2>
     <p>迁移分组、主机、账户凭据、脚本、定时任务和账户级监控配置。可选择加密或明文备份，导入时追加到现有配置。</p>
     <el-alert title="导入的定时任务默认暂停，请检查执行账户和 cron 后再启用。" type="info" :closable="false" />
     <el-form label-position="top" @submit.prevent>

@@ -5,8 +5,20 @@ logging:
     com.doumiot.sshconsole: INFO
 
 doumi:
+  update:
+    enabled: ${DOUMI_UPDATE_ENABLED:true}
+    proxy: ${DOUMI_UPDATE_PROXY:}
+    token: ${DOUMI_UPDATE_TOKEN:}
+
   storage:
     data-dir: ${DOUMI_DATA_DIR:./data}
+
+  rdp:
+    enabled: ${DOUMI_RDP_ENABLED:true}
+    guacd-host: ${DOUMI_GUACD_HOST:127.0.0.1}
+    guacd-port: ${DOUMI_GUACD_PORT:4822}
+    max-sessions: 20
+    idle-timeout-minutes: 30
 
   ssh-console:
     enabled: true

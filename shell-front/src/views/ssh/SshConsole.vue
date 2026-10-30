@@ -8,7 +8,7 @@
             <span v-if="!sidebarCollapsed" class="sidebar-title">主机与分组</span>
           </button>
         </div>
-        
+
         <!-- Mini-Dock 模式 (侧栏收起时展示，保持轻快切换会话) -->
         <div v-show="sidebarCollapsed" class="aside-mini-dock">
           <el-tooltip
@@ -37,8 +37,8 @@
                 </div>
                 <div class="tab-tooltip-row">
                   <span class="tab-tooltip-k">状态:</span>
-                  <span class="tab-tooltip-v" :class="tab.token ? 'is-online' : 'is-offline'">
-                    {{ tab.token ? '● 已连接' : '○ 未连接' }}
+                  <span class="tab-tooltip-v" :class="isTabConnected(tab) ? 'is-online' : 'is-offline'">
+                    {{ isTabConnected(tab) ? '● 已连接' : '○ 未连接' }}
                   </span>
                 </div>
                 <div v-if="idx < 9" class="tab-tooltip-row">
@@ -65,7 +65,7 @@
                 {{ getTabUsername(tab) }}
               </span>
               <span v-if="tab.subIndex && tab.subIndex > 1" class="mini-sub-badge">#{{ tab.subIndex }}</span>
-              <span class="mini-status-dot" :class="{ 'is-connected': !!tab.token }"></span>
+              <span class="mini-status-dot" :class="{ 'is-connected': isTabConnected(tab) }"></span>
             </button>
           </el-tooltip>
         </div>
@@ -115,12 +115,12 @@
                 @click="activateTerminalTab(tab.tabId)"
               >
                 <div class="pin-left">
-                  <span class="online-pulse-dot" :class="{ 'is-offline': !tab.token }"></span>
+                  <span class="online-pulse-dot" :class="{ 'is-offline': !isTabConnected(tab) }"></span>
                   <span class="pin-name">{{ getTabDisplayLabel(tab) }}</span>
                 </div>
                 <div class="pin-right font-mono-code">
-                  <span class="pin-latency">12ms</span>
-                  <span class="pin-badge">{{ tmuxCompatibility(tab.connectionMode, tab.tmuxVersion, tab.tmuxVersionSource).label }}</span>
+
+                  <span class="pin-badge">{{ isRdp(tab) ? 'RDP' : tmuxCompatibility(tab.connectionMode, tab.tmuxVersion, tab.tmuxVersionSource).label }}</span>
                 </div>
               </div>
             </div>
@@ -154,7 +154,7 @@
             <template #default="{ data }">
               <div
                 class="tree-node"
-                :class="{ 'is-account': data.nodeType === 'ACCOUNT', 'is-host': data.nodeType === 'HOST' }"
+                :class="{ 'is-account': isAccountNode(data), 'is-host': data.nodeType === 'HOST' }"
                 @dblclick.stop="onNodeDblClick(data)"
               >
                 <el-tooltip
@@ -201,7 +201,7 @@
                           <span class="tree-tip-value">{{ data.remark }}</span>
                         </div>
                       </div>
-                      <div v-else-if="data.nodeType === 'ACCOUNT'" class="tree-tip-body">
+                      <div v-else-if="isAccountNode(data)" class="tree-tip-body">
                         <div class="tree-tip-row">
                           <span class="tree-tip-label">账户名:</span>
                           <span class="tree-tip-value font-mono-code">{{ data.label }}</span>
@@ -225,8 +225,8 @@
                   </template>
 
                   <div class="node-main-area">
-                    <el-icon class="node-ico" :class="{ 'ico-acc': data.nodeType === 'ACCOUNT', 'ico-host': data.nodeType === 'HOST', 'ico-group': data.nodeType === 'GROUP' }">
-                      <User v-if="data.nodeType === 'ACCOUNT'" />
+                    <el-icon class="node-ico" :class="{ 'ico-acc': isAccountNode(data), 'ico-host': data.nodeType === 'HOST', 'ico-group': data.nodeType === 'GROUP' }">
+                      <Monitor v-if="isRdp(data)" /><User v-else-if="isAccountNode(data)" />
                       <Monitor v-else-if="data.nodeType === 'HOST'" />
                       <Folder v-else />
                     </el-icon>
@@ -235,7 +235,8 @@
                         <span class="node-label" :class="{ 'is-ip-font': data.nodeType === 'HOST' && !hasCustomHostName(data) }">
                           {{ getNodeMainTitle(data) }}
                         </span>
-                        <span v-if="data.nodeType === 'ACCOUNT'" class="node-status-pill" :class="{ 'is-open': terminalTabs.some(t => t.accountId === data.id) }"></span>
+                        <span v-if="isAccountNode(data)" class="connection-protocol">{{ isRdp(data) ? 'RDP' : 'SSH' }}</span>
+                        <span v-if="isAccountNode(data)" class="node-status-pill" :class="{ 'is-open': terminalTabs.some(t => tabMatchesNode(t, data)) }"></span>
                       </div>
                       <span
                         v-if="getNodeSubTitle(data)"
@@ -253,11 +254,11 @@
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item command="edit">编辑</el-dropdown-item>
-                      <el-dropdown-item v-if="data.nodeType === 'ACCOUNT'" command="terminal">新建终端</el-dropdown-item>
-                      <el-dropdown-item v-if="data.nodeType === 'ACCOUNT'" command="test">测试连接</el-dropdown-item>
+                      <el-dropdown-item v-if="isAccountNode(data)" command="terminal">新建连接</el-dropdown-item>
+                      <el-dropdown-item v-if="isAccountNode(data)" command="test">测试连接</el-dropdown-item>
                       <el-dropdown-item v-if="data.nodeType === 'GROUP'" command="subgroup">新建子分组</el-dropdown-item>
-                      <el-dropdown-item v-if="data.nodeType === 'GROUP' || data.nodeType === 'HOST' || data.nodeType === 'ACCOUNT'" command="host">新建主机</el-dropdown-item>
-                      <el-dropdown-item v-if="data.nodeType === 'HOST' || data.nodeType === 'ACCOUNT'" command="account">新建账户</el-dropdown-item>
+                      <el-dropdown-item v-if="data.nodeType === 'GROUP' || data.nodeType === 'HOST' || isAccountNode(data)" command="host">新建主机</el-dropdown-item>
+                      <el-dropdown-item v-if="data.nodeType === 'HOST' || isAccountNode(data)" command="account">新建账户</el-dropdown-item>
                       <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
                     </el-dropdown-menu>
                   </template>
@@ -301,19 +302,20 @@
       </el-aside>
 
       <el-main class="main">
-        <ScriptManagement v-if="scriptsVisited" v-show="accountTab==='scripts'" :active="accountTab==='scripts'" :host-id="detail.type==='ACCOUNT' ? detail.raw?.hostId : detail.type==='HOST' ? detail.raw?.id : null" :account-id="detail.type==='ACCOUNT' ? detail.raw?.id : null" :session-token="sessionToken" :opening-session="openingFileSession" @request-session="establishFileSession" />
+        <el-empty v-if="detail.type === 'RDP_ACCOUNT' && accountTab !== 'terminal'" description="此连接为远程桌面"><el-button @click="router.push('/terminal')">打开桌面</el-button></el-empty>
+        <ScriptManagement v-if="scriptsVisited && detail.type !== 'RDP_ACCOUNT'" v-show="accountTab==='scripts'" :active="accountTab==='scripts'" :host-id="detail.type==='ACCOUNT' ? detail.raw?.hostId : detail.type==='HOST' ? detail.raw?.id : null" :account-id="detail.type==='ACCOUNT' ? detail.raw?.id : null" :session-token="sessionToken" :opening-session="openingFileSession" @request-session="establishFileSession" />
         <el-empty v-if="!detail.type && accountTab!=='scripts'" description="在左侧选择分组、主机或账户" />
-        <div v-else-if="detail.type === 'ACCOUNT'" v-show="accountTab!=='scripts'" class="account-workspace">
+        <div v-else-if="['ACCOUNT', 'RDP_ACCOUNT'].includes(detail.type)" v-show="accountTab!=='scripts'" class="account-workspace">
           <div class="account-tabs route-panels">
             <div v-show="accountTab === 'terminal'" class="account-tab-pane">
-              <TerminalFileLayout>
+              <TerminalFileLayout :hide-files="activeIsRdp">
                 <template #monitor>
-                  <SshMonitorPanel v-if="activeTerminalTab && terminalVisited"
+                  <SshMonitorPanel v-if="activeTerminalTab && terminalVisited && !activeIsRdp"
                     :account-id="activeTerminalTab.accountId" :session-token="sessionToken" :active="accountTab === 'terminal'" @session-invalid="onMonitorSessionInvalid" />
                 </template>
                 <template #terminal>
                   <div v-if="terminalTabs.length" class="terminal-tabs">
-                    <div class="terminal-tab-bar" role="tablist" aria-label="已打开的终端">
+                    <div class="terminal-tab-bar" role="tablist" aria-label="已打开的连接">
                       <!-- 标签左滑动箭头 -->
                       <button
                         v-show="showLeftScroll"
@@ -360,8 +362,8 @@
                                 </div>
                                 <div class="tab-tooltip-row">
                                   <span class="tab-tooltip-k">状态:</span>
-                                  <span class="tab-tooltip-v" :class="tab.token ? 'is-online' : 'is-offline'">
-                                    {{ tab.token ? '● 已连接' : '○ 未连接' }}
+                                  <span class="tab-tooltip-v" :class="isTabConnected(tab) ? 'is-online' : 'is-offline'">
+                                    {{ isTabConnected(tab) ? '● 已连接' : '○ 未连接' }}
                                   </span>
                                 </div>
                                 <div v-if="idx < 9" class="tab-tooltip-row">
@@ -372,14 +374,14 @@
                               </div>
                             </template>
                             <span class="tab-inner">
-                              <span class="tab-status-dot" :class="{ 'is-connected': !!tab.token }"></span>
-                              <span class="tab-label">{{ getTabDisplayLabel(tab) }}</span>
+                              <span class="tab-status-dot" :class="{ 'is-connected': isTabConnected(tab) }"></span>
+                              <span class="tab-label">{{ getTabDisplayLabel(tab) }}</span><span class="connection-protocol">{{ isRdp(tab) ? 'RDP' : 'SSH' }}</span>
                               <span v-if="tab.subIndex && tab.subIndex > 1" class="tab-index">#{{ tab.subIndex }}</span>
                             </span>
                           </el-tooltip>
-                          <el-icon class="terminal-tab-close" title="关闭终端" @click.stop="closeTerminalTab(tab.tabId)"><Close /></el-icon>
+                          <el-icon class="terminal-tab-close" title="关闭连接" @click.stop="closeTerminalTab(tab.tabId)"><Close /></el-icon>
                         </button>
-                        <button class="terminal-tab-add" type="button" title="打开同一账户的新终端" @click="openAdditionalTerminalTab">+</button>
+                        <button class="terminal-tab-add" type="button" title="打开同一账户的新连接" @click="openAdditionalTerminalTab">+</button>
                         <TerminalConnectionStatus v-if="activeTerminalTab?.connectionMode" :connection-mode="activeTerminalTab.connectionMode" :tmux-version="activeTerminalTab.tmuxVersion" :tmux-version-source="activeTerminalTab.tmuxVersionSource" />
                       </div>
 
@@ -396,14 +398,14 @@
 
                       <!-- 全部终端下拉菜单 (More Tabs ∨) -->
                       <el-dropdown trigger="click" class="terminal-tab-dropdown" @command="handleTabDropdownCommand">
-                        <button type="button" class="tab-dropdown-btn" :title="`全部终端清单 (${terminalTabs.length})`">
+                        <button type="button" class="tab-dropdown-btn" :title="`全部连接清单 (${terminalTabs.length})`">
                           <el-icon><Grid /></el-icon>
                           <span class="tab-count-badge font-mono-code">{{ terminalTabs.length }}</span>
                         </button>
                         <template #dropdown>
                           <el-dropdown-menu class="terminal-tabs-dropdown-menu">
                             <div class="dropdown-header">
-                              <span>已打开的终端 ({{ terminalTabs.length }})</span>
+                              <span>已打开的连接 ({{ terminalTabs.length }})</span>
                             </div>
                             <div class="dropdown-tabs-list">
                               <el-dropdown-item
@@ -414,7 +416,7 @@
                                 class="dropdown-tab-item"
                               >
                                 <div class="dropdown-item-left">
-                                  <span class="dropdown-status-dot" :class="{ 'is-connected': !!tab.token }"></span>
+                                  <span class="dropdown-status-dot" :class="{ 'is-connected': isTabConnected(tab) }"></span>
                                   <span class="dropdown-tab-label">{{ getTabDisplayLabel(tab) }}</span>
                                   <span v-if="getTabHostAddress(tab)" class="dropdown-tab-ip font-mono-code">{{ getTabHostAddress(tab) }}</span>
                                 </div>
@@ -443,9 +445,9 @@
                           </el-dropdown-menu>
                         </template>
                       </el-dropdown>
-                      <TerminalToolbar
+                      <TerminalToolbar v-if="!activeIsRdp"
                         :allow-disconnect="!!activeTerminalTab"
-                        :disconnect-disabled="!!activeTerminalTab?.manuallyDisconnected"
+                        :connection-state="activeTerminalTab?.connectionState || (activeTerminalTab?.token ? 'connected' : 'connecting')"
                         :snippet-visible="snippetBarVisible"
                         :is-split="isSplit"
                         :allow-split="terminalTabs.length > 1"
@@ -454,6 +456,8 @@
                         :encoding="activeTerminalTab?.encoding || terminalEncoding"
                         @clear="onClearActiveTerminal"
                         @disconnect="disconnectTerminalTab(activeTerminalId)"
+                        @reconnect="reconnectTerminalTab(activeTerminalId)"
+                        @reconnect-ssh="reconnectTerminalTab(activeTerminalId, true)"
                         @toggle-snippets="snippetBarVisible = !snippetBarVisible"
                         @toggle-split="isSplit = !isSplit"
                         @change-font-size="size => terminalFontSize = size"
@@ -468,17 +472,22 @@
                     <!-- 常用快捷命令架 (浮于终端上方，不挤压终端视口) -->
                     <transition name="snippet-slide">
                       <SnippetBar
-                        v-if="snippetBarVisible"
+                        v-if="snippetBarVisible && !activeIsRdp"
                         @run="onRunSnippet"
                         @close="snippetBarVisible = false"
                       />
                     </transition>
 
                     <!-- 终端显示区域 (支持左右分屏对比) -->
-                    <div class="terminal-view-split" :class="{ 'is-split-active': isSplit && splitTerminalTab }">
+                    <div class="terminal-view-split" :class="{ 'is-split-active': isSplit && splitTerminalTab && !activeIsRdp }">
                       <div class="terminal-pane main-pane">
                         <div v-for="tab in terminalTabs" :key="`terminal-${tab.tabId}`" v-show="activeTerminalId === tab.tabId" class="terminal-tab-content">
-                          <SshTerminal :account-id="tab.accountId"
+                          <RdpDesktop v-if="tab.protocol === 'RDP'" :profile="tab.account"
+                            :active="activeTerminalId === tab.tabId && accountTab === 'terminal' && !accountDlg"
+                            :ref="el => setTerminalRef(tab.tabId, el)"
+                            @state="state => onRdpState(tab.tabId, state)" @edit="editRdpTab(tab)" />
+                          <SshTerminal v-else :account-id="tab.accountId"
+                            connection-actions-in-toolbar
                             :active="activeTerminalId === tab.tabId"
                             :paused="!!tab.manuallyDisconnected"
                             :terminal-id="tab.terminalId || tab.tabId"
@@ -489,6 +498,7 @@
                             :current-path="tab.sftpPath || tab.defaultCwd || ''"
                             @drop-files="onTerminalDropFiles"
                             @ready="payload => onTerminalReady(tab.tabId, payload)"
+                            @connecting="onTerminalConnecting(tab.tabId)"
                             @disconnected="payload => onTerminalDisconnected(tab.tabId, payload)"
                             @size-change="onTerminalSizeChange"
                             @change-encoding="enc => onChangeEncoding(enc, tab.tabId)"
@@ -496,16 +506,21 @@
                         </div>
                       </div>
 
-                      <div v-if="isSplit && splitTerminalTab" class="terminal-pane split-pane">
+                      <div v-if="isSplit && splitTerminalTab && !activeIsRdp" class="terminal-pane split-pane">
                         <div class="split-pane-header">
                           <span class="split-badge">分屏会话</span>
                           <span class="split-label">{{ splitTerminalTab.label }}</span>
-                          <button type="button" class="split-close-btn" :disabled="!!splitTerminalTab.manuallyDisconnected"
-                            title="断开此会话的连接，保留远端 tmux 会话" @click="disconnectTerminalTab(splitTerminalTab.tabId)">断开连接</button>
+                          <TerminalConnectionActions
+                            :state="splitTerminalTab.connectionState || (splitTerminalTab.token ? 'connected' : 'connecting')"
+                            @disconnect="disconnectTerminalTab(splitTerminalTab.tabId)"
+                            @reconnect="reconnectTerminalTab(splitTerminalTab.tabId)"
+                            @reconnect-ssh="reconnectTerminalTab(splitTerminalTab.tabId, true)"
+                          />
                           <button type="button" class="split-close-btn" title="关闭分屏" @click="isSplit = false">✕</button>
                         </div>
                         <div class="split-pane-content">
                           <SshTerminal :account-id="splitTerminalTab.accountId"
+                            connection-actions-in-toolbar
                             :active="isSplit"
                             :paused="!!splitTerminalTab.manuallyDisconnected"
                             :terminal-id="splitTerminalTab.terminalId || splitTerminalTab.tabId"
@@ -516,6 +531,7 @@
                             :current-path="splitTerminalTab.sftpPath || splitTerminalTab.defaultCwd || ''"
                             @drop-files="onTerminalDropFiles"
                             @ready="payload => onTerminalReady(splitTerminalTab.tabId, payload)"
+                            @connecting="onTerminalConnecting(splitTerminalTab.tabId)"
                             @disconnected="payload => onTerminalDisconnected(splitTerminalTab.tabId, payload)"
                             @change-encoding="enc => onChangeEncoding(enc, splitTerminalTab.tabId)" />
                         </div>
@@ -525,9 +541,10 @@
                   <el-empty v-else description="从左侧选择账户以打开终端" />
                 </template>
                 <template #files>
-                  <SshFilePanel v-if="activeTerminalTab" ref="filePanelRef"
+                  <SshFilePanel v-if="activeTerminalTab && !activeIsRdp" ref="filePanelRef"
                     :tab-id="activeTerminalTab.tabId" :saved-path="activeTerminalTab.sftpPath || ''"
                     :account-id="activeTerminalTab.accountId" :host-id="activeTerminalTab.hostId"
+                    :server-address="getTabHostAddress(activeTerminalTab)"
                     :active="accountTab === 'terminal'" embedded
                     :session-token="sessionToken" :default-cwd="activeTerminalTab.defaultCwd || ''"
                     :opening-session="openingFileSession" @request-session="establishFileSession"
@@ -536,7 +553,7 @@
                 </template>
               </TerminalFileLayout>
             </div>
-            <div v-show="accountTab === 'processes'" class="account-tab-pane">
+            <div v-if="detail.type === 'ACCOUNT'" v-show="accountTab === 'processes'" class="account-tab-pane">
               <SshProcessPanel
                 v-if="detail.raw?.id"
                 v-show="accountTab === 'processes'"
@@ -545,7 +562,7 @@
                 @request-session="establishFileSession"
               />
             </div>
-            <div v-show="accountTab === 'disk-usage'" class="account-tab-pane"><SshDiskPanel v-if="detail.raw?.id" :key="detail.raw.id" :account-id="detail.raw.id" :session-token="sessionToken" @request-session="establishFileSession" /></div>
+            <div v-if="detail.type === 'ACCOUNT'" v-show="accountTab === 'disk-usage'" class="account-tab-pane"><SshDiskPanel v-if="detail.raw?.id" :key="detail.raw.id" :account-id="detail.raw.id" :session-token="sessionToken" @request-session="establishFileSession" /></div>
           </div>
         </div>
         <div v-else-if="detail.type && accountTab!=='scripts'" class="detail-panel">
@@ -588,27 +605,27 @@
           <!-- 若为主机，展示其下属的 SSH 账户列表与快捷直连入口 -->
           <div v-if="detail.type === 'HOST'" class="host-accounts-card">
             <div class="host-accounts-header">
-              <span class="host-accounts-title">关联 SSH 账户 ({{ hostAccounts.length }})</span>
+              <span class="host-accounts-title">账户连接 ({{ hostAccounts.length }})</span>
               <el-button size="small" type="primary" plain @click="openAddAccount(detail.raw.id)">
                 + 新建账户
               </el-button>
             </div>
             <div v-if="hostAccounts.length" class="host-accounts-list">
-              <div v-for="acc in hostAccounts" :key="acc.id" class="host-account-item">
+              <div v-for="acc in hostAccounts" :key="acc.key" class="host-account-item">
                 <div class="acc-info">
                   <el-icon class="acc-icon"><User /></el-icon>
                   <span class="acc-name">{{ acc.label || acc.username }}</span>
-                  <el-tag size="small" type="info">{{ acc.extra?.authType || 'PASSWORD' }}</el-tag>
+                  <el-tag size="small" type="info">{{ isRdp(acc) ? 'RDP' : 'SSH' }}</el-tag>
                 </div>
                 <el-button size="small" type="primary" @click="connectHostAccount(acc)">
-                  打开终端
+                  打开连接
                 </el-button>
               </div>
             </div>
             <div v-else class="host-accounts-empty">
-              <p>该主机暂未配置 SSH 登录账户，无法直接开启终端</p>
+              <p>该主机暂未配置账户连接</p>
               <el-button type="primary" size="small" @click="openAddAccount(detail.raw.id)">
-                立即新建 SSH 账户
+                新建账户
               </el-button>
             </div>
           </div>
@@ -682,84 +699,8 @@
     </el-dialog>
 
     <!-- 账户 -->
-    <el-dialog v-model="accountDlg" :title="accountForm.id ? '编辑账户' : '新建账户'" width="560px" destroy-on-close><el-scrollbar max-height="65vh">
-      <el-form ref="accountFormRef" :model="accountForm" :rules="accountRules" label-width="100px">
-        <el-form-item label="所属主机" prop="hostId">
-          <el-select
-            v-model="accountForm.hostId"
-            filterable
-            clearable
-            placeholder="请选择所属主机"
-            style="width: 100%"
-            popper-class="ssh-host-select-popper"
-          >
-            <el-option
-              v-for="h in hostOptions"
-              :key="h.id"
-              :label="`${h.name} (${h.host}:${h.port})`"
-              :value="h.id"
-            >
-              <div class="host-select-option">
-                <div class="host-select-left">
-                  <span class="host-select-name">{{ h.name }}</span>
-                  <span class="host-select-addr font-mono-code">{{ h.host }}:{{ h.port }}</span>
-                </div>
-                <el-tag size="small" type="info" effect="plain" class="host-select-group">{{ h.groupPath }}</el-tag>
-              </div>
-            </el-option>
-          </el-select>
-        </el-form-item>
-        <el-form-item label="用户名" prop="username">
-          <el-input v-model="accountForm.username" maxlength="64" placeholder="SSH 登录用户名，如 root" clearable />
-        </el-form-item>
-        <el-form-item label="认证方式" prop="authType">
-          <el-select v-model="accountForm.authType" style="width: 100%;">
-            <el-option label="密码" value="PASSWORD" />
-            <el-option label="私钥" value="PRIVATE_KEY" />
-            <el-option label="私钥+口令" value="PRIVATE_KEY_WITH_PASSPHRASE" />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="accountForm.authType === 'PASSWORD'" :label="accountForm.id ? '新密码' : '密码'">
-          <el-input v-model="secretPassword" type="password" show-password autocomplete="new-password" :placeholder="accountForm.id ? '留空表示不修改' : '必填'" />
-        </el-form-item>
-        <template v-else>
-          <el-form-item :label="accountForm.id ? '新私钥' : '私钥 PEM'">
-            <el-input v-model="secretPrivateKey" type="textarea" :rows="4" :placeholder="accountForm.id ? '留空表示不修改' : '必填'" />
-          </el-form-item>
-          <el-form-item v-if="accountForm.authType === 'PRIVATE_KEY_WITH_PASSPHRASE'" label="私钥口令">
-            <el-input v-model="secretPassphrase" type="password" show-password autocomplete="new-password" />
-          </el-form-item>
-        </template>
-        <el-form-item label="默认目录">
-          <el-input v-model="accountForm.defaultCwd" placeholder="可选，终端/SFTP 默认 cwd" />
-        </el-form-item>
-        <el-form-item label="启用">
-          <el-switch v-model="accountForm.enabled" :active-value="1" :inactive-value="0" />
-        </el-form-item>
-        <el-form-item label="排序">
-          <el-input-number v-model="accountForm.sortOrder" :min="0" />
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="accountForm.remark" type="textarea" :rows="3" maxlength="512" show-word-limit placeholder="密钥存放、sudo 说明等" />
-        </el-form-item>
-      </el-form>
-      </el-scrollbar><template #footer>
-        <div class="dialog-footer-split">
-          <el-button
-            type="warning"
-            plain
-            :loading="testingAccount"
-            @click="testAccountConnection"
-          >
-            ⚡ 测试连接
-          </el-button>
-          <div class="dialog-footer-right">
-            <el-button @click="accountDlg = false">取消</el-button>
-            <el-button type="primary" :loading="saving" @click="saveAccount">保存</el-button>
-          </div>
-        </div>
-      </template>
-    </el-dialog>
+    <AccountConnectionEditor v-model="accountDlg" :initial="accountForm" :host-options="hostOptions" @saved="onAccountSaved" />
+
     <!-- 共享终端会话弹窗 -->
     <TerminalShareDialog
       v-model="shareDialogVisible"
@@ -780,7 +721,7 @@
       </div>
       <div class="context-menu-item" @click="handleContextMenuNewTab">
         <el-icon><Plus /></el-icon>
-        <span>新建会话终端</span>
+        <span>新建会话连接</span>
       </div>
       <div class="context-menu-divider"></div>
       <div class="context-menu-item" @click="handleContextMenuClose">
@@ -798,15 +739,18 @@
       <div class="context-menu-divider"></div>
       <div class="context-menu-item danger" @click="handleContextMenuCloseAll">
         <el-icon><Delete /></el-icon>
-        <span>关闭全部终端</span>
+        <span>关闭全部连接</span>
       </div>
     </div>
+
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
+import { getRdpConnection, deleteRdpConnection, testRdpConnection } from '@/api/rdp'
+import { createRdpTab, matchesConnection } from '@/utils/connectionTabs'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -833,6 +777,7 @@ import {
 import { useWorkspaceStore } from '@/stores/workspace'
 import SshTerminal from '@/components/ssh/SshTerminal.vue'
 import TerminalToolbar from '@/components/ssh/TerminalToolbar.vue'
+import TerminalConnectionActions from '@/components/ssh/TerminalConnectionActions.vue'
 import TerminalConnectionStatus from '@/components/ssh/TerminalConnectionStatus.vue'
 import { tmuxCompatibility } from '@/utils/tmuxCompatibility'
 import TerminalShareDialog from '@/components/ssh/TerminalShareDialog.vue'
@@ -881,6 +826,14 @@ import {
   validateHostAddressRule,
   validateHostPortRule
 } from '@/utils/hostValidator'
+
+const RdpDesktop = defineAsyncComponent(() => import('@/components/rdp/RdpDesktop.vue'))
+const AccountConnectionEditor = defineAsyncComponent(() => import('@/components/ssh/AccountConnectionEditor.vue'))
+function isRdp(value) { return value?.protocol === 'RDP' || value?.nodeType === 'RDP_ACCOUNT' || value?.extra?.protocol === 'RDP' }
+function isAccountNode(value) { return value?.nodeType === 'ACCOUNT' || value?.nodeType === 'RDP_ACCOUNT' }
+function isTabConnected(tab) { return tab?.protocol === 'RDP' ? tab.connectionState === 'connected' : !!tab?.token }
+function tabMatchesNode(tab, node) { return matchesConnection(tab, node.id, isRdp(node) ? 'RDP' : 'SSH') }
+
 
 const savedAccount = readSavedSshAccount()
 const { managedServer } = storeToRefs(useWorkspaceStore())
@@ -980,11 +933,7 @@ const hostFormRef = ref(null)
 
 const accountDlg = ref(false)
 const accountForm = ref({})
-const accountFormRef = ref(null)
 const hostOptions = ref([])
-const secretPassword = ref('')
-const secretPrivateKey = ref('')
-const secretPassphrase = ref('')
 
 const detail = ref({ type: null, raw: null })
 const hostAccounts = ref([])
@@ -1000,6 +949,7 @@ const sessionToken = ref('')
 const terminalTabs = ref([])
 const activeTerminalId = ref(null)
 const activeTerminalTab = computed(() => terminalTabs.value.find(item => item.tabId === activeTerminalId.value) || null)
+const activeIsRdp = computed(() => activeTerminalTab.value?.protocol === 'RDP')
 const tabScrollRef = ref(null)
 const showLeftScroll = ref(false)
 const showRightScroll = ref(false)
@@ -1049,7 +999,7 @@ function onChangeEncoding(enc, targetTabId = null) {
 
 const splitTerminalTab = computed(() => {
   if (!isSplit.value || terminalTabs.value.length < 2) return null
-  return terminalTabs.value.find(tab => tab.tabId !== activeTerminalId.value) || null
+  return terminalTabs.value.find(tab => tab.tabId !== activeTerminalId.value && tab.protocol !== 'RDP') || null
 })
 
 const filePanelRef = ref(null)
@@ -1097,6 +1047,12 @@ function disconnectTerminalTab(tabId) {
   terminalRefs.get(`split-${tabId}`)?.disconnect()
 }
 
+function reconnectTerminalTab(tabId, plainSsh = false) {
+  const method = plainSsh ? 'reconnectPlainSsh' : 'reconnect'
+  terminalRefs.get(tabId)?.[method]()
+  terminalRefs.get(`split-${tabId}`)?.[method]()
+}
+
 function toggleTerminalFullscreen() {
   const el = document.querySelector('.terminal-slot')
   if (!el) return
@@ -1130,18 +1086,13 @@ const hostRules = {
     { validator: validateHostPortRule, trigger: ['blur', 'change'] }
   ]
 }
-const accountRules = {
-  hostId: [{ required: true, message: '请选择所属主机', trigger: 'change' }],
-  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
-  authType: [{ required: true, message: '请选择认证方式', trigger: 'change' }]
-}
 
 const selectedGroupId = computed(() => {
   const n = selectedNode.value
   if (!n) return null
   if (n.nodeType === 'GROUP') return n.id
   if (n.nodeType === 'HOST') return n.extra?.groupId ?? null
-  if (n.nodeType === 'ACCOUNT') {
+  if (isAccountNode(n)) {
     return n.extra?.groupId ?? accountHostMeta.value?.groupId ?? null
   }
   return null
@@ -1151,7 +1102,7 @@ const selectedHostId = computed(() => {
   const n = selectedNode.value
   if (!n) return null
   if (n.nodeType === 'HOST') return n.id
-  if (n.nodeType === 'ACCOUNT') {
+  if (isAccountNode(n)) {
     return n.extra?.hostId ?? detail.value.raw?.hostId ?? null
   }
   return null
@@ -1224,7 +1175,7 @@ function handleTabSwitchAction(action) {
   if (target.tabId !== activeTerminalId.value) {
     activateTerminalTab(target.tabId, true)
   } else {
-    terminalRefs.get(target.tabId)?.focusTerminal?.()
+    focusConnectionTab(target.tabId)
   }
 }
 
@@ -1272,8 +1223,9 @@ onBeforeUnmount(() => {
 })
 
 async function persistAccountSelection(node, hostGroupId) {
-  if (node?.nodeType !== 'ACCOUNT') return
+  if (!isAccountNode(node)) return
   writeSavedSshAccount({
+    nodeType: node.nodeType,
     id: node.id,
     key: node.key,
     hostId: node.extra?.hostId,
@@ -1292,11 +1244,12 @@ async function restoreSavedAccount() {
 
   const saved = readSavedSshAccount()
   const activeTabAccount = terminalTabs.value.find(t => t.tabId === activeTerminalId.value)
-  const targetAccountId = activeTabAccount?.accountId || saved?.id
+  const protocol = activeTabAccount?.protocol === 'RDP' || (!activeTabAccount && saved?.nodeType === 'RDP_ACCOUNT') ? 'RDP' : 'SSH'
+  const targetAccountId = (protocol === 'RDP' ? activeTabAccount?.connectionId : activeTabAccount?.accountId) || saved?.id
   if (!targetAccountId) return
   let acc
   try {
-    acc = await getAccount(targetAccountId)
+    acc = protocol === 'RDP' ? { ...await getRdpConnection(targetAccountId), protocol: 'RDP' } : await getAccount(targetAccountId)
   } catch {
     clearSavedSshAccount()
     return
@@ -1317,9 +1270,9 @@ async function restoreSavedAccount() {
   defaultExpandedKeys.value = keys
 
   const node = {
-    nodeType: 'ACCOUNT',
+    nodeType: protocol === 'RDP' ? 'RDP_ACCOUNT' : 'ACCOUNT',
     id: acc.id,
-    key: `a:${acc.id}`,
+    key: `${protocol === 'RDP' ? 'r' : 'a'}:${acc.id}`,
     label: acc.username,
     leaf: true,
     extra: {
@@ -1391,13 +1344,13 @@ function getNodeSubTitle(data) {
 }
 
 function nodeTagType(data) {
-  if (data.nodeType === 'ACCOUNT') return 'success'
+  if (isAccountNode(data)) return 'success'
   if (data.nodeType === 'HOST') return 'primary'
   return 'warning'
 }
 
 function nodeTypeName(data) {
-  if (data.nodeType === 'ACCOUNT') return '账户'
+  if (isAccountNode(data)) return '账户'
   if (data.nodeType === 'HOST') return '主机'
   return '分组'
 }
@@ -1524,7 +1477,7 @@ function allowTreeDrop(draggingNode, dropNode, dropType) {
       return true
     }
     return (sourceType === 'HOST' && targetType === 'GROUP') ||
-      (sourceType === 'ACCOUNT' && targetType === 'HOST')
+      (['ACCOUNT', 'RDP_ACCOUNT'].includes(sourceType) && targetType === 'HOST')
   }
   return (dropType === 'before' || dropType === 'after') && sourceType === targetType
 }
@@ -1567,6 +1520,7 @@ async function onNodeDrop(draggingNode, dropNode, dropType) {
       orderedIds,
       sourceOrderedIds: crossParent ? origin.siblingIds.filter((id) => id !== draggingNode.data.id) : null
     })
+    if (type === 'RDP_ACCOUNT' && crossParent) await syncRdpTabs(await getRdpConnection(draggingNode.data.id))
     if (selectedNode.value?.nodeType === type && selectedNode.value.id === draggingNode.data.id) {
       selectedNode.value = draggingNode.data
       await loadDetail(draggingNode.data)
@@ -1622,10 +1576,11 @@ function onNodeClick(data) {
 
 async function connectHostAccount(acc) {
   if (!acc?.id) return
+  const protocol = isRdp(acc) ? 'RDP' : 'SSH'
   const node = {
-    nodeType: 'ACCOUNT',
+    nodeType: protocol === 'RDP' ? 'RDP_ACCOUNT' : 'ACCOUNT',
     id: acc.id,
-    key: `a:${acc.id}`,
+    key: `${protocol === 'RDP' ? 'r' : 'a'}:${acc.id}`,
     label: acc.label || acc.username,
     leaf: true,
     extra: {
@@ -1649,10 +1604,11 @@ async function onGlobalOpenAccount(e) {
   if (target.accountId) {
     const acc = {
       id: target.accountId,
+      protocol: target.protocol || 'SSH',
       username: target.username,
       hostId: target.hostId,
       groupId: target.groupId,
-      label: target.username ? `${target.username}@${target.hostName || target.hostAddress}` : (target.hostName || target.hostAddress)
+      label: target.protocol === 'RDP' && target.accountName ? target.accountName : target.username ? `${target.username}@${target.hostName || target.hostAddress}` : (target.hostName || target.hostAddress)
     }
     await connectHostAccount(acc)
   } else if (target.hostId) {
@@ -1675,6 +1631,7 @@ async function onGlobalOpenAccount(e) {
 }
 
 function onGlobalTerminalAction(e) {
+  if (activeIsRdp.value) return
   const act = e.detail
   if (act === 'clear') {
     onClearActiveTerminal()
@@ -1685,28 +1642,46 @@ function onGlobalTerminalAction(e) {
   }
 }
 
+let detailRequest = 0
 async function loadDetail(data) {
+  const current = ++detailRequest
   try {
     if (data.nodeType === 'GROUP') {
       sessionToken.value = ''
       hostAccounts.value = []
-      detail.value = { type: 'GROUP', raw: await getGroup(data.id) }
+      const raw = await getGroup(data.id)
+      if (current !== detailRequest) return
+      detail.value = { type: 'GROUP', raw }
     } else if (data.nodeType === 'HOST') {
       sessionToken.value = ''
-      detail.value = { type: 'HOST', raw: await getHost(data.id) }
+      const raw = await getHost(data.id)
+      if (current !== detailRequest) return
+      detail.value = { type: 'HOST', raw }
       try {
         const accs = await fetchTreeChildren('HOST', data.id)
-        hostAccounts.value = accs || []
+        if (current === detailRequest) hostAccounts.value = accs || []
       } catch {
-        hostAccounts.value = []
+        if (current === detailRequest) hostAccounts.value = []
       }
+    } else if (isRdp(data)) {
+      hostAccounts.value = []
+      const raw = { ...await getRdpConnection(data.id), protocol: 'RDP' }
+      if (current !== detailRequest) return
+      const host = await loadAccountHostMeta(raw.hostId)
+      if (current !== detailRequest) return
+      activateRdpForAccount(raw, host)
+      detail.value = { type: 'RDP_ACCOUNT', raw }
+      await persistAccountSelection(data, host.groupId)
+      if (accountTab.value !== 'terminal') await router.push('/terminal')
     } else {
       hostAccounts.value = []
       const raw = await getAccount(data.id)
+      if (current !== detailRequest) return
       detail.value = { type: 'ACCOUNT', raw }
       terminalVisited.value = accountTab.value === 'terminal'
       activateTerminalForAccount(raw)
       const hostMeta = await loadAccountHostMeta(raw.hostId)
+      if (current !== detailRequest) return
       const openedTab = terminalTabs.value.find(item => item.accountId === raw.id)
       if (openedTab) {
         openedTab.hostName = hostMeta.name
@@ -1720,8 +1695,10 @@ async function loadDetail(data) {
       await persistAccountSelection(data, groupId)
     }
   } catch {
+    if (current !== detailRequest) return
+    if (isRdp(data)) { ElMessage.error('远程桌面账户加载失败'); return }
     detail.value = { type: data.nodeType, raw: data }
-    if (data.nodeType === 'ACCOUNT') {
+    if (isAccountNode(data) && !isRdp(data)) {
       if (data.extra?.hostId) {
         await loadAccountHostMeta(data.extra.hostId)
       }
@@ -1730,32 +1707,33 @@ async function loadDetail(data) {
   }
 }
 
+let hostMetaRequest = 0
 async function loadAccountHostMeta(hostId) {
-  if (!hostId) {
-    accountHostMeta.value = { name: '', remark: '', host: '', port: 22, groupId: null }
-    return accountHostMeta.value
-  }
-  try {
-    const h = await getHost(hostId)
-    accountHostMeta.value = {
-      id: h.id,
-      name: h.name || '',
-      remark: h.remark || '',
-      host: h.host || '',
-      port: h.port || 22,
-      groupId: h.groupId ?? null
-    }
-    return accountHostMeta.value
-  } catch {
-    accountHostMeta.value = { name: '', remark: '', host: '', port: 22, groupId: null }
-    return accountHostMeta.value
-  }
+  const current = ++hostMetaRequest
+  let meta = { name: '', remark: '', host: '', port: 22, groupId: null }
+  if (hostId) try {
+    const host = await getHost(hostId)
+    meta = { id: host.id, name: host.name || '', remark: host.remark || '', host: host.host || '', port: host.port || 22, groupId: host.groupId ?? null }
+  } catch { /* Metadata failures do not change the selected protocol. */ }
+  if (current === hostMetaRequest) accountHostMeta.value = meta
+  return meta
 }
 
 // Keep the shared AI context tied to the terminal tab currently in the foreground.
 // An account may have multiple tabs, so accountId alone is not enough to identify it.
 watch([detail, accountHostMeta, activeTerminalTab], () => {
   const tab = activeTerminalTab.value
+  workspaceStore.activeDesktop = tab?.protocol === 'RDP' ? {
+    name: tab.hostName || tab.hostAddress,
+    address: tab.hostAddress || '',
+    port: tab.account?.port || 3389,
+    username: tab.account?.username || '',
+    connected: tab.connectionState === 'connected'
+  } : null
+  if (tab?.protocol === 'RDP' || detail.value.type === 'RDP_ACCOUNT') {
+    workspaceStore.terminalConnected = false; managedServer.value = null; return
+  }
+  workspaceStore.terminalConnected = Boolean(tab?.token)
   const raw = tab?.account || detail.value.raw
   if (tab?.accountId && raw) {
     const host = accountHostMeta.value
@@ -1799,12 +1777,13 @@ function terminalTabLabel(account, host = accountHostMeta.value) {
 }
 
 function getTabDisplayLabel(tab) {
+  if (tab.protocol === 'RDP') return tab.customTitle || tab.label
   return formatTerminalTabDisplayLabel(tab, accountHostMeta.value)
 }
 
 function getTabHostAddress(tab) {
   if (!tab) return ''
-  const host = tab.account?.host || (tab.hostId === accountHostMeta.value?.id ? accountHostMeta.value?.host : '')
+  const host = tab.hostAddress || tab.account?.host || (tab.hostId === accountHostMeta.value?.id ? accountHostMeta.value?.host : '')
   const port = tab.account?.port || (tab.hostId === accountHostMeta.value?.id ? accountHostMeta.value?.port : 22)
   if (!host) return ''
   return port && Number(port) !== 22 ? `${host}:${port}` : host
@@ -1930,6 +1909,7 @@ function handleContextMenuCloseAll() {
 
 function openTabForAccount(tab) {
   if (!tab?.accountId) return
+  if (isRdp(tab)) return activateRdpForAccount(tab.account, { name: tab.hostName, host: tab.hostAddress }, true)
   const { tabId, terminalId, subIndex } = allocateTerminalId(tab.accountId, terminalTabs.value, { forceNew: true })
   const baseLabel = tab.account ? terminalTabLabel(tab.account) : (tab.label || '终端')
   const newTab = {
@@ -1975,6 +1955,7 @@ function closeRightTerminalTabs(tabId) {
 }
 
 function closeAllTerminalTabs() {
+  detailRequest++
   terminalTabs.value = []
   activeTerminalId.value = null
   sessionToken.value = ''
@@ -1986,6 +1967,26 @@ function handleTabDropdownCommand(cmd) {
   if (cmd?.action === 'activate' && cmd.tabId) {
     activateTerminalTab(cmd.tabId)
   }
+}
+
+function activateRdpForAccount(account, host, forceNew = false) {
+  let tab = !forceNew && terminalTabs.value.find(tab => matchesConnection(tab, account.id, 'RDP'))
+  if (!tab) { tab = createRdpTab(account, host, terminalTabs.value); terminalTabs.value.push(tab) }
+  else { tab.account = { ...account, protocol: 'RDP' }; tab.hostName = host.name; tab.hostAddress = host.host; tab.hostId = account.hostId }
+  activeTerminalId.value = tab.tabId; sessionToken.value = ''; terminalVisited.value = true
+  detail.value = { type: 'RDP_ACCOUNT', raw: tab.account }
+  persistTerminalTabs(); nextTick(scrollToActiveTab)
+}
+
+function focusConnectionTab(tabId) {
+  const tab = terminalTabs.value.find(tab => tab.tabId === tabId)
+  const method = isRdp(tab) ? 'focusDisplay' : 'focusTerminal'
+  terminalRefs.get(tabId)?.[method]?.()
+}
+
+function onRdpState(tabId, state) {
+  const tab = terminalTabs.value.find(tab => tab.tabId === tabId)
+  if (tab) tab.connectionState = state.state
 }
 
 function activateTerminalForAccount(account) {
@@ -2023,6 +2024,7 @@ function activateTerminalForAccount(account) {
 function openAdditionalTerminalTab() {
   const current = activeTerminalTab.value
   if (!current) return
+  if (isRdp(current)) return openTabForAccount(current)
   const { tabId, terminalId, subIndex } = allocateTerminalId(current.accountId, terminalTabs.value, { forceNew: true })
   const baseLabel = current.account ? terminalTabLabel(current.account) : (current.label || '终端')
   const label = `${baseLabel} #${subIndex}`
@@ -2044,13 +2046,17 @@ function openAdditionalTerminalTab() {
 }
 
 async function activateTerminalTab(tabId, shouldFocus = false) {
+  const current = ++detailRequest
   activeTerminalId.value = tabId
   const tab = terminalTabs.value.find(item => item.tabId === tabId)
   sessionToken.value = tab?.token || ''
   if (tab?.account) {
-    detail.value = { type: 'ACCOUNT', raw: tab.account }
+    const protocol = isRdp(tab) ? 'RDP' : 'SSH'
+    detail.value = { type: protocol === 'RDP' ? 'RDP_ACCOUNT' : 'ACCOUNT', raw: tab.account }
     await loadAccountHostMeta(tab.hostId)
-    const node = { nodeType: 'ACCOUNT', id: tab.accountId, key: `a:${tab.accountId}`, label: tab.account.username, leaf: true, extra: { hostId: tab.hostId } }
+    if (current !== detailRequest) return
+    const id = protocol === 'RDP' ? tab.connectionId : tab.accountId
+    const node = { nodeType: protocol === 'RDP' ? 'RDP_ACCOUNT' : 'ACCOUNT', id, key: `${protocol === 'RDP' ? 'r' : 'a'}:${id}`, label: tab.account.name || tab.account.username, leaf: true, extra: { hostId: tab.hostId, protocol } }
     selectedNode.value = node
     treeCurrentNodeKey.value = node.key
     await persistAccountSelection(node)
@@ -2059,12 +2065,13 @@ async function activateTerminalTab(tabId, shouldFocus = false) {
   nextTick(() => {
     scrollToActiveTab()
     if (shouldFocus) {
-      terminalRefs.get(tabId)?.focusTerminal?.()
+      focusConnectionTab(tabId)
     }
   })
 }
 
 function closeTerminalTab(tabId) {
+  detailRequest++
   const index = terminalTabs.value.findIndex(item => item.tabId === tabId)
   if (index < 0) return
   const wasActive = activeTerminalId.value === tabId
@@ -2074,17 +2081,25 @@ function closeTerminalTab(tabId) {
     activeTerminalId.value = next?.tabId ?? null
     sessionToken.value = next?.token || ''
     if (next) {
-      detail.value = { type: 'ACCOUNT', raw: next.account }
+      detail.value = { type: isRdp(next) ? 'RDP_ACCOUNT' : 'ACCOUNT', raw: next.account }
       void loadAccountHostMeta(next.hostId)
     }
   }
   persistTerminalTabs()
 }
 
+function onTerminalConnecting(tabId) {
+  const tab = terminalTabs.value.find(item => item.tabId === tabId)
+  if (!tab) return
+  tab.manuallyDisconnected = false
+  tab.connectionState = 'connecting'
+}
+
 function onTerminalReady(tabId, payload) {
   const tab = terminalTabs.value.find(item => item.tabId === tabId)
   if (!tab) return
   tab.manuallyDisconnected = false
+  tab.connectionState = 'connected'
   tab.token = payload?.sessionToken || ''
   tab.connectionMode = payload?.connectionMode || ''
   tab.tmuxVersion = payload?.tmuxVersion || ''
@@ -2094,6 +2109,7 @@ function onTerminalReady(tabId, payload) {
 
 function onTerminalDisconnected(tabId, payload) {
   const tab = terminalTabs.value.find(item => item.tabId === tabId)
+  if (tab) tab.connectionState = 'disconnected'
   if (tab && payload?.manual) tab.manuallyDisconnected = true
   if (tab) { tab.token = ''; tab.connectionMode = ''; tab.tmuxVersion = ''; tab.tmuxVersionSource = 'unknown' }
   if (activeTerminalId.value === tabId) sessionToken.value = ''
@@ -2120,6 +2136,7 @@ watch([accountTab,()=>detail.value.raw?.id], ([tab]) => {
 })
 
 async function establishFileSession() {
+  if (detail.value.type !== 'ACCOUNT' || activeIsRdp.value) return
   const id = detail.value.raw?.id
   if (!id || sessionToken.value || openingFileSession.value) return
   openingFileSession.value = true
@@ -2182,7 +2199,7 @@ const detailRows = computed(() => {
 
 async function onNodeDblClick(data) {
   selectedNode.value = data
-  if (data.nodeType === 'ACCOUNT') {
+  if (isAccountNode(data)) {
     void openNewAccountTerminal(data)
     return
   }
@@ -2218,7 +2235,7 @@ function onNodeAction(command, data) {
   if (command === 'host') {
     if (data.nodeType === 'GROUP') return openAddHost(data.id)
     if (data.nodeType === 'HOST') return openAddHost(data.extra?.groupId)
-    if (data.nodeType === 'ACCOUNT') {
+    if (isAccountNode(data)) {
       const gId = data.extra?.groupId || accountHostMeta.value?.groupId || null
       return openAddHost(gId)
     }
@@ -2226,7 +2243,7 @@ function onNodeAction(command, data) {
   }
   if (command === 'account') {
     if (data.nodeType === 'HOST') return openAddAccount(data.id)
-    if (data.nodeType === 'ACCOUNT') return openAddAccount(data.extra?.hostId)
+    if (isAccountNode(data)) return openAddAccount(data.extra?.hostId)
     return openAddAccount(null)
   }
   if (command === 'delete') {
@@ -2236,9 +2253,23 @@ function onNodeAction(command, data) {
 }
 
 async function openNewAccountTerminal(data) {
+  const current = ++detailRequest
   try {
+    if (isRdp(data)) {
+      const account = { ...await getRdpConnection(data.id), protocol: 'RDP' }
+      if (current !== detailRequest) return
+      const host = await loadAccountHostMeta(account.hostId)
+      if (current !== detailRequest) return
+      activateRdpForAccount(account, host, true)
+      detail.value = { type: 'RDP_ACCOUNT', raw: account }
+      await persistAccountSelection(data, host.groupId)
+      if (current === detailRequest) await router.push('/terminal')
+      return
+    }
     const account = await getAccount(data.id)
+    if (current !== detailRequest) return
     const host = await loadAccountHostMeta(account.hostId)
+    if (current !== detailRequest) return
     const { tabId, terminalId, subIndex } = allocateTerminalId(account.id, terminalTabs.value, { forceNew: true })
     const baseLabel = terminalTabLabel(account, host)
     const label = subIndex > 1 ? `${baseLabel} #${subIndex}` : baseLabel
@@ -2266,7 +2297,7 @@ async function openNewAccountTerminal(data) {
     await router.push('/terminal')
     await persistAccountSelection(data)
   } catch (error) {
-    ElMessage.error(error?.message || '新建终端失败')
+    if (current === detailRequest) ElMessage.error(isRdp(data) ? '远程桌面账户加载失败' : error?.message || '新建终端失败')
   }
 }
 
@@ -2430,7 +2461,7 @@ async function openAddHost(groupId = null) {
     groupId != null
       ? groupId
       : (selectedGroupId.value || null)
-  if (!defaultGroupId && selectedNode.value?.nodeType === 'ACCOUNT') {
+  if (!defaultGroupId && isAccountNode(selectedNode.value)) {
     const hostId = selectedNode.value.extra?.hostId || detail.value.raw?.hostId
     if (hostId) {
       try {
@@ -2462,36 +2493,39 @@ async function editHostNode(data) {
 
 async function openAddAccount(hostId = null) {
   await refreshHostOptions()
-  let defaultHostId =
-    hostId != null
-      ? hostId
-      : (selectedHostId.value || null)
-  if (!defaultHostId && selectedNode.value?.nodeType === 'ACCOUNT') {
-    defaultHostId = selectedNode.value.extra?.hostId || detail.value.raw?.hostId || null
-  }
-  secretPassword.value = ''
-  secretPrivateKey.value = ''
-  secretPassphrase.value = ''
-  accountForm.value = {
-    hostId: defaultHostId,
-    username: '',
-    authType: 'PASSWORD',
-    defaultCwd: '',
-    remark: '',
-    sortOrder: 0,
-    enabled: 1
-  }
+  accountForm.value = { protocol: 'SSH', hostId: hostId ?? selectedHostId.value ?? (isAccountNode(selectedNode.value) ? selectedNode.value.extra?.hostId : null) }
   accountDlg.value = true
 }
 
 async function editAccountNode(data) {
   await refreshHostOptions()
-  const a = await getAccount(data.id)
-  secretPassword.value = ''
-  secretPrivateKey.value = ''
-  secretPassphrase.value = ''
-  accountForm.value = { ...a }
+  accountForm.value = { id: data.id, protocol: isRdp(data) ? 'RDP' : 'SSH', hostId: data.extra?.hostId }
   accountDlg.value = true
+}
+
+async function editRdpTab(tab) {
+  return editAccountNode({ nodeType: 'RDP_ACCOUNT', id: tab.connectionId, extra: { hostId: tab.hostId } })
+}
+
+async function syncRdpTabs(account) {
+  const tabs = terminalTabs.value.filter(tab => matchesConnection(tab, account.id, 'RDP'))
+  if (!tabs.length) return
+  const host = await getHost(account.hostId)
+  for (const tab of tabs) {
+    terminalRefs.get(tab.tabId)?.disconnect?.()
+    tab.account = { ...account, protocol: 'RDP' }; tab.hostId = account.hostId
+    tab.hostName = host.name; tab.hostAddress = host.host
+    tab.label = `${host.name || host.host} · ${account.name || account.username}`
+  }
+  await nextTick()
+  if (account.enabled !== 0 && host.enabled !== 0) for (const tab of tabs) terminalRefs.get(tab.tabId)?.reconnect?.()
+  persistTerminalTabs()
+}
+
+async function onAccountSaved({ protocol, account }) {
+  if (protocol === 'RDP') await syncRdpTabs(account)
+  const node = { nodeType: protocol === 'RDP' ? 'RDP_ACCOUNT' : 'ACCOUNT', id: account.id, key: `${protocol === 'RDP' ? 'r' : 'a'}:${account.id}`, label: account.name || account.username, leaf: true, extra: { hostId: account.hostId, protocol, enabled: account.enabled } }
+  await refreshTree(node)
 }
 
 function openEditFromDetail() {
@@ -2499,7 +2533,7 @@ function openEditFromDetail() {
   if (!n) return
   if (n.nodeType === 'GROUP') editGroupNode(n)
   else if (n.nodeType === 'HOST') editHostNode(n)
-  else if (n.nodeType === 'ACCOUNT') editAccountNode(n)
+  else if (isAccountNode(n)) editAccountNode(n)
 }
 
 async function saveGroup() {
@@ -2561,121 +2595,14 @@ async function saveHost() {
   }
 }
 
-function buildSecretPayload() {
-  if (accountForm.value.authType === 'PASSWORD') {
-    if (!secretPassword.value && !accountForm.value.id) return null
-    if (!secretPassword.value) return undefined
-    return { password: secretPassword.value }
-  }
-  if (!secretPrivateKey.value && !accountForm.value.id) return null
-  if (!secretPrivateKey.value) return undefined
-  const s = { privateKeyPem: secretPrivateKey.value }
-  if (accountForm.value.authType === 'PRIVATE_KEY_WITH_PASSPHRASE') {
-    s.passphrase = secretPassphrase.value
-  }
-  return s
-}
-
-async function saveAccount() {
-  await accountFormRef.value?.validate()
-  const secret = buildSecretPayload()
-  if (secret === null) {
-    ElMessage.warning('请填写凭据')
-    return
-  }
-  saving.value = true
-  try {
-    const body = { ...accountForm.value }
-    if (body.username) body.username = String(body.username).trim()
-    if (body.hostId) body.hostId = Number(body.hostId)
-    if (secret !== undefined) body.secret = secret
-    let saved
-    if (body.id) saved = await updateAccount(body.id, body)
-    else saved = await createAccount(body)
-    accountDlg.value = false
-    let hostGroupId = null
-    if (saved.hostId) {
-      try {
-        const h = await getHost(saved.hostId)
-        hostGroupId = h?.groupId ?? null
-      } catch {
-        // ignore
-      }
-    }
-    const node = {
-      nodeType: 'ACCOUNT',
-      id: saved.id,
-      key: `a:${saved.id}`,
-      label: saved.username,
-      remark: saved.remark,
-      hostId: saved.hostId,
-      leaf: true,
-      extra: {
-        authType: saved.authType,
-        hostId: saved.hostId,
-        groupId: hostGroupId,
-        enabled: saved.enabled
-      }
-    }
-    await refreshTree(node)
-  } finally {
-    saving.value = false
-  }
-}
-
-const testingAccount = ref(false)
-
-async function testAccountConnection() {
-  const form = accountForm.value
-  if (!form.username?.trim()) {
-    ElMessage.warning('请先填写用户名')
-    return
-  }
-  if (!form.hostId) {
-    ElMessage.warning('请先选择所属主机')
-    return
-  }
-  const secret = buildSecretPayload()
-  if (secret === null && !form.id) {
-    ElMessage.warning('新建账户须填写密码或私钥凭据后再测试连接')
-    return
-  }
-
-  testingAccount.value = true
-  try {
-    const payload = {
-      id: form.id || undefined,
-      hostId: form.hostId,
-      username: form.username.trim(),
-      authType: form.authType || 'PASSWORD',
-      secret: secret !== undefined ? secret : undefined
-    }
-    const res = await testAccount(payload)
-    if (res && res.success) {
-      ElMessage.success(`✅ SSH 测试成功！${res.message || ''}`)
-    } else {
-      ElMessage.error(`❌ 连接失败: ${res?.message || '连接或认证失败，请检查主机、用户名和凭据'}`)
-    }
-  } catch (err) {
-    ElMessage.error(`❌ 测试失败: ${err?.message || '网络或接口异常'}`)
-  } finally {
-    testingAccount.value = false
-  }
-}
-
 async function handleTestExistingAccount(data) {
   try {
-    ElMessage.info(`正在测试账户「${data.label}」的 SSH 连接…`)
-    const res = await testAccount(data.id)
-    if (res && res.success) {
-      ElMessage.success(`✅「${data.label}」测试成功！${res.message || ''}`)
-    } else {
-      ElMessage.error(`❌「${data.label}」连接失败: ${res?.message || '连接或认证失败'}`)
-    }
-  } catch (err) {
-    ElMessage.error(`❌ 测试失败: ${err?.message || '网络或接口异常'}`)
-  }
+    const result = isRdp(data) ? await testRdpConnection({ id: data.id }) : await testAccount(data.id)
+    if (result?.success) ElMessage.success(result.message || '连接测试成功')
+    else ElMessage.error(result?.message || '连接测试失败')
+  } catch (error) { ElMessage.error(error.message || '连接测试失败') }
 }
+
 
 async function confirmDeleteDetail() {
   const n = selectedNode.value
@@ -2687,6 +2614,11 @@ async function confirmDeleteDetail() {
       : `确定删除「${n.label}」？`
   const title = n.nodeType === 'GROUP' ? '级联删除分组' : n.nodeType === 'HOST' ? '删除主机及关联配置' : '确认'
   await ElMessageBox.confirm(message, title, { type: 'warning', confirmButtonText: '删除' })
+  const keep = []
+  for (const tab of terminalTabs.value) {
+    const removed = isAccountNode(n) ? tabMatchesNode(tab, n) : n.nodeType === 'HOST' ? tab.hostId === n.id : await isHostInsideGroup(tab.hostId, n.id)
+    if (!removed) keep.push(tab)
+  }
   if (n.nodeType === 'GROUP') {
     const saved = readSavedSshAccount()
     if (saved && await isHostInsideGroup(saved.hostId, n.id)) clearSavedSshAccount()
@@ -2699,9 +2631,12 @@ async function confirmDeleteDetail() {
   }
   else {
     const saved = readSavedSshAccount()
-    if (saved?.id === n.id) clearSavedSshAccount()
-    await deleteAccount(n.id)
+    if (saved?.id === n.id && saved.nodeType === n.nodeType) clearSavedSshAccount()
+    if (isRdp(n)) await deleteRdpConnection(n.id); else await deleteAccount(n.id)
   }
+  terminalTabs.value = keep
+  if (!keep.some(tab => tab.tabId === activeTerminalId.value)) activeTerminalId.value = keep[0]?.tabId ?? null
+  persistTerminalTabs()
   if (n.key) {
     defaultExpandedKeys.value = defaultExpandedKeys.value.filter((k) => k !== n.key)
   }
@@ -2733,6 +2668,7 @@ async function isHostInsideGroup(hostId, groupId) {
 </script>
 
 <style scoped>
+.connection-protocol { flex-shrink: 0; font-size: 10px; font-weight: 600; color: var(--el-text-color-secondary); padding: 1px 4px; border: 1px solid var(--el-border-color-lighter); border-radius: 3px; }
 .ssh-console {
   height: 100%;
   min-height: 0;

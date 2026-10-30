@@ -18,6 +18,7 @@
     <description>Web SSH 控制台后端（从融测台 ssh-console 模块拆分）</description>
 
     <properties>
+        <!-- Compile with JDK 17, retaining class-file compatibility with Spring 5.2 ASM. -->
         <maven.compiler.source>8</maven.compiler.source>
         <maven.compiler.target>8</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -32,6 +33,11 @@
     </properties>
 
     <dependencies>
+        <dependency>
+            <groupId>org.apache.guacamole</groupId>
+            <artifactId>guacamole-common</artifactId>
+            <version>1.6.0</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
@@ -111,6 +117,23 @@
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.2.0</version>
+                <executions>
+                    <execution>
+                        <id>standalone-updater</id>
+                        <phase>package</phase>
+                        <goals><goal>jar</goal></goals>
+                        <configuration>
+                            <classifier>updater</classifier>
+                            <includes><include>com/doumiot/updater/**</include></includes>
+                            <archive><manifest><mainClass>com.doumiot.updater.UpdateInstaller</mainClass></manifest></archive>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

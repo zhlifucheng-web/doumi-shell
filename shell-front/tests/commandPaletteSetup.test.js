@@ -3,11 +3,11 @@ import assert from 'node:assert/strict'
 import { nextTick } from 'vue'
 import { mountSfcSetup } from './helpers/mountSfcSetup.js'
 
-function mountPalette(fileContext = null) {
+function mountPalette(fileContext = null, targets = [{ accountId: 9, hostId: 1, username: 'root', hostName: 'app.log', hostAddress: '10.0.0.1' }]) {
   const events = [], opened = []
   const context = fileContext && { accountId: 7, tabId: 'tab-a', path: '/var/log', ...fileContext, openFile: file => { opened.push(file); return true } }
   const mounted = mountSfcSetup(new URL('../src/components/CommandPalette.vue', import.meta.url), {
-    modules: { '@/api/sshConsole': { fetchSearchTargets: async () => [{ accountId: 9, hostId: 1, username: 'root', hostName: 'app.log', hostAddress: '10.0.0.1' }] } },
+    modules: { '@/api/sshConsole': { fetchSearchTargets: async () => targets } },
     props: { modelValue: true, fileContext: context, 'onUpdate:modelValue': value => events.push(['close', value]), onSelectTarget: target => events.push(['target', target]), onAction: action => events.push(['action', action]), onAskAi: prompt => events.push(['ai', prompt]) }
   })
   return { ...mounted, opened, events }
@@ -67,5 +67,34 @@ test('large directories cap rendered results while searching every filename', as
     assert.ok(palette.state.filteredItems.value.filter(i => i.type === 'file').length <= 50)
     palette.state.query.value = 'file-4999.log'; await flush()
     assert.equal(palette.state.filteredItems.value.find(i => i.type === 'file')?.label, 'file-4999.log')
+  } finally { palette.unmount() }
+})
+
+const desktopTarget = { accountId: 7, accountName: '财务桌面', protocol: 'RDP', hostId: 1, hostName: 'Windows host', hostAddress: '192.0.2.88', hostPort: 3390, username: 'Administrator', accountRemark: '远程办公', groupName: '办公组' }
+test('Ctrl+K searches RDP connection name, protocol, user and independent endpoint together', async () => {
+  const palette = mountPalette(null, [desktopTarget])
+  try {
+    await flush()
+    for (const query of ['财务桌面', 'rdp', '远程桌面', 'Administrator 192.0.2.88:3390', '财务 RDP 办公组']) {
+      palette.state.query.value=query; await flush()
+      const target=palette.state.filteredItems.value.find(item=>item.target)
+      assert.ok(target, `Missing RDP result for ${query}`)
+      assert.equal(target.label,'财务桌面'); assert.equal(target.protocol,'RDP'); assert.equal(target.port,3390)
+    }
+    palette.state.selectActive()
+    assert.deepEqual(palette.events.at(-1),['target',desktopTarget])
+    palette.state.query.value='192.0.2.88:2222'; await flush()
+    assert.equal(palette.state.filteredItems.value.some(item=>item.target),false)
+  } finally { palette.unmount() }
+})
+test('SSH and RDP accounts with the same numeric ID remain distinct palette results', async () => {
+  const ssh={...desktopTarget,protocol:'SSH',accountName:'root',username:'root',hostPort:2222}
+  const palette=mountPalette(null,[ssh,desktopTarget])
+  try {
+    await flush(); palette.state.query.value='192.0.2.88'; await flush()
+    const targets=palette.state.filteredItems.value.filter(item=>item.target)
+    assert.equal(targets.length,2);assert.notEqual(targets[0].id,targets[1].id)
+    palette.state.query.value='ssh';await flush()
+    assert.deepEqual(palette.state.filteredItems.value.filter(item=>item.target).map(item=>item.target.protocol),['SSH'])
   } finally { palette.unmount() }
 })

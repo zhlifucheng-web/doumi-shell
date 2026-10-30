@@ -1,0 +1,38 @@
+name: Test and build
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: shell-front/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test and package Linux
+        run: python scripts/build-release.py --version "$(python -c 'import json; print(json.load(open("shell-front/public/version.json"))["version"])')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-validation
+          path: |
+            release/*-linux-x64.tar.gz
+            release/*-linux-x64.tar.gz.sha256
+          if-no-files-found: error

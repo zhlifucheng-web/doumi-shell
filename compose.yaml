@@ -1,0 +1,39 @@
+name: doumi-shell
+services:
+  web-shell:
+    image: ${DOUMI_IMAGE:-doumi-shell:local}
+    build:
+      context: .
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24.22.2-bookworm-slim}
+        MAVEN_IMAGE: ${MAVEN_IMAGE:-maven:3.9.9-eclipse-temurin-17}
+        JAVA_IMAGE: ${JAVA_IMAGE:-eclipse-temurin:17-jre-jammy}
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${DOUMI_BIND_IP:-127.0.0.1}:${DOUMI_HTTP_PORT:-61880}:8080"
+    environment:
+      DOUMI_PORT: "8080"
+      DOUMI_DATA_DIR: /data
+      DOUMI_GUACD_HOST: guacd
+      DOUMI_GUACD_PORT: "4822"
+      DOUMI_UPDATE_ENABLED: "false"
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - doumi-data:/data
+    depends_on:
+      guacd:
+        condition: service_healthy
+    stop_grace_period: 30s
+  guacd:
+    image: ${GUACD_IMAGE:-guacamole/guacd:1.6.0}
+    pull_policy: missing
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "4822"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+volumes:
+  doumi-data:

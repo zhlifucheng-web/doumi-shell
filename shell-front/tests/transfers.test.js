@@ -8,6 +8,13 @@ const { enqueueTransfer, delegateBrowserDownload, transfers, clearFinishedTransf
 import { transfersForSession, transfersForServer } from '../src/composables/transferHistory.js'
 
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
+test('remote copy confirmation wins a late cancellation and keeps ownership warnings', async () => {
+  const gate = deferred()
+  const task = enqueueTransfer({ direction: '复制', run: async () => { await gate.promise; return { completed: true, warning: '内容已复制，但属主设置失败' } } })
+  task.cancel(); gate.resolve(); await settled(task)
+  assert.equal(task.status, '已完成')
+  assert.equal(task.error, '内容已复制，但属主设置失败')
+})
 async function settled(task) {
   const deadline = Date.now() + 2000
   while (['等待中', '传输中', '取消中', '保存中'].includes(task.status)) {

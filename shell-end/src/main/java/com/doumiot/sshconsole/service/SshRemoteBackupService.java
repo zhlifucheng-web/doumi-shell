@@ -53,6 +53,7 @@ public class SshRemoteBackupService {
     @Resource private SshClientFactory sshClientFactory;
     @Resource private TaskScheduler taskScheduler;
     @Resource private ObjectMapper json;
+    @Resource private com.doumiot.sshconsole.update.UpdateMaintenance updateMaintenance;
 
     private ScheduledFuture<?> scheduledFuture;
     private String currentScheduleSignature;
@@ -336,6 +337,8 @@ public class SshRemoteBackupService {
     }
 
     public synchronized Map<String, Object> executeBackupNow() {
+        if(updateMaintenance!=null&&!updateMaintenance.enter())throw new IllegalStateException("正在更新，暂不执行远程备份");
+        try {
         RemoteBackupConfigDTO config = getConfig();
         byte[] enc = jdbc.queryForObject("SELECT secret_enc FROM ssh_backup_config WHERE id = ?", byte[].class, SINGLETON_ID);
         BackupSecrets secrets = loadSecrets(enc);
@@ -381,6 +384,7 @@ public class SshRemoteBackupService {
                     nowStr, errorMsg, SINGLETON_ID);
             throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY, errorMsg);
         }
+        } finally { if(updateMaintenance!=null)updateMaintenance.leave(); }
     }
 
     private synchronized void reconcileSchedule() {

@@ -19,8 +19,11 @@ public class SshConsoleWebSocketConfig implements WebSocketConfigurer {
 
     @Resource private SshFileTailWebSocketHandler fileTailWebSocketHandler;
 
+    @Resource private com.doumiot.sshconsole.rdp.RdpWebSocketHandler rdpWebSocketHandler;
+
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        registry.addHandler(rdpWebSocketHandler, "/ws/ssh-console/rdp");
         registry.addHandler(terminalWebSocketHandler, "/ws/ssh-console/terminal")
                 .setAllowedOrigins("*");
         registry.addHandler(fileTailWebSocketHandler, "/ws/ssh-console/file-tail").setAllowedOrigins("*");

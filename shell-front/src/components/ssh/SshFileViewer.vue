@@ -1,7 +1,7 @@
 <template>
   <section ref="rootRef" class="file-viewer" :class="{ 'is-dark': effectiveDark }" @keydown="onKeydown">
     <header class="viewer-header">
-      <div class="file-title"><strong :title="name">{{ name }}</strong><span :title="path">{{ path }}</span></div>
+      <div class="file-title"><span v-if="serverAddress" class="server-address" :title="`服务器：${serverAddress}`">{{ serverAddress }}</span><strong :title="name">{{ name }}</strong><span class="file-path" :title="path">{{ path }}</span></div>
       <div class="viewer-tools">
         <el-button size="small" :type="toolsVisible ? 'primary' : 'default'" :aria-expanded="toolsVisible" title="查找 / 筛选（Ctrl/⌘+F）" @click="toggleSearchTools">查找 / 筛选</el-button>
         <el-select v-model="selectedEncoding" :disabled="localMode" size="small" class="encoding" aria-label="文件编码" @change="changeEncoding">
@@ -89,7 +89,7 @@ import { useViewerLocalFilter } from '@/composables/useViewerLocalFilter'
 import { useViewerFilter } from '@/composables/useViewerFilter'
 import { useTheme } from '@/composables/useTheme'
 
-const props = defineProps({ sessionToken: String, accountId: Number, path: String, name: String, size: { type: Number, default: 0 }, encoding: { type: String, default: '' }, standalone: Boolean })
+const props = defineProps({ sessionToken: String, accountId: Number, serverAddress: { type: String, default: '' }, path: String, name: String, size: { type: Number, default: 0 }, encoding: { type: String, default: '' }, standalone: Boolean })
 const emit = defineEmits(['close', 'standalone', 'edit'])
 const { effectiveDark, setPreference } = useTheme()
 const rootRef = ref(null), viewerBodyRef = ref(null), searchInputRef = ref(null)
@@ -494,6 +494,7 @@ onBeforeUnmount(() => {
 .viewer-header { justify-content:space-between; }
 .file-title { display:flex; gap:12px; align-items:center; min-width:0; flex:1; }
 .file-title strong,.file-title span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.file-title .server-address { flex-shrink:0; color:var(--ws-text-primary,#1e293b); font-weight:600; }
 .file-title span,.scope-hint,.range-info { font-size:12px; color:var(--ws-text-muted,#64748b); }
 .viewer-tools { display:flex; align-items:center; gap:8px; }
 .encoding { width:150px; }
@@ -526,5 +527,5 @@ onBeforeUnmount(() => {
 .edge-note { text-align:center; color:#888; padding:8px; user-select:none; }
 .viewer-footer { border-top:1px solid var(--ws-border,#e2e8f0); border-bottom:0; }
 .viewer-footer .scope-hint { margin-right:auto; }
-@media(max-width:800px) { .file-title span,.scope-hint { display:none; } .viewer-header { align-items:flex-start; } .viewer-tools { flex-wrap:wrap; } }
+@media(max-width:800px) { .file-title .file-path,.scope-hint { display:none; } .viewer-header { align-items:flex-start; } .viewer-tools { flex-wrap:wrap; } }
 </style>

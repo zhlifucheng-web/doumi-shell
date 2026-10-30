@@ -20,7 +20,6 @@
           建立文件会话
         </el-button>
       </el-empty>
-      <p class="hint">也可先在「终端」Tab 连接，连接成功后会自动复用 sessionToken。</p>
       <el-popover
         trigger="hover"
         :width="350"
@@ -318,12 +317,14 @@
           @open="enterDir"
           @folder-download="folderTransfer?.openDownload($event)"
           @rename="openRename"
+          @copy-to="openCopy"
           @chown="openChown"
           @delete="confirmDelete"
         />
       </div>
     </template>
 
+    <RemoteCopyDialog v-if="copySource" :source="copySource" @close="copySource = null" @queued="showTransfers = true" />
     <el-dialog v-model="showTransfers" title="文件传输 · 当前服务器" width="min(1080px, 94vw)" top="8vh" append-to-body destroy-on-close>
       <p v-if="transferHistoryWarning" role="alert" class="transfer-error">{{ transferHistoryWarning }}</p>
       <div class="transfer-heading">
@@ -451,6 +452,7 @@
       :dir="loadedPath || currentPath || defaultCwd || '/'"
       :session-token="sessionToken"
       :account-id="accountId"
+      :server-address="serverAddress"
       @switch-to-editor="openFullEditor"
     />
   </div>
@@ -495,6 +497,7 @@ import { storeToRefs } from 'pinia'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { isTransferActive, transferErrorMessage, transfersForServer } from '@/composables/transferHistory'
 import FolderTransfer from './FolderTransfer.vue'
+import RemoteCopyDialog from './RemoteCopyDialog.vue'
 import SshVirtualTable from './SshVirtualTable.vue'
 import SshFileEditorDialog from './SshFileEditorDialog.vue'
 import SshLargeFileViewerDialog from './SshLargeFileViewerDialog.vue'
@@ -510,6 +513,7 @@ const props = defineProps({
   tabId: { type: String, default: '' },
   savedPath: { type: String, default: '' },
   hostId: { type: Number, default: null },
+  serverAddress: { type: String, default: '' },
   active: { type: Boolean, default: true },
   embedded: { type: Boolean, default: false },
   sessionToken: { type: String, default: '' },
@@ -528,6 +532,12 @@ watch(() => [props.accountId, props.hostId], ([accountId, hostId]) => {
 }, { immediate: true })
 const visibleTransfers = computed(() => transfersForServer(transfers?.value || transfers, props.hostId))
 const showTransfers = ref(false)
+const copySource = ref(null)
+function openCopy(row) {
+  if (!props.sessionToken || !loadedPath.value?.startsWith('/') || !row?.name || ['.', '..'].includes(row.name)) return
+  copySource.value = { sessionToken: props.sessionToken, sourcePath: `${loadedPath.value.replace(/\/$/, '')}/${row.name}`,
+    name: row.name, accountId: props.accountId, hostId: props.hostId }
+}
 const activeTransfers = computed(() => visibleTransfers.value.filter(isTransferActive))
 const activeTransferCount = computed(() => activeTransfers.value.length)
 
@@ -983,6 +993,7 @@ function openStandaloneViewer(row) {
     query: {
       token: props.sessionToken,
       accountId: props.accountId,
+      host: props.serverAddress,
       path: filePath,
       name: row.name,
       size: row.size
@@ -1354,12 +1365,6 @@ function formatMtime(sec) {
 }
 .no-session {
   padding: 24px;
-}
-.hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  text-align: center;
-  margin-top: 8px;
 }
 .terminal-sync-notice {
   display: flex;

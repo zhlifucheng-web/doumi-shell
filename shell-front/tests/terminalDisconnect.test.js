@@ -40,7 +40,11 @@ function mountTerminal(props = {}, { keepAliveVisible } = {}) {
     frame(data) { this.onmessage?.({ data: JSON.stringify(data) }) }
   }
   class Display {
-    constructor(options) { this.cols = options.cols || 80; this.rows = options.rows || 24; this.options = options; this.output = ''; this.disposed = false; this.focuses = 0; displays.push(this) }
+    constructor(options) {
+      this.cols = options.cols || 80; this.rows = options.rows || 24; this.options = options; this.output = ''; this.disposed = false; this.focuses = 0
+      this.buffer = { active: { type: 'normal', baseY: 100, viewportY: 100, cursorY: 10 } }
+      this.markers = []; displays.push(this)
+    }
     attachCustomKeyEventHandler() {}
     loadAddon(addon) { addon.activate?.(this) }
     open() {}
@@ -48,6 +52,18 @@ function mountTerminal(props = {}, { keepAliveVisible } = {}) {
     onBinary() { return { dispose() {} } }
     focus() { this.focuses++ }
     resize(cols, rows) { this.cols = cols; this.rows = rows }
+    registerMarker(offset) {
+      const marker = { line: this.buffer.active.baseY + this.buffer.active.cursorY + offset, isDisposed: false, dispose() { this.isDisposed = true } }
+      this.markers.push(marker); return marker
+    }
+    scrollToLine(line) {
+      const next = Math.max(0, Math.min(line, this.buffer.active.baseY))
+      if (next !== this.buffer.active.viewportY) this.layoutSynced = true
+      this.buffer.active.viewportY = next
+    }
+    scrollLines(amount) { this.scrollToLine(this.buffer.active.viewportY + amount) }
+    scrollToBottom() { this.scrollToLine(this.buffer.active.baseY) }
+    refresh() {}
     write(data) { this.output += data }
     dispose() { this.disposed = true }
   }
@@ -81,6 +97,7 @@ function mountTerminal(props = {}, { keepAliveVisible } = {}) {
     modules, keepAliveVisible,
     props: { accountId: 1, terminalId: 'persistent-terminal', encoding: 'UTF-8', active: true, ...props,
       onDisconnected: payload => events.push(['disconnected', payload]),
+      onConnecting: () => events.push(['connecting']),
       onConnectionError: payload => events.push(['error', payload]),
       onReady: payload => events.push(['ready', payload]) },
     globals: { WebSocket: Socket, document, window,
@@ -94,6 +111,118 @@ function mountTerminal(props = {}, { keepAliveVisible } = {}) {
     async flushResize() { await vue.nextTick(); await vue.nextTick(); const pending = [...frames.values()]; frames.clear(); pending.forEach(fn => fn()); await vue.nextTick() }
   }
 }
+
+test('switching tabs restores each history position after hidden scrolling and background output', async () => {
+  const first = mountTerminal(), second = mountTerminal()
+  try {
+    for (const panel of [first, second]) { panel.sockets[0].frame({ type: 'ready' }); await panel.flushResize() }
+    const a = first.displays[0], b = second.displays[0]
+    a.buffer.active.viewportY = 25; b.buffer.active.viewportY = 70
+    for (let i = 0; i < 3; i++) {
+      for (const [panel, display, expected] of [[first, a, 25], [second, b, 70]]) {
+        panel.props.active = false; await vue.nextTick(); panel.layout.shown = false
+        display.buffer.active.viewportY = 0
+        display.buffer.active.baseY += 20
+        panel.layout.shown = true; panel.props.active = true
+        await panel.flushResize()
+        assert.equal(display.buffer.active.viewportY, expected)
+        assert.equal(panel.sockets.length, 1)
+      }
+    }
+    assert.ok(a.markers.every(marker => marker.isDisposed))
+  } finally { first.unmount(); second.unmount() }
+})
+
+test('a tab left at the bottom follows output received while hidden', async () => {
+  const panel = mountTerminal()
+  try {
+    panel.sockets[0].frame({ type: 'ready' }); await panel.flushResize()
+    panel.props.active = false; await vue.nextTick()
+    const display = panel.displays[0]
+    display.buffer.active.baseY = 180; display.buffer.active.viewportY = 0
+    panel.props.active = true; await panel.flushResize()
+    assert.equal(display.buffer.active.viewportY, 180)
+  } finally { panel.unmount() }
+})
+
+test('restoring an unchanged buffer position still synchronizes xterm hidden DOM geometry', async () => {
+  const panel = mountTerminal()
+  try {
+    panel.sockets[0].frame({ type: 'ready' }); await panel.flushResize()
+    panel.props.active = false; await vue.nextTick()
+    const display = panel.displays[0]
+    display.buffer.active.baseY = 180; display.buffer.active.viewportY = 180
+    display.layoutSynced = false
+    panel.props.active = true; await panel.flushResize()
+    assert.equal(display.buffer.active.viewportY, 180)
+    assert.equal(display.layoutSynced, true)
+  } finally { panel.unmount() }
+})
+
+test('restoring history follows buffer trimming and keeps disconnected tabs readable', async () => {
+  const panel = mountTerminal()
+  try {
+    panel.sockets[0].frame({ type: 'ready' }); await panel.flushResize()
+    const display = panel.displays[0]
+    display.buffer.active.viewportY = 40
+    panel.props.active = false; await vue.nextTick()
+    for (const marker of display.markers) marker.line -= 15
+    panel.state.disconnect()
+    display.buffer.active.viewportY = 0
+    panel.props.active = true; await panel.flushResize()
+    assert.equal(display.buffer.active.viewportY, 25)
+    assert.equal(panel.sockets.length, 1)
+    assert.equal(panel.sockets[0].readyState, 3)
+  } finally { panel.unmount() }
+})
+
+test('KeepAlive restores history after fitting the revealed terminal', async () => {
+  const visible = vue.ref(true), panel = mountTerminal({}, { keepAliveVisible: visible })
+  try {
+    panel.sockets[0].frame({ type: 'ready' }); await panel.flushResize()
+    const display = panel.displays[0]
+    display.buffer.active.viewportY = 30
+    visible.value = false; await vue.nextTick()
+    display.buffer.active.viewportY = 0
+    panel.layout.width = 1200
+    visible.value = true; await panel.flushResize()
+    assert.equal(display.buffer.active.viewportY, 30)
+    assert.equal(display.cols, 120)
+  } finally { panel.unmount() }
+})
+
+test('history evicted from scrollback restores the earliest surviving line', async () => {
+  const panel = mountTerminal()
+  try {
+    panel.sockets[0].frame({ type: 'ready' }); await panel.flushResize()
+    const display = panel.displays[0]
+    display.buffer.active.viewportY = 10
+    panel.props.active = false; await vue.nextTick()
+    display.markers.at(-1).dispose()
+    display.markers.at(-1).line = -1
+    display.buffer.active.viewportY = 100
+    panel.props.active = true; await panel.flushResize()
+    assert.equal(display.buffer.active.viewportY, 0)
+  } finally { panel.unmount() }
+})
+
+test('a rapid switch before layout settles retains the original saved history', async () => {
+  const panel = mountTerminal()
+  try {
+    panel.sockets[0].frame({ type: 'ready' }); await panel.flushResize()
+    const display = panel.displays[0]
+    display.buffer.active.viewportY = 45
+    panel.props.active = false; await vue.nextTick()
+    display.buffer.active.viewportY = 0
+    panel.props.active = true; await vue.nextTick()
+    panel.props.active = false; await vue.nextTick()
+    await panel.flushResize()
+    assert.equal(display.buffer.active.viewportY, 0)
+    panel.props.active = true; await panel.flushResize()
+    assert.equal(display.buffer.active.viewportY, 45)
+    assert.equal(display.markers.length, 1)
+  } finally { panel.unmount() }
+})
 
 test('manual disconnect closes transport and deadlines while preserving terminal output', async () => {
   const panel = mountTerminal()
@@ -136,6 +265,23 @@ test('manual reconnect reuses the same terminal identity and ignores old connect
     assert.equal(panel.state.disconnected.value, false)
     assert.equal(panel.events.some(([type]) => type === 'error'), false)
     assert.equal(panel.events.at(-1)[1].sessionToken, 'new-token')
+  } finally { panel.unmount() }
+})
+
+test('toolbar reconnect publishes connecting state and SSH retry preserves the terminal identity', () => {
+  const panel = mountTerminal({ paused: true })
+  try {
+    panel.state.reconnectPlainSsh()
+    assert.deepEqual(panel.events.at(-1), ['connecting'])
+    assert.equal(panel.state.disconnected.value, false)
+    assert.equal(panel.urls[0].terminalId, 'persistent-terminal')
+    assert.equal(panel.urls[0].transport, 'ssh')
+    panel.sockets[0].frame({ type: 'ready', sessionToken: 'ssh-token', connectionMode: 'ssh' })
+    panel.sockets[0].onerror()
+    assert.equal(panel.events.at(-2)[0], 'disconnected')
+    panel.state.reconnect()
+    assert.deepEqual(panel.events.at(-1), ['connecting'])
+    assert.equal(panel.urls[1].transport, 'ssh')
   } finally { panel.unmount() }
 })
 

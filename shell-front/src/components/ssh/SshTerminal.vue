@@ -50,7 +50,7 @@
     </div>
     <TerminalHistory v-if="searchVisible && searchScope === 'history'" ref="historyView" :text="historyText" :query="searchText" :loading="historyLoading" :error="historyError" :truncated="historyTruncated" @close="closeSearch" />
     <div ref="termContainer" class="term-container" :class="[termContainerClass]" :style="termContainerStyle" @click="focusTerminal" @contextmenu.prevent="showContextMenu" />
-    <EditorScrollbar :target="scrollTarget" />
+    <EditorScrollbar :target="scrollTarget" :active="active" />
 
     <!-- 报错智能侦测浮层 (伴随式 AI 体验) -->
     <transition name="fade-slide">
@@ -76,8 +76,10 @@
 
     <div v-if="disconnected" class="reconnect-bar">
       <span>{{ manuallyDisconnected ? (connectionMode.includes('tmux') ? '已手动断开，远端 tmux 会话保留' : '已手动断开') : '会话已断开' }}</span>
-      <el-button size="small" type="primary" @click="reconnect">重新连接</el-button>
-      <el-button v-if="!shareToken" size="small" @click="reconnectPlainSsh">改用普通 SSH</el-button>
+      <template v-if="!connectionActionsInToolbar">
+        <el-button size="small" type="primary" @click="reconnect">重新连接</el-button>
+        <el-button v-if="!shareToken" size="small" @click="reconnectPlainSsh">改用普通 SSH</el-button>
+      </template>
     </div>
   </div>
 </template>
@@ -118,11 +120,13 @@ const props = defineProps({
   encoding: { type: String, default: 'UTF-8' },
   currentPath: { type: String, default: '' },
   active: { type: Boolean, default: true },
-  paused: { type: Boolean, default: false }
+  paused: { type: Boolean, default: false },
+  connectionActionsInToolbar: { type: Boolean, default: false }
 })
 
 const emit = defineEmits([
   'ready',
+  'connecting',
   'disconnected',
   'connection-error',
   'size-change',
@@ -208,6 +212,42 @@ let resizeQueued = false
 let resizeForced = false
 let resizeGeneration = 0
 let layoutActive = true
+let savedViewport = null
+
+function saveViewport() {
+  if (!terminal || savedViewport) return
+  const buffer = terminal.buffer.active
+  const followBottom = buffer.viewportY >= buffer.baseY
+  savedViewport = {
+    type: buffer.type,
+    line: buffer.viewportY,
+    followBottom,
+    // xterm markers follow the same content through scrollback trimming and reflow.
+    marker: !followBottom && buffer.type === 'normal'
+      ? terminal.registerMarker(buffer.viewportY - buffer.baseY - buffer.cursorY) : null
+  }
+}
+
+function clearSavedViewport() {
+  savedViewport?.marker?.dispose()
+  savedViewport = null
+}
+
+function restoreViewport() {
+  if (!terminal || !savedViewport) return
+  const saved = savedViewport
+  if (terminal.buffer.active.type === saved.type) {
+    const buffer = terminal.buffer.active
+    const line = saved.followBottom ? buffer.baseY : (saved.marker?.isDisposed ? 0 : (saved.marker?.line ?? saved.line))
+    // xterm skips scroll events at an unchanged position, leaving hidden DOM
+    // geometry stale. A round trip through its public API resynchronizes it.
+    if (buffer.baseY > 0 && buffer.viewportY === line) terminal.scrollLines(line > 0 ? -1 : 1)
+    if (saved.followBottom) terminal.scrollToBottom()
+    else terminal.scrollToLine(line)
+    terminal.refresh(0, terminal.rows - 1)
+  }
+  clearSavedViewport()
+}
 
 function createDecoder(enc) {
   try {
@@ -490,12 +530,13 @@ function measureTerminal() {
   fitAddon.fit()
   if (!validSize(terminal)) return false
   lastMeasuredSize = { cols: terminal.cols, rows: terminal.rows }
+  restoreViewport()
   return true
 }
 
 // Wait for Vue's layout, then merge observer/visibility/ready events into one frame.
 function requestResize(force = false, retries = 2) {
-  if (!terminal || !dataBound || !ws || ws.readyState !== WebSocket.OPEN || !canMeasureTerminal()) return
+  if (!terminal || !canMeasureTerminal() || (!savedViewport && (!dataBound || !ws || ws.readyState !== WebSocket.OPEN))) return
   resizeForced ||= force
   if (resizeQueued || resizeFrame !== null) return
   resizeQueued = true
@@ -505,7 +546,7 @@ function requestResize(force = false, retries = 2) {
     resizeQueued = false
     resizeFrame = requestAnimationFrame(() => {
       resizeFrame = null
-      if (generation !== resizeGeneration || !dataBound || !ws || ws.readyState !== WebSocket.OPEN || !canMeasureTerminal()) return
+      if (generation !== resizeGeneration || !canMeasureTerminal()) return
       const forced = resizeForced
       resizeForced = false
       if (!measureTerminal()) {
@@ -513,6 +554,7 @@ function requestResize(force = false, retries = 2) {
         if (retries > 0) requestResize(forced, retries - 1)
         return
       }
+      if (!dataBound || !ws || ws.readyState !== WebSocket.OPEN) return
       const size = lastMeasuredSize
       if (!forced && lastSentSize?.cols === size.cols && lastSentSize?.rows === size.rows) return
       sendJson({ type: 'resize', ...size })
@@ -573,6 +615,7 @@ function closeConnection() {
 }
 
 function disposeTerminal() {
+  clearSavedViewport()
   terminalSelection?.dispose()
   terminalSelection = null
   closeConnection()
@@ -660,6 +703,7 @@ function connect() {
   tmuxVersion.value = ''
   tmuxVersionSource.value = 'unknown'
   statusMessage.value = '连接中…'
+  emit('connecting')
   dataBound = false
 
   terminal = new Terminal({
@@ -819,7 +863,8 @@ defineExpose({
   clearScreen,
   focusTerminal,
   disconnect,
-  reconnect
+  reconnect,
+  reconnectPlainSsh
 })
 
 onMounted(() => {
@@ -846,10 +891,13 @@ onBeforeUnmount(() => {
 function onWindowResize() { requestResize() }
 function restoreTerminalSize() { requestResize(true) }
 onActivated(() => { layoutActive = true; requestResize(true) })
-onDeactivated(() => { layoutActive = false; cancelResize() })
+onDeactivated(() => { saveViewport(); layoutActive = false; cancelResize() })
+// Capture xterm's buffer before v-show collapses the DOM and its scrollbars.
+watch(() => props.active, active => {
+  if (!active) { saveViewport(); cancelResize() }
+}, { flush: 'sync' })
 watch(() => props.active, active => {
   if (active) requestResize(true)
-  else cancelResize()
 }, { flush: 'post' })
 
 watch(

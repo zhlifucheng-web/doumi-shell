@@ -21,7 +21,7 @@ test('uses the local backend and exact trusted release/download addresses', asyn
   assert.match(result.windowsUrl, /Doumi\.Shell-1.0.18.msi$/)
 })
 test('rate limits and server failures reject instead of returning up-to-date', async () => {
-  await assert.rejects(requestLatestRelease('1.0.17', { fetchImpl: async () => reply({error:'Gitee HTTP 429，请稍后重试'}) }), /429/)
+  await assert.rejects(requestLatestRelease('1.0.17', { fetchImpl: async () => reply({error:'GitHub HTTP 429，请稍后重试'}) }), /429/)
   await assert.rejects(requestLatestRelease('1.0.17', { fetchImpl: async () => ({ok:false,status:502}) }), /HTTP 502/)
   await assert.rejects(requestLatestRelease('1.0.17', { fetchImpl: async () => ({ok:true,json:async()=>({success:false,code:500,message:'服务错误'})}) }), /服务错误/)
 })

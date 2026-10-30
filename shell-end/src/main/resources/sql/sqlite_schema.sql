@@ -107,3 +107,22 @@ CREATE TABLE IF NOT EXISTS ssh_backup_config (
   last_message TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+
+-- RDP profiles reuse host addresses, independently of SSH accounts and ports.
+CREATE TABLE IF NOT EXISTS rdp_connection (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  host_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  username TEXT NOT NULL,
+  domain TEXT NOT NULL DEFAULT '',
+  port INTEGER NOT NULL DEFAULT 3389,
+  ignore_certificate INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  secret_enc BLOB NOT NULL,
+  remark TEXT NOT NULL DEFAULT '',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  FOREIGN KEY (host_id) REFERENCES ssh_host(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_rdp_connection_host ON rdp_connection(host_id);

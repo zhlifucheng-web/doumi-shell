@@ -1,7 +1,6 @@
 <template>
   <el-scrollbar class="page-scroll">
     <div class="remote-backup">
-      <h2>定时远程备份</h2>
       <p>自动将服务器连接信息（分组、主机、账户凭据）、运维脚本与监控配置定时备份并上传到指定的 MinIO 或 SFTP 服务器上。</p>
 
       <el-card v-if="loaded" class="status-card" shadow="never">

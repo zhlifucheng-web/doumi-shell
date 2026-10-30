@@ -177,14 +177,22 @@ export function detectFileEncoding(buffer) {
     new TextDecoder('utf-8', { fatal: true }).decode(bytes)
     return 'UTF-8'
   } catch {
-    // If not valid UTF-8, check if valid GB18030 / GBK
-    try {
-      new TextDecoder('gbk', { fatal: true }).decode(bytes)
-      return 'GBK'
-    } catch {
-      try { new TextDecoder('gb18030', { fatal: true }).decode(bytes); return 'GB18030' }
-      catch { return 'UTF-8' }
+    // Some runtimes alias GBK to GB18030, so validate GBK's byte grammar first.
+    let gbkBytes = true
+    for (let i = 0; i < bytes.length; i++) {
+      const lead = bytes[i]
+      if (lead <= 0x80) continue
+      const trail = bytes[++i]
+      if (lead > 0xfe || trail === undefined || trail < 0x40 || trail === 0x7f || trail > 0xfe) {
+        gbkBytes = false; break
+      }
     }
+    if (gbkBytes) {
+      try { new TextDecoder('gbk', { fatal: true }).decode(bytes); return 'GBK' }
+      catch { /* Try GB18030 below. */ }
+    }
+    try { new TextDecoder('gb18030', { fatal: true }).decode(bytes); return 'GB18030' }
+    catch { return 'UTF-8' }
   }
 }
 

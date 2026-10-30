@@ -11,4 +11,41 @@ export DOUMI_PORT="${DOUMI_PORT:-80}"
 JAVA_BIN="java"
 if [[ -x "$ROOT/runtime/bin/java" ]]; then JAVA_BIN="$ROOT/runtime/bin/java"; fi
 echo "Open http://localhost:${DOUMI_PORT}/"
-exec "$JAVA_BIN" -jar "$JAR"
+DOUMI_GUACD_MODE="${DOUMI_GUACD_MODE:-external}"
+case "$DOUMI_GUACD_MODE" in
+    external) exec "$JAVA_BIN" -jar "$JAR" "$@" ;;
+    native|docker) ;;
+    *) echo 'DOUMI_GUACD_MODE must be external, native or docker.' >&2; exit 1 ;;
+esac
+# Keep the default SSH-only path independent of the helper, guacd and Docker.
+source "$SCRIPT_DIR/guacd-helper.sh"
+JAVA_PID=''
+SIGNAL_RECEIVED=0
+doumi_signal() {
+    SIGNAL_RECEIVED=1
+    if [[ -n "$JAVA_PID" ]]; then
+        kill -"$1" "$JAVA_PID" 2>/dev/null || true
+    else
+        exit "$2"
+    fi
+}
+trap doumi_guacd_stop EXIT
+trap 'doumi_signal TERM 143' TERM
+# Async children inherit ignored SIGINT in noninteractive Bash. TERM lets the JVM
+# run its shutdown hooks reliably for Ctrl-C too. Keep the JVM's resulting status.
+trap 'doumi_signal TERM 130' INT
+trap 'doumi_signal HUP 129' HUP
+doumi_guacd_start
+export DOUMI_LAUNCHER_PID=$$
+"$JAVA_BIN" -jar "$JAR" "$@" &
+JAVA_PID=$!
+set +e
+wait "$JAVA_PID"
+status=$?
+# Bash wait is interrupted by trapped signals; wait again for the actual Java result.
+while ((SIGNAL_RECEIVED)); do
+    SIGNAL_RECEIVED=0
+    wait "$JAVA_PID"
+    status=$?
+done
+exit "$status"

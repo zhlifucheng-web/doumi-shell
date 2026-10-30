@@ -1,5 +1,11 @@
 # 更新记录
 
+## 待发布
+
+- Windows / Linux 正式安装包支持一键更新、SHA-256 校验、离线备份和失败恢复。
+- 可配置 GitHub Release 加速代理，更新操作使用独立管理密钥。
+- GitHub Actions 自动测试和打包，版本标签触发双平台构建与完整 Release 发布。
+
 ## 1.0.62 · 2026-10-29
 
 - 修正 GitHub Release 的 Windows 安装包名称、校验文件及更新下载链接。

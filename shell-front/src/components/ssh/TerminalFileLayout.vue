@@ -6,7 +6,7 @@
       class="right-workspace"
       :class="{ collapsed }"
       :style="{
-        gridTemplateRows: collapsed
+        gridTemplateRows: hideFiles ? 'minmax(0, 1fr)' : collapsed
           ? 'minmax(0, 1fr) 32px'
           : `minmax(0, ${ratio}fr) 6px minmax(0, ${100 - ratio}fr)`
       }"
@@ -20,7 +20,7 @@
 
       <!-- 拖拽分界条 (Splitter) -->
       <div
-        v-if="!collapsed"
+        v-if="!hideFiles && !collapsed"
         class="splitter"
         role="separator"
         tabindex="0"
@@ -44,7 +44,7 @@
       />
 
       <!-- SFTP 文件面板 (Integrated SFTP) -->
-      <section class="files-slot" :class="{ 'files-collapsed': collapsed }" aria-label="文件管理">
+      <section v-if="!hideFiles" class="files-slot" :class="{ 'files-collapsed': collapsed }" aria-label="文件管理">
         <div class="files-heading">
           <div class="heading-left">
             <span class="files-title">
@@ -98,6 +98,8 @@ import { ref, watch } from 'vue'
 import { useLayoutPreference } from '@/composables/useLayoutPreference'
 import { storeToRefs } from 'pinia'
 import { useWorkspaceStore } from '@/stores/workspace'
+
+defineProps({ hideFiles: Boolean })
 
 const workspace = ref(null)
 const { fileLocation } = storeToRefs(useWorkspaceStore())

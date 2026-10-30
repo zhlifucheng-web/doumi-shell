@@ -39,13 +39,16 @@ try {
     $outputPath = [IO.Path]::GetFullPath($outputPath)
     New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
     Copy-Item -LiteralPath (Join-Path $backendBuild 'shell-end-1.0.0-SNAPSHOT.jar') -Destination (Join-Path $outputPath 'doumi-shell.jar') -Force
-    foreach ($scriptName in @('run-windows.bat', 'run-linux.sh')) {
+    Copy-Item -LiteralPath (Join-Path $backendBuild 'shell-end-1.0.0-SNAPSHOT-updater.jar') -Destination (Join-Path $outputPath 'doumi-updater.jar') -Force
+    foreach ($scriptName in @('run-windows.bat', 'run-linux.sh', 'guacd-helper.sh')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $scriptName) -Destination $outputPath -Force
     }
     # Windows checkouts can use CRLF; Bash launchers must always ship with LF and no BOM.
-    $linuxScriptPath = Join-Path $outputPath 'run-linux.sh'
-    $linuxScript = [IO.File]::ReadAllText($linuxScriptPath).Replace("`r`n", "`n")
-    [IO.File]::WriteAllText($linuxScriptPath, $linuxScript, [Text.UTF8Encoding]::new($false))
+    foreach ($scriptName in @('run-linux.sh', 'guacd-helper.sh')) {
+        $linuxScriptPath = Join-Path $outputPath $scriptName
+        $linuxScript = [IO.File]::ReadAllText($linuxScriptPath).Replace("`r`n", "`n")
+        [IO.File]::WriteAllText($linuxScriptPath, $linuxScript, [Text.UTF8Encoding]::new($false))
+    }
     Copy-Item -LiteralPath (Join-Path $Root 'shell-end/config/application.yml.example') -Destination (Join-Path $outputPath 'config.example.yml') -Force
     Copy-Item -LiteralPath (Join-Path $Root 'README.md') -Destination $outputPath -Force
     Copy-Item -LiteralPath (Join-Path $Root 'LICENSE') -Destination (Join-Path $outputPath 'LICENSE') -Force

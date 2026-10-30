@@ -1,5 +1,6 @@
 package com.doumiot.sshconsole.ai;
 
+import com.doumiot.sshconsole.config.SshConsoleProperties;
 import com.doumiot.sshconsole.service.SshGroupService;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.*;
@@ -20,6 +21,7 @@ class AiWorkflowTest {
         tools.initialize();chats=new AiChatService();
         ReflectionTestUtils.setField(chats,"providers",providers);ReflectionTestUtils.setField(chats,"completion",completion);
         ReflectionTestUtils.setField(chats,"tools",tools);ReflectionTestUtils.setField(chats,"files",files);
+        ReflectionTestUtils.setField(chats,"properties",new SshConsoleProperties());
         when(providers.credentials(anyString())).thenReturn(new AiProviderService.Credentials());
     }
     @AfterEach void close(){chats.close();files.close();}

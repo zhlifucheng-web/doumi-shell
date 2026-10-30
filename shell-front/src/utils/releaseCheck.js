@@ -15,7 +15,7 @@ export function hasNewerVersion(version, current) {
 
 export async function requestLatestRelease(current, { apiBase = '', refresh = false, fetchImpl = fetch } = {}) {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 20000)
+  const timer = setTimeout(() => controller.abort(), 35000)
   try {
     const response = await fetchImpl(`${apiBase}/api/ssh-console/releases/latest${refresh ? '?refresh=true' : ''}`, {
       cache: 'no-store', signal: controller.signal

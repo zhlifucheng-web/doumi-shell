@@ -1,7 +1,22 @@
 # 复制为 jar 同级 config/application.yml（可选）
 doumi:
+  update:
+    # 容器/systemd 等托管部署请设为 false，使用部署管理工具更新。
+    enabled: ${DOUMI_UPDATE_ENABLED:true}
+    # 可选下载地址前缀，如 https://gh-proxy.com/；留空直连。页面保存的设置优先。
+    proxy: ${DOUMI_UPDATE_PROXY:}
+    # 留空时在数据目录 updates/admin-token 自动生成，不要提交真实密钥。
+    token: ${DOUMI_UPDATE_TOKEN:}
+
   storage:
     data-dir: ./data
+
+  rdp:
+    enabled: ${DOUMI_RDP_ENABLED:true}
+    guacd-host: ${DOUMI_GUACD_HOST:127.0.0.1}
+    guacd-port: ${DOUMI_GUACD_PORT:4822}
+    max-sessions: 20
+    idle-timeout-minutes: 30
 
   ssh-console:
     # 留空时自动在 data 目录生成并持久化 master.key；备份数据时请保留该文件。

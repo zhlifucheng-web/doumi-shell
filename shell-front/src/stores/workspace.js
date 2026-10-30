@@ -7,6 +7,7 @@ const defaultBackground = () => ({ color: '#eaf0f8', image: '', opacity: 90, ena
 
 export const useWorkspaceStore = defineStore('workspace', () => {
   const managedServer = ref(null)
+  const activeDesktop = ref(null)
   const fileLocation = ref(null)
   // Active SFTP listing and viewer callback are session-only, never persisted.
   const fileSearchContext = shallowRef(null)
@@ -93,6 +94,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   initialize()
   return {
     managedServer,
+    activeDesktop,
     fileLocation,
     fileSearchContext,
     preference,

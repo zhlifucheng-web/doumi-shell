@@ -269,7 +269,7 @@ async function loadHostAccounts() {
         if (child.nodeType === 'GROUP') await visitGroup(child, path)
         else if (child.nodeType === 'HOST') {
           const rows = await fetchTreeChildren('HOST', child.id)
-          for (const account of rows) if (Number(account.extra?.enabled) !== 0) accounts.push({
+          for (const account of rows) if (account.nodeType === 'ACCOUNT' && Number(account.extra?.enabled) !== 0) accounts.push({
             accountId: account.id, hostId: child.id, username: account.label,
             name: child.label, address: child.extra?.host || '', port: child.extra?.port || 22,
             label: `${path.join(' / ')} / ${child.label} (${child.extra?.endpoint || child.extra?.host}) · ${account.label}`
