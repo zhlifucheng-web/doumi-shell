@@ -1,6 +1,8 @@
 package com.doumiot.sshconsole.ssh;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -8,6 +10,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Executes the generated POSIX commands; only external tmux/ps are controlled fixtures. */
+@DisabledOnOs(OS.WINDOWS)
 class SshTmuxMouseCommandTest {
     private static final byte[] WHEEL = "\033[M`!!".getBytes(StandardCharsets.UTF_8);
     private static final byte[] UP = "\033[A".getBytes(StandardCharsets.UTF_8);

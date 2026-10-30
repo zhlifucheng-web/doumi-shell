@@ -57,6 +57,7 @@ if kind == 'docker':
             except ProcessLookupError: pass
 '''
 
+@unittest.skipUnless(os.name == 'posix', 'Linux launcher process and signal tests require a POSIX host')
 class GatewayLauncherTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

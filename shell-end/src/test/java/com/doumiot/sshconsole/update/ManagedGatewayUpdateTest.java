@@ -13,7 +13,7 @@ class ManagedGatewayUpdateTest {
         assertEquals(-1,UpdateService.managedLauncherPid("docker","456",123));
         assertEquals(-1,UpdateService.managedLauncherPid("docker","bad",123));
         List<String> java=Arrays.asList("/jdk/bin/java","-jar","/install dir/doumi-shell.jar");
-        assertEquals(Arrays.asList("bash","/install dir/run-linux.sh"),UpdateService.restartCommand(Path.of("/install dir"),java,true));
+        assertEquals(Arrays.asList("bash",Path.of("/install dir/run-linux.sh").toString()),UpdateService.restartCommand(Path.of("/install dir"),java,true));
         assertEquals(java,UpdateService.restartCommand(Path.of("/install dir"),java,false));
     }
 }

@@ -1,6 +1,8 @@
 package com.doumiot.sshconsole.ssh;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.*;
@@ -76,7 +78,8 @@ class SshDirectCopyTest {
         assertEquals("直连复制超时",failure.getCause().getMessage());
         verify(remote.command).signal(Signal.TERM);verify(remote.session).close();
     }
-    @Test void nestedShellQuotingCopiesLiteralNamesWithoutExecutingThem() throws Exception {
+    @Test @DisabledOnOs(OS.WINDOWS)
+    void nestedShellQuotingCopiesLiteralNamesWithoutExecutingThem() throws Exception {
         Path bin=Files.createDirectory(root.resolve("bin"));
         Path fake=bin.resolve("ssh");
         Files.write(fake,("#!/bin/sh\nfor arg do last=$arg; done\nexec sh -c \"$last\"\n").getBytes(StandardCharsets.UTF_8));
