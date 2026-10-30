@@ -3,6 +3,7 @@ package com.doumiot.sshconsole.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.doumiot.sshconsole.crypto.CredentialCipher;
+import com.doumiot.sshconsole.rdp.RdpConnectionService;
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
 import com.doumiot.sshconsole.entity.*;
 import com.doumiot.sshconsole.mapper.*;
@@ -28,6 +29,7 @@ public class SshConfigurationService {
     @Resource private SshMonitorConfigService monitorConfigs;
     @Resource private CredentialCipher cipher;
     @Resource private ObjectMapper json;
+    @Resource private RdpConnectionService rdpConnections;
 
     @Data
     public static class BackupAccount extends SshAccountService.SshAccountSaveRequest {
@@ -38,6 +40,7 @@ public class SshConfigurationService {
         private List<SshGroup> groups = new ArrayList<>();
         private List<SshHost> hosts = new ArrayList<>();
         private List<BackupAccount> accounts = new ArrayList<>();
+        private List<RdpConnectionService.BackupConnection> rdpConnections = new ArrayList<>();
         private List<SshScriptService.SshScriptVO> scripts = new ArrayList<>();
         private Map<Long, JsonNode> monitorSettings = new LinkedHashMap<>();
     }
@@ -52,6 +55,7 @@ public class SshConfigurationService {
             saved.setSecret(accountService.loadSecret(account));
             snapshot.getAccounts().add(saved);
         }
+        snapshot.setRdpConnections(rdpConnections.exportAllSnapshots());
         snapshot.setScripts(scriptService.listForHost(null));
         snapshot.setMonitorSettings(monitorConfigs.exportAll());
         byte[] bytes = json.writeValueAsBytes(snapshot);
@@ -62,9 +66,10 @@ public class SshConfigurationService {
     public Map<String, Integer> importAll(ConfigurationArchive.Archive archive, String password) throws Exception {
         Snapshot snapshot = json.readValue(ConfigurationArchive.decrypt(archive, password), Snapshot.class);
         if (snapshot.getGroups() == null || snapshot.getHosts() == null || snapshot.getAccounts() == null
-                || snapshot.getScripts() == null || snapshot.getMonitorSettings() == null) throw new IllegalArgumentException("配置列表不能为空");
+                || snapshot.getScripts() == null || snapshot.getMonitorSettings() == null || snapshot.getRdpConnections() == null) throw new IllegalArgumentException("配置列表不能为空");
         Map<Long, Long> groupIds = new HashMap<>(), hostIds = new HashMap<>(), accountIds = new HashMap<>();
         Set<Long> scriptIds = new HashSet<>();
+        Map<Long,Long> rdpIds = new HashMap<>();
         List<Long> insertedGroups = new ArrayList<>(), insertedHosts = new ArrayList<>(), insertedAccounts = new ArrayList<>(), insertedScripts = new ArrayList<>();
         String suffix = " (导入 " + UUID.randomUUID().toString().substring(0, 8) + ")";
         List<SshGroup> pending = new ArrayList<>(snapshot.getGroups());
@@ -96,6 +101,14 @@ public class SshConfigurationService {
             SshHost created = hostService.create(request);
             hostIds.put(old.getId(), created.getId());
             insertedHosts.add(created.getId());
+        }
+        for (RdpConnectionService.BackupConnection old : snapshot.getRdpConnections()) {
+            assertNewId(old == null ? null : old.getId(), rdpIds);
+            if (old.getId() < 1) throw new IllegalArgumentException("远程桌面配置 ID 无效");
+            RdpConnectionService.SaveRequest request = json.convertValue(old, RdpConnectionService.SaveRequest.class);
+            request.setHostId(reference(hostIds, old.getHostId(), "远程桌面所属主机"));
+            RdpConnectionService.ConnectionVO created = rdpConnections.create(request);
+            rdpIds.put(old.getId(), created.getId());
         }
         for (BackupAccount old : snapshot.getAccounts()) {
             assertNewId(old == null ? null : old.getId(), accountIds);
@@ -130,6 +143,7 @@ public class SshConfigurationService {
         counts.put("groups", insertedGroups.size()); counts.put("hosts", insertedHosts.size());
         counts.put("accounts", insertedAccounts.size()); counts.put("scripts", insertedScripts.size());
         counts.put("monitorConfigs", snapshot.getMonitorSettings().size());
+        counts.put("rdpConnections", rdpIds.size());
         return counts;
     }
 

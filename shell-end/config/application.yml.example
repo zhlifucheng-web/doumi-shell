@@ -11,6 +11,13 @@ doumi:
   storage:
     data-dir: ./data
 
+  rdp:
+    enabled: ${DOUMI_RDP_ENABLED:true}
+    guacd-host: ${DOUMI_GUACD_HOST:127.0.0.1}
+    guacd-port: ${DOUMI_GUACD_PORT:4822}
+    max-sessions: 20
+    idle-timeout-minutes: 30
+
   ssh-console:
     # 留空时自动在 data 目录生成并持久化 master.key；备份数据时请保留该文件。
     credential-master-key: ${SSH_CONSOLE_MASTER_KEY:}

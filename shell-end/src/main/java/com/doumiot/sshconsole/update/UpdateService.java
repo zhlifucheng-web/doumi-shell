@@ -162,7 +162,9 @@ public class UpdateService {
                 helperJava=job.resolve("runtime/bin/java.exe").toString();
             }
             Properties p=new Properties();p.setProperty("install.root",root.toString());p.setProperty("data.root",data.toString());
-            p.setProperty("parent.pid",Long.toString(ProcessHandle.current().pid()));p.setProperty("version",expectedVersion);p.setProperty("previous.version",version());
+            long launcherPid=managedLauncherPid(System.getenv("DOUMI_GUACD_MODE"),System.getenv("DOUMI_LAUNCHER_PID"),
+                    ProcessHandle.current().parent().map(ProcessHandle::pid).orElse(-1L));
+            p.setProperty("parent.pid",Long.toString(launcherPid>0?launcherPid:ProcessHandle.current().pid()));p.setProperty("version",expectedVersion);p.setProperty("previous.version",version());
             p.setProperty("platform",windows?"windows":"linux");
             if(windows)p.setProperty("rollback.msi",job.resolve("Doumi.Shell-"+version()+".msi").toString());p.setProperty("artifact",artifact.toString());p.setProperty("app.jar",jar().toString());
             p.setProperty("working.directory",System.getProperty("user.dir"));p.setProperty("health.id",UUID.randomUUID().toString());
@@ -172,6 +174,7 @@ public class UpdateService {
             p.setProperty("health.url","http://"+address+":"+env.getProperty("local.server.port",env.getProperty("server.port","80"))+env.getProperty("server.servlet.context-path","")+"/api/ssh-console/update/health");
             List<String> restart=new ArrayList<>();restart.add(Path.of(System.getProperty("java.home"),"bin",windows?"java.exe":"java").toString());
             restart.addAll(ManagementFactory.getRuntimeMXBean().getInputArguments());restart.add("-Ddoumi.desktop.open-browser=false");restart.add("-jar");restart.add(jar().toString());
+            restart=restartCommand(root,restart,!windows&&launcherPid>0);
             restart.addAll(restartArguments(arguments.getSourceArgs(),data,env.getProperty("local.server.port",env.getProperty("server.port","80"))));
             p.setProperty("restart.count",Integer.toString(restart.size()));for(int i=0;i<restart.size();i++)p.setProperty("restart."+i,restart.get(i));
             UpdateFiles.store(job.resolve("job.properties"),p);
@@ -197,6 +200,15 @@ public class UpdateService {
             if(!handedOff){maintenance.end();scripts.endUpdate();}
             preparing=false;try{lock.release();channel.close();}catch(IOException ignored){}
         }
+    }
+    /** Only trust a managed launcher that is the current JVM's actual parent. */
+    public static long managedLauncherPid(String mode,String value,long parentPid) {
+        if(!"native".equals(mode)&&!"docker".equals(mode))return -1;
+        try {long pid=Long.parseLong(value);return pid>0&&pid==parentPid?pid:-1;}
+        catch(NumberFormatException error){return -1;}
+    }
+    public static List<String> restartCommand(Path root,List<String> javaCommand,boolean managed) {
+        return managed?new ArrayList<>(List.of("bash",root.resolve("run-linux.sh").toString())):new ArrayList<>(javaCommand);
     }
     public static List<String> restartArguments(String[] original,Path data,String port) {
         List<String> result=new ArrayList<>();

@@ -21,7 +21,7 @@ public final class UpdateFiles {
         if(!MessageDigest.isEqual(digest.digest(),HexFormat.of().parseHex(parts[0])))throw new IOException("安装包 SHA-256 校验失败");
     }
     public static boolean programFile(String name) {
-        return Set.of("doumi-shell.jar","doumi-updater.jar","run-linux.sh","README.md","LICENSE","config.example.yml").contains(name)
+        return Set.of("doumi-shell.jar","doumi-updater.jar","run-linux.sh","guacd-helper.sh","README.md","LICENSE","config.example.yml").contains(name)
                 ||name.startsWith("docs/");
     }
     public static void extractLinux(Path archive,Path target,String version) throws IOException {
@@ -51,7 +51,7 @@ public final class UpdateFiles {
                         byte[] buffer=new byte[65536];long left=size;
                         while(left>0){int n=in.read(buffer,0,(int)Math.min(left,buffer.length));if(n<0)throw new EOFException();out.write(buffer,0,n);left-=n;}
                     }
-                    if(relative.equals("run-linux.sh")&&!output.toFile().setExecutable(true,false))throw new IOException("无法设置启动脚本权限");
+                    if((relative.equals("run-linux.sh")||relative.equals("guacd-helper.sh"))&&!output.toFile().setExecutable(true,false))throw new IOException("无法设置启动脚本权限");
                 } else throw new IOException("安装包包含链接或不支持的文件类型");
                 long padding=(512-size%512)%512;in.skipNBytes(padding);
             }

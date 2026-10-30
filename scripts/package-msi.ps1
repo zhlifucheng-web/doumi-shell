@@ -57,6 +57,9 @@ try {
     Copy-Item -LiteralPath (Join-Path $Root 'docs') -Destination $inputDirectory -Recurse -Force
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'doumi-shell-windows.cmd') `
         -Destination (Join-Path $inputDirectory 'Start Doumi Shell (Java).cmd') -Force
+    Copy-Item -LiteralPath (Join-Path $Root 'shell-end/config/application.yml.example') `
+        -Destination (Join-Path $inputDirectory 'config.example.yml') -Force
+    # Documentation/configure-only on Windows: guacd itself runs on a separate Linux gateway.
     $resourceDirectory = Join-Path $buildDirectory 'jpackage-resources'
     & (Join-Path $PSScriptRoot 'prepare-msi-resources.ps1') -JdkHome $JdkHome -Destination $resourceDirectory
     $jpackageArgs = @(

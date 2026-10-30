@@ -25,6 +25,10 @@ class LinuxPackageTest(unittest.TestCase):
             with tarfile.open(package) as archive:
                 self.assertIn(f'doumi-shell-{version}/doumi-updater.jar', archive.getnames())
                 self.assertFalse(any('/data/' in name for name in archive.getnames()))
+                helper = archive.getmember(f'doumi-shell-{version}/guacd-helper.sh')
+                self.assertTrue(helper.mode & 0o111)
+                self.assertNotIn(b'\r', archive.extractfile(helper).read())
+                self.assertIn(f'doumi-shell-{version}/docs/rdp.md', archive.getnames())
             self.assertEqual(hashlib.sha256(package.read_bytes()).hexdigest(), package.with_name(package.name+'.sha256').read_text().split()[0])
             with zipfile.ZipFile(out / 'doumi-shell.jar', 'w') as jar:
                 jar.writestr('BOOT-INF/classes/static/version.json', '{"version":"0.0.0"}')

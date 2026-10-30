@@ -10,7 +10,7 @@ Doumi Shell 是一款支持 Windows 和 Linux 的 SSH 运维工作台。双击�
 
 Windows MSI 自带运行环境，Linux 部署需要 Java 17；访问端只需浏览器，无需安装 Java、Node.js 或 Doumi Shell。程序升级在部署机器上完成，其他设备重新打开网页即可使用新版界面。
 
-[下载安装](https://github.com/zhlifucheng-web/doumi-shell/releases) · [使用教程](docs/user-guide.md) · [AI API](docs/ai-api.md) · [非商业许可](LICENSE)
+[下载安装](https://github.com/zhlifucheng-web/doumi-shell/releases) · [使用教程](docs/user-guide.md) · [Windows 远程桌面](docs/rdp.md) · [AI API](docs/ai-api.md) · [非商业许可](LICENSE)
 
 ## 亮点功能
 
@@ -118,6 +118,10 @@ AI 助手可读取服务器资源、排查进程、执行命令和管理文件�
 点击顶栏 **AI 助手 → 设置 → 厂商配置**，填写名称、Base URL、模型和 API Key。Base URL 通常包含 `/v1`，例如 `https://你的厂商地址/v1`；也支持完整的 `/chat/completions` 地址。模型需要支持 `tools` / function calling。
 
 对话可以查看服务器资源、文件、进程、存储和脚本，创建及修改分组、主机与账户，也可以执行命令、编辑文件、管理定时任务及导入导出配置。
+
+## Windows 远程桌面
+
+通过浏览器连接 Windows RDP，支持独立连接配置、多个桌面标签及全屏。需要可达的 Linux guacd 网关；Linux 启动脚本可按需管理本机 guacd 或 Docker 容器，Windows MSI 使用外部网关。仅使用 SSH 无需安装网关或 Docker。详见[远程桌面配置](docs/rdp.md)。
 
 ## 数据位置
 

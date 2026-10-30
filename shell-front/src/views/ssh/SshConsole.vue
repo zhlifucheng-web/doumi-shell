@@ -253,6 +253,7 @@
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item command="edit">编辑</el-dropdown-item>
+                      <el-dropdown-item v-if="data.nodeType === 'HOST' || data.nodeType === 'ACCOUNT'" command="rdp">远程桌面</el-dropdown-item>
                       <el-dropdown-item v-if="data.nodeType === 'ACCOUNT'" command="terminal">新建终端</el-dropdown-item>
                       <el-dropdown-item v-if="data.nodeType === 'ACCOUNT'" command="test">测试连接</el-dropdown-item>
                       <el-dropdown-item v-if="data.nodeType === 'GROUP'" command="subgroup">新建子分组</el-dropdown-item>
@@ -563,6 +564,7 @@
           <div class="detail-head">
             <h2>{{ detailTitle }}</h2>
             <div class="detail-actions">
+              <el-button v-if="detail.type === 'HOST'" :icon="Monitor" @click="openRdpHost(detail.raw)">远程桌面</el-button>
               <el-button
                 v-if="detail.type === 'HOST' && hostAccounts.length"
                 type="success"
@@ -812,11 +814,12 @@
         <span>关闭全部终端</span>
       </div>
     </div>
+    <RdpWorkspace v-if="rdpWorkspaceOpen" v-model="rdpWorkspaceOpen" :host="rdpHost" />
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -893,6 +896,17 @@ import {
   validateHostAddressRule,
   validateHostPortRule
 } from '@/utils/hostValidator'
+
+const RdpWorkspace = defineAsyncComponent(() => import('@/components/rdp/RdpWorkspace.vue'))
+const rdpWorkspaceOpen = ref(false)
+const rdpHost = ref(null)
+function openRdpHost(host) { rdpHost.value = host; rdpWorkspaceOpen.value = true }
+async function openRdpNode(data) {
+  try {
+    const hostId = data.nodeType === 'HOST' ? data.id : data.extra?.hostId || (await getAccount(data.id)).hostId
+    openRdpHost(await getHost(hostId))
+  } catch (error) { ElMessage.error(error.message || '主机加载失败') }
+}
 
 const savedAccount = readSavedSshAccount()
 const { managedServer } = storeToRefs(useWorkspaceStore())
@@ -2234,6 +2248,7 @@ async function onNodeDblClick(data) {
 
 function onNodeAction(command, data) {
   selectedNode.value = data
+  if (command === 'rdp') return openRdpNode(data)
   if (command === 'terminal') return openNewAccountTerminal(data)
   if (command === 'test') return handleTestExistingAccount(data)
   if (command === 'edit') {

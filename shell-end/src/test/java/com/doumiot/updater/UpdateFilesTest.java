@@ -23,6 +23,11 @@ class UpdateFilesTest {
   }
   assertThrows(IOException.class,()->UpdateFiles.extractLinux(tar("doumi-shell-1.0.63/doumi-shell.jar",(byte)'2',new byte[0]),dir.resolve("links"),"1.0.63"));
  }
+ @Test void gatewayHelperIsExtractedAsExecutableProgram() throws Exception {
+  Path target=dir.resolve("gateway");
+  UpdateFiles.extractLinux(tar("doumi-shell-1.0.63/guacd-helper.sh",(byte)'0',"#!/bin/bash\n".getBytes()),target,"1.0.63");
+  assertTrue(Files.isExecutable(target.resolve("guacd-helper.sh")));
+ }
  @Test void extractsOnlyPackagedProgramFiles() throws Exception {
   Path target=dir.resolve("expanded");UpdateFiles.extractLinux(tar("doumi-shell-1.0.63/doumi-shell.jar",(byte)'0',new byte[]{4,5}),target,"1.0.63");
   assertArrayEquals(new byte[]{4,5},Files.readAllBytes(target.resolve("doumi-shell.jar")));
