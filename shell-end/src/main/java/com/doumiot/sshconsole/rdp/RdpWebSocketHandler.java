@@ -14,11 +14,15 @@ import javax.annotation.PreDestroy;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Bridges Guacamole instructions, never accepting host or credential overrides from the browser. */
 @Component
 @SshConsoleEnabled
 public class RdpWebSocketHandler extends TextWebSocketHandler implements SubProtocolCapable {
+    private static final Logger log=LoggerFactory.getLogger(RdpWebSocketHandler.class);
     private static final Set<String> INPUT = new HashSet<>(Arrays.asList("key","mouse","size","sync","ack","disconnect","nop"));
     private final RdpSessionService sessions;
     private final Map<String, Bridge> bridges = new ConcurrentHashMap<>();
@@ -57,11 +61,18 @@ public class RdpWebSocketHandler extends TextWebSocketHandler implements SubProt
             if(bridge.ticket.closed.get())return;
             send(bridge,new GuacamoleInstruction("",UUID.randomUUID().toString()).toString());
             writers.execute(()->write(bridge));
-            char[] instruction;
-            while(!bridge.ticket.closed.get() && (instruction=socket.getReader().read())!=null) send(bridge,new String(instruction));
+            GuacamoleInstruction instruction;
+            while(!bridge.ticket.closed.get() && (instruction=socket.getReader().readInstruction())!=null) {
+                if("error".equals(instruction.getOpcode())) {
+                    List<String> args=instruction.getArgs();
+                    String code=args.size()>1 && args.get(1).matches("[0-9]{1,5}")?args.get(1):"unknown";
+                    bridge.reason.compareAndSet(null,"gateway-error-"+code);
+                } else if("disconnect".equals(instruction.getOpcode())) bridge.reason.compareAndSet(null,"gateway-disconnect");
+                send(bridge,instruction.toString());
+            }
         } catch(Exception error) {
             if(!bridge.ticket.closed.get()) fail(bridge,"RDP 连接失败，请检查 guacd、Windows 远程桌面、账户和证书设置",GuacamoleStatus.UPSTREAM_ERROR);
-        } finally { close(bridge); }
+        } finally { close(bridge,"gateway-eof"); }
     }
     private void write(Bridge bridge) {
         try {
@@ -84,7 +95,7 @@ public class RdpWebSocketHandler extends TextWebSocketHandler implements SubProt
             }
         } catch(Exception error) {
             if(!bridge.ticket.closed.get()) fail(bridge,"桌面输入连接已断开，请重新连接",GuacamoleStatus.UPSTREAM_ERROR);
-        } finally { close(bridge); }
+        } finally { close(bridge,"writer-ended"); }
     }
     @Override protected void handleTextMessage(WebSocketSession browser,TextMessage message) {
         Bridge bridge=bridges.get(browser.getId());
@@ -98,32 +109,39 @@ public class RdpWebSocketHandler extends TextWebSocketHandler implements SubProt
         }
     }
     private void fail(Bridge bridge,String message,GuacamoleStatus status) {
+        bridge.reason.compareAndSet(null,"bridge-error-"+status.getGuacamoleStatusCode());
         try {send(bridge,new GuacamoleInstruction("error",message,Integer.toString(status.getGuacamoleStatusCode())).toString());}catch(IOException ignored){}
-        close(bridge);
+        close(bridge,"bridge-failure");
     }
-    private void close(Bridge bridge) {
-        bridges.remove(bridge.browser.getId(),bridge);
+    private void close(Bridge bridge,String reason) {
+        bridge.reason.compareAndSet(null,reason);
+        if(!bridges.remove(bridge.browser.getId(),bridge))return;
+        // No ticket, hostname, credentials, input text or upstream error text.
+        log.info("RDP bridge closed connectionId={} reason={} queuedMessages={} queuedCharacters={} durationMs={}",
+                bridge.ticket.connectionId,bridge.reason.get(),bridge.input.size(),bridge.input.characters(),System.currentTimeMillis()-bridge.startedAt);
         sessions.cancel(bridge.ticket.token);
         bridge.input.clear();
     }
     @Override public void afterConnectionClosed(WebSocketSession browser,CloseStatus status) {
-        Bridge bridge=bridges.get(browser.getId());if(bridge!=null)close(bridge);
+        Bridge bridge=bridges.get(browser.getId());if(bridge!=null)close(bridge,"browser-close-"+status.getCode());
     }
     @Override public void handleTransportError(WebSocketSession browser,Throwable error) {
-        Bridge bridge=bridges.get(browser.getId());if(bridge!=null)close(bridge);
+        Bridge bridge=bridges.get(browser.getId());if(bridge!=null)close(bridge,"browser-transport-error");
     }
     @Scheduled(fixedDelay=1000) public void closeStalledWriters() {
         long now=System.currentTimeMillis();
-        for(Bridge bridge:bridges.values())if(bridge.writingAt!=0 && now-bridge.writingAt>10000)close(bridge);
+        for(Bridge bridge:bridges.values())if(bridge.writingAt!=0 && now-bridge.writingAt>10000)close(bridge,"gateway-write-timeout");
     }
     @PreDestroy public void shutdown() {
-        for(Bridge bridge:new ArrayList<>(bridges.values()))close(bridge);
+        for(Bridge bridge:new ArrayList<>(bridges.values()))close(bridge,"server-shutdown");
         readers.shutdownNow();writers.shutdownNow();
     }
     private static final class Bridge {
         final RdpSessionService.Ticket ticket;
         final WebSocketSession browser;
-        final BlockingQueue<String> input=new ArrayBlockingQueue<>(32);
+        final RdpInputBuffer input=new RdpInputBuffer();
+        final AtomicReference<String> reason=new AtomicReference<>();
+        final long startedAt=System.currentTimeMillis();
         volatile GuacamoleSocket socket;
         volatile long writingAt;
         Bridge(RdpSessionService.Ticket ticket,WebSocketSession browser){this.ticket=ticket;this.browser=browser;}

@@ -5,8 +5,18 @@
       <el-select v-model="resolution" aria-label="远程桌面分辨率" class="rdp-resolution" :disabled="status.state === 'connecting'">
         <el-option label="窗口分辨率" value="window" />
         <el-option label="1280 × 720" value="1280x720" />
+        <el-option label="1600 × 900" value="1600x900" />
         <el-option label="1920 × 1080" value="1920x1080" />
+        <el-option label="2560 × 1440" value="2560x1440" />
+        <el-option label="3840 × 2160" value="3840x2160" />
+        <el-option label="自定义" value="custom" />
       </el-select>
+      <div v-if="resolution === 'custom'" class="rdp-custom-resolution">
+        <el-input v-model="customWidth" type="number" aria-label="远程桌面宽度" :min="640" :max="3840" :step="4" />
+        <span aria-hidden="true">×</span>
+        <el-input v-model="customHeight" type="number" aria-label="远程桌面高度" :min="480" :max="2160" />
+        <el-button :disabled="status.state === 'connecting' || !customWidth || !customHeight" @click="connect">应用</el-button>
+      </div>
       <el-button @click="fit = !fit">{{ fit ? '原始大小' : '适应窗口' }}</el-button>
       <el-button :disabled="status.state !== 'connected'" @click="session.ctrlAltDelete()">Ctrl+Alt+Del</el-button>
       <el-button @click="fullscreen">全屏</el-button>
@@ -44,6 +54,7 @@ const props = defineProps({ profile: { type: Object, required: true }, active: B
 const emit = defineEmits(['edit', 'state'])
 const fullscreenError = ref('')
 const root = ref(), viewport = ref(), surface = ref(), fit = ref(true), resolution = ref('window')
+const customWidth = ref(1920), customHeight = ref(1080)
 const status = reactive({ state: 'disconnected', error: '' })
 const failure = computed(() => status.error ? describeRdpError(status.error, props.profile) : null)
 watch(() => [status.state, failure.value?.message], () => emit('state', { state: status.state, error: failure.value?.message || '' }), { immediate: true })
@@ -52,8 +63,8 @@ let display = null, keyboard = null, mouse = null, listenerScope = null, resizeO
 function releaseInput() { session.setFocused(false); keyboard?.reset(); mouse?.reset() }
 function focusDisplay() { if (props.active) surface.value?.focus({ preventScroll: true }) }
 function scaleDisplay() {
-  if (!display || !viewport.value || !display.getWidth() || !display.getHeight()) return
-  display.scale(fit.value ? Math.min(viewport.value.clientWidth / display.getWidth(), viewport.value.clientHeight / display.getHeight(), 1) : 1)
+  if (!display || !viewport.value?.clientWidth || !viewport.value?.clientHeight || !display.getWidth() || !display.getHeight()) return
+  display.scale(fit.value ? Math.min(viewport.value.clientWidth / display.getWidth(), viewport.value.clientHeight / display.getHeight()) : 1)
 }
 function updateViewport() {
   scaleDisplay(); clearTimeout(resizeTimer)
@@ -73,6 +84,7 @@ function removeDisplay() {
 }
 const session = createRdpSession({
   openTicket: openRdpSession, closeTicket: closeRdpSession, onChange: value => Object.assign(status, value),
+  scheduleMouse: callback => window.requestAnimationFrame(callback), cancelMouse: id => window.cancelAnimationFrame(id),
   createTransport(url, callbacks) {
     removeDisplay()
     const scope = trackGuacamoleListeners([window, surface.value], () => {
@@ -96,8 +108,14 @@ async function connect() {
   fullscreenError.value = ''
   releaseInput()
   await nextTick()
-  const [width, height] = resolution.value === 'window' ? [viewport.value?.clientWidth, viewport.value?.clientHeight] : resolution.value.split('x').map(Number)
-  await session.connect({ connectionId: props.profile.id, ...rdpDimensions(width, height) })
+  const [width, height] = resolution.value === 'window' ? [viewport.value?.clientWidth, viewport.value?.clientHeight]
+    : resolution.value === 'custom' ? [customWidth.value, customHeight.value] : resolution.value.split('x').map(Number)
+  const dimensions = rdpDimensions(width, height)
+  if (resolution.value === 'custom') {
+    dimensions.width = Math.round(dimensions.width / 4) * 4
+    customWidth.value = dimensions.width; customHeight.value = dimensions.height
+  }
+  await session.connect({ connectionId: props.profile.id, ...dimensions })
   session.setActive(props.active)
 }
 function disconnect() { releaseInput(); session.disconnect(); removeDisplay() }
@@ -108,7 +126,7 @@ async function fullscreen() {
 }
 watch(() => props.active, active => { session.setActive(active); if (!active) releaseInput(); else nextTick(updateViewport) })
 watch(fit, scaleDisplay)
-watch(resolution, () => { if (status.state === 'connected') connect() })
+watch(resolution, value => { if (value !== 'custom' && status.state === 'connected') connect() })
 onMounted(() => {
   disposeFocus = bindRdpFocus({ windowTarget: window, documentTarget: document, getSurface: () => surface.value, isActive: () => props.active, setFocused: value => session.setFocused(value), releaseInput })
   resizeObserver = new ResizeObserver(updateViewport); resizeObserver.observe(viewport.value)
@@ -123,11 +141,13 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.rdp-desktop { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--el-bg-color); }
+.rdp-desktop { display: flex; flex: 1; flex-direction: column; height: 100%; min-width: 0; min-height: 0; background: var(--el-bg-color); }
 .rdp-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--el-border-color); }
 .rdp-toolbar :deep(.el-button + .el-button) { margin-left: 0; }
 .rdp-status { margin-right: auto; font-size: 13px; color: var(--el-text-color-regular); }
 .rdp-resolution { width: 150px; }
+.rdp-custom-resolution { display: flex; align-items: center; gap: 6px; }
+.rdp-custom-resolution :deep(.el-input) { width: 86px; }
 .rdp-viewport { flex: 1; min-height: 0; overflow: auto; background: #15171b; position: relative; }
 .rdp-notice { margin: 0; padding: 8px 12px; color: var(--el-color-warning); font-size: 13px; }
 .rdp-recovery { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); box-sizing: border-box; width: min(420px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow: auto; padding: 20px; border: 1px solid var(--el-border-color); border-radius: 8px; color: var(--el-text-color-primary); background: var(--el-bg-color); }
@@ -138,10 +158,10 @@ onBeforeUnmount(() => {
 .rdp-error-details { margin-top: 16px; font-size: 12px; color: var(--el-text-color-secondary); }
 .rdp-error-details summary { cursor: pointer; }
 .rdp-error-details pre { white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 0; }
-.rdp-surface { width: fit-content; min-width: 1px; min-height: 1px; outline: none; }
+.rdp-surface { width: fit-content; flex-shrink: 0; min-width: 1px; min-height: 1px; outline: none; }
 .rdp-surface:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: -2px; }
 .rdp-surface :deep(> div) { transform-origin: top left; }
-.is-fitting { display: flex; align-items: center; justify-content: center; }
+.is-fitting { display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .rdp-desktop:fullscreen { width: 100vw; height: 100vh; }
 @media (max-width: 640px) { .rdp-toolbar { padding: 8px; } .rdp-toolbar :deep(.el-button) { min-height: 36px; } }
 </style>

@@ -74,3 +74,26 @@ test('active connected window resolution changes are bounded and hidden sessions
   session.setActive(false); session.resize(1920, 1080)
   assert.equal(transports[0].events.length, count)
 })
+
+test('mouse motion coalesces per frame while wheel, button and key transitions retain order', async () => {
+  const sent=[],frames=new Map();let frameId=0
+  const session=createRdpSession({openTicket:async()=>({token:'ticket'}),closeTicket:async()=>{},makeUrl:()=>'',
+    scheduleMouse:callback=>{frames.set(++frameId,callback);return frameId},cancelMouse:id=>frames.delete(id),
+    createTransport:()=>({connect(){},disconnect(){},sendMouse:state=>sent.push(['mouse',state.x,state.y,state.down,state.left]),sendKey:(...args)=>sent.push(['key',...args])})})
+  await session.connect({connectionId:1});session.setActive(true);session.setFocused(true)
+  for(let x=0;x<100;x++)session.mouse({x,y:20})
+  assert.equal(sent.length,0)
+  assert.equal(frames.size,1)
+  for(const fn of frames.values())fn();frames.clear()
+  assert.deepEqual(sent,[['mouse',99,20,false,false]])
+  session.mouse({x:100,y:20});session.mouse({x:100,y:20,down:true});session.mouse({x:100,y:20,down:false})
+  assert.deepEqual(sent.slice(-3),[['mouse',100,20,false,false],['mouse',100,20,true,false],['mouse',100,20,false,false]])
+  session.mouse({x:101,y:21});session.key(1,65)
+  assert.deepEqual(sent.slice(-2),[['mouse',101,21,false,false],['key',1,65]])
+  for(let i=0;i<20;i++){session.mouse({x:101,y:21,down:true});session.mouse({x:101,y:21,down:false})}
+  assert.equal(sent.filter(item=>item[0]==='mouse' && item[3]).length,21)
+  const count=sent.length;session.mouse({x:500,y:500});session.setFocused(false)
+  for(const fn of frames.values())fn()
+  assert.equal(sent.length,count+1) // only release the pressed key; no stale motion
+  assert.deepEqual(sent.at(-1),['key',0,65])
+})

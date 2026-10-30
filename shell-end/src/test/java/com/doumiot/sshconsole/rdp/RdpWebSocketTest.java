@@ -2,6 +2,7 @@ package com.doumiot.sshconsole.rdp;
 
 import org.apache.guacamole.io.*;
 import org.apache.guacamole.protocol.GuacamoleInstruction;
+import org.apache.guacamole.net.GuacamoleSocket;
 import org.junit.jupiter.api.*;
 import org.springframework.web.socket.*;
 import java.io.*;
@@ -14,6 +15,73 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 class RdpWebSocketTest {
+    @Test void scrollBurstDuringWriterDelayPreservesEveryWheelAndKeyTransition() throws Exception {
+        try(FakeGuacd guacd=new FakeGuacd()) {
+            RdpProperties props=new RdpProperties();props.setGuacdPort(guacd.server.getLocalPort());
+            RdpConnectionService profiles=mock(RdpConnectionService.class);
+            when(profiles.resolve(7L)).thenReturn(new RdpTarget("192.0.2.5",3389,"alice","synthetic","",false));
+            RdpSessionService sessions=spy(new RdpSessionService(props,profiles));
+            CountDownLatch opening=new CountDownLatch(1), resume=new CountDownLatch(1);
+            doAnswer(call->{
+                GuacamoleSocket socket=(GuacamoleSocket)call.callRealMethod();
+                return new GuacamoleSocket() {
+                    public GuacamoleReader getReader(){return socket.getReader();}
+                    public GuacamoleWriter getWriter(){
+                        opening.countDown();
+                        try {if(!resume.await(5,TimeUnit.SECONDS))throw new IllegalStateException("writer was not resumed");}
+                        catch(InterruptedException error){Thread.currentThread().interrupt();throw new IllegalStateException(error);}
+                        return socket.getWriter();
+                    }
+                    public boolean isOpen(){return socket.isOpen();}
+                    public void close() throws org.apache.guacamole.GuacamoleException {socket.close();}
+                };
+            }).when(sessions).open(any());
+            RdpWebSocketHandler handler=new RdpWebSocketHandler(sessions,props);
+            WebSocketSession browser=mock(WebSocketSession.class);
+            java.util.concurrent.atomic.AtomicBoolean open=new java.util.concurrent.atomic.AtomicBoolean(true);
+            when(browser.getId()).thenReturn("burst");when(browser.isOpen()).thenAnswer(call->open.get());
+            doAnswer(call->{open.set(false);return null;}).when(browser).close(any());
+            String ticket=sessions.issue(7,1280,720,96);
+            when(browser.getUri()).thenReturn(URI.create("ws://localhost/ws/ssh-console/rdp?token="+ticket));
+            try {
+                handler.afterConnectionEstablished(browser);assertTrue(opening.await(5,TimeUnit.SECONDS));
+                List<GuacamoleInstruction> expected=new ArrayList<>();
+                expected.add(new GuacamoleInstruction("key","65507","1"));
+                for(int i=0;i<100;i++) {
+                    expected.add(new GuacamoleInstruction("mouse","12","34","16"));
+                    expected.add(new GuacamoleInstruction("mouse","12","34","0"));
+                }
+                expected.add(new GuacamoleInstruction("key","65507","0"));
+                for(GuacamoleInstruction input:expected)handler.handleMessage(browser,new TextMessage(input.toString()));
+                assertTrue(open.get(),"a short scroll burst must not disconnect the desktop");
+                resume.countDown();guacd.connect.get(5,TimeUnit.SECONDS);
+                for(GuacamoleInstruction input:expected) {
+                    GuacamoleInstruction actual=guacd.input.poll(5,TimeUnit.SECONDS);
+                    assertNotNull(actual);assertEquals(input.toString(),actual.toString());
+                }
+            } finally {resume.countDown();handler.shutdown();sessions.shutdown();}
+        }
+    }
+
+    @Test void aggregateInputMemoryRemainsBoundedEvenWithFewLargeMessages() throws Exception {
+        RdpProperties props=new RdpProperties();RdpConnectionService profiles=mock(RdpConnectionService.class);
+        when(profiles.resolve(7L)).thenReturn(new RdpTarget("192.0.2.5",3389,"alice","synthetic","",false));
+        RdpSessionService sessions=spy(new RdpSessionService(props,profiles));
+        CountDownLatch opening=new CountDownLatch(1),resume=new CountDownLatch(1);
+        doAnswer(call->{opening.countDown();resume.await(5,TimeUnit.SECONDS);throw new IOException("cancelled");}).when(sessions).open(any());
+        RdpWebSocketHandler handler=new RdpWebSocketHandler(sessions,props);
+        WebSocketSession browser=mock(WebSocketSession.class);java.util.concurrent.atomic.AtomicBoolean open=new java.util.concurrent.atomic.AtomicBoolean(true);
+        when(browser.getId()).thenReturn("bounded");when(browser.isOpen()).thenAnswer(call->open.get());
+        doAnswer(call->{open.set(false);return null;}).when(browser).close(any());
+        String ticket=sessions.issue(7,1280,720,96);
+        when(browser.getUri()).thenReturn(URI.create("ws://localhost/ws/ssh-console/rdp?token="+ticket));
+        try {
+            handler.afterConnectionEstablished(browser);assertTrue(opening.await(5,TimeUnit.SECONDS));
+            String large=new GuacamoleInstruction("nop",String.join("",Collections.nCopies(60000,"x"))).toString();
+            for(int i=0;i<8;i++)handler.handleMessage(browser,new TextMessage(large));
+            assertFalse(open.get(),"aggregate queued payload must be bounded, not just message count");
+        } finally {resume.countDown();handler.shutdown();sessions.shutdown();}
+    }
     @Test void negotiatesRdpWithServerCredentialsRelaysFramesAndClosesOnCancel() throws Exception {
         try (FakeGuacd guacd=new FakeGuacd()) {
             RdpProperties props=new RdpProperties(); props.setGuacdPort(guacd.server.getLocalPort());

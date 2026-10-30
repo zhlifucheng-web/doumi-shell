@@ -11,13 +11,22 @@ export function rdpDimensions(width, height, dpi = 96) {
 }
 
 /** Owns one ticket/transport generation. A late request can never reopen a closed tab. */
-export function createRdpSession({ openTicket, closeTicket, createTransport, makeUrl = buildRdpWsUrl, onChange = () => {} }) {
+export function createRdpSession({ openTicket, closeTicket, createTransport, makeUrl = buildRdpWsUrl, onChange = () => {}, scheduleMouse, cancelMouse = () => {} }) {
   let generation = 0, transport = null, token = null, active = false, focused = false, mouseState = null, lastSize = null
+  let mouseFrame = null, pendingMouse = null
   const keys = new Set()
   const session = { state: 'disconnected', error: '', connect, disconnect, setActive, setFocused, key, mouse, releaseInput, ctrlAltDelete, resize }
   function update(state, error = '') { session.state = state; session.error = error; onChange({ state, error }) }
   function cancel(ticket) { if (ticket) { try { Promise.resolve(closeTicket(ticket)).catch(() => {}) } catch { /* Best-effort cleanup; gateway also owns timeouts. */ } } }
+  function flushMouse() {
+    if (mouseFrame !== null) cancelMouse(mouseFrame)
+    mouseFrame = null
+    const pending = pendingMouse; pendingMouse = null
+    if (pending && active && focused) transport?.sendMouse(pending)
+  }
   function releaseInput() {
+    if (mouseFrame !== null) cancelMouse(mouseFrame)
+    mouseFrame = null; pendingMouse = null
     for (const keysym of keys) transport?.sendKey(0, keysym)
     keys.clear()
     if (mouseState && ['left', 'middle', 'right', 'up', 'down'].some(button => mouseState[button])) {
@@ -60,13 +69,22 @@ export function createRdpSession({ openTicket, closeTicket, createTransport, mak
   function setFocused(value) { if (!value) releaseInput(); focused = value }
   function key(pressed, keysym) {
     if (!active || !focused || !transport) return false
+    flushMouse()
     if (pressed) keys.add(keysym); else keys.delete(keysym)
     transport.sendKey(pressed, keysym); return true
   }
   function mouse(state) {
     if (!active || !focused || !transport) return
-    mouseState = { x: state.x, y: state.y, left: !!state.left, middle: !!state.middle, right: !!state.right, up: !!state.up, down: !!state.down }
-    transport.sendMouse(mouseState)
+    const next = { x: state.x, y: state.y, left: !!state.left, middle: !!state.middle, right: !!state.right, up: !!state.up, down: !!state.down }
+    const transition = ['left', 'middle', 'right', 'up', 'down'].some(button => next[button] !== !!mouseState?.[button])
+    mouseState = next
+    // Button/wheel edges are lossless. Only redundant movement within a frame
+    // can be replaced, and it must precede the next key or button transition.
+    if (transition || !scheduleMouse) { flushMouse(); transport.sendMouse(next) }
+    else {
+      pendingMouse = next
+      if (mouseFrame === null) mouseFrame = scheduleMouse(flushMouse)
+    }
   }
   function resize(width, height) {
     if (!active || !transport || session.state !== 'connected') return
