@@ -12,11 +12,14 @@ COPY docs/ /build/docs/
 RUN npm test && npm run build
 
 FROM ${MAVEN_IMAGE} AS backend
+ARG MAVEN_MIRROR_URL=https://repo1.maven.org/maven2
+ENV MAVEN_MIRROR_URL=${MAVEN_MIRROR_URL}
 WORKDIR /build/shell-end
 COPY shell-end/pom.xml ./
+COPY deploy/maven-settings.xml /tmp/docker-maven-settings.xml
 COPY shell-end/src/ ./src/
 COPY --from=frontend /build/shell-front/dist/ ./src/main/resources/static/
-RUN --mount=type=cache,target=/root/.m2 mvn --batch-mode -e -DskipTests package
+RUN --mount=type=cache,target=/root/.m2 mvn --settings /tmp/docker-maven-settings.xml --batch-mode -e -DskipTests package
 
 FROM ${JAVA_IMAGE} AS runtime
 RUN apt-get update \
