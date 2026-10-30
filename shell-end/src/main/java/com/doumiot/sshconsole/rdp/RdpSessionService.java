@@ -65,27 +65,7 @@ public class RdpSessionService {
             ticket.transport = socket;
         }
         try {
-            socket.connect(new InetSocketAddress(properties.getGuacdHost(), properties.getGuacdPort()), 5000);
-            socket.setSoTimeout(15000); socket.setTcpNoDelay(true);
-            GuacamoleConfiguration config = new GuacamoleConfiguration();
-            config.setProtocol("rdp");
-            config.setParameter("hostname", target.getHost());
-            config.setParameter("port", Integer.toString(target.getPort()));
-            config.setParameter("username", target.getUsername());
-            config.setParameter("password", target.getPassword());
-            config.setParameter("domain", target.getDomain() == null ? "" : target.getDomain());
-            config.setParameter("security", "nla");
-            config.setParameter("ignore-cert", Boolean.toString(target.isIgnoreCertificate()));
-            config.setParameter("resize-method", "display-update");
-            config.setParameter("enable-drive", "false");
-            config.setParameter("disable-audio", "true");
-            config.setParameter("enable-audio-input", "false");
-            config.setParameter("disable-copy", "true");
-            config.setParameter("disable-paste", "true");
-            GuacamoleClientInformation info = new GuacamoleClientInformation();
-            info.setOptimalScreenWidth(ticket.width); info.setOptimalScreenHeight(ticket.height); info.setOptimalResolution(ticket.dpi);
-            info.getImageMimetypes().addAll(Arrays.asList("image/png", "image/jpeg", "image/webp"));
-            GuacamoleSocket configured = new ConfiguredGuacamoleSocket(new RdpGuacamoleSocket(socket), config, info);
+            GuacamoleSocket configured = RdpSocketFactory.open(socket,properties,target,ticket.width,ticket.height,ticket.dpi,15000);
             socket.setSoTimeout(0);
             if (ticket.closed.get()) { configured.close(); throw new IOException("连接已取消"); }
             return configured;

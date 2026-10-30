@@ -26,7 +26,7 @@ import java.util.List;
 @SshConsoleEnabled
 @Service
 public class RdpConnectionService {
-    private static final String SELECT = "SELECT id,host_id,name,username,domain,port,ignore_certificate,enabled,secret_enc FROM rdp_connection";
+    private static final String SELECT = "SELECT id,host_id,name,username,domain,port,ignore_certificate,enabled,remark,sort_order,secret_enc FROM rdp_connection";
     private final JdbcTemplate jdbc;
     private final SshHostService hosts;
     private final CredentialCipher cipher;
@@ -48,6 +48,9 @@ public class RdpConnectionService {
                 + "created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),"
                 + "updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),"
                 + "FOREIGN KEY (host_id) REFERENCES ssh_host(id) ON DELETE CASCADE)");
+        java.util.Set<String> columns = new java.util.HashSet<>(jdbc.query("PRAGMA table_info(rdp_connection)", (rs,n) -> rs.getString("name")));
+        if (!columns.contains("remark")) jdbc.execute("ALTER TABLE rdp_connection ADD COLUMN remark TEXT NOT NULL DEFAULT ''");
+        if (!columns.contains("sort_order")) jdbc.execute("ALTER TABLE rdp_connection ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_rdp_connection_host ON rdp_connection(host_id)");
     }
 
@@ -60,14 +63,14 @@ public class RdpConnectionService {
             BackupConnection saved = new BackupConnection();
             saved.setId(row.id); saved.setHostId(row.hostId); saved.setName(row.name); saved.setUsername(row.username);
             saved.setDomain(row.domain); saved.setPort(row.port); saved.setIgnoreCertificate(row.ignoreCertificate);
-            saved.setEnabled(row.enabled); saved.setPassword(secret.getPassword());
+            saved.setRemark(row.remark); saved.setSortOrder(row.sortOrder); saved.setEnabled(row.enabled); saved.setPassword(secret.getPassword());
             return saved;
         });
     }
 
     public List<ConnectionVO> list(long hostId) {
         requireHost(hostId);
-        return jdbc.query(SELECT + " WHERE host_id=? ORDER BY id", (rs, n) -> toVo(read(rs)), hostId);
+        return jdbc.query(SELECT + " WHERE host_id=? ORDER BY sort_order,id", (rs, n) -> toVo(read(rs)), hostId);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -75,16 +78,16 @@ public class RdpConnectionService {
         if (request == null || request.getHostId() == null) throw invalid("hostId 必填");
         requireHost(request.getHostId());
         Profile row = new Profile();
-        row.hostId = request.getHostId(); row.port = 3389; row.enabled = 1; row.domain = "";
+        row.hostId = request.getHostId(); row.port = 3389; row.enabled = 1; row.domain = ""; row.remark = "";
         apply(row, request);
         if (!StringUtils.hasText(request.getPassword())) throw invalid("新建远程桌面须填写密码");
         row.secret = encrypt(request.getPassword());
         KeyHolder key = new GeneratedKeyHolder();
         jdbc.update(connection -> {
             PreparedStatement ps = connection.prepareStatement("INSERT INTO rdp_connection "
-                    + "(host_id,name,username,domain,port,ignore_certificate,enabled,secret_enc) VALUES (?,?,?,?,?,?,?,?)", Statement.RETURN_GENERATED_KEYS);
+                    + "(host_id,name,username,domain,port,ignore_certificate,enabled,secret_enc,remark,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?)", Statement.RETURN_GENERATED_KEYS);
             ps.setLong(1,row.hostId); ps.setString(2,row.name); ps.setString(3,row.username); ps.setString(4,row.domain);
-            ps.setInt(5,row.port); ps.setInt(6,row.ignoreCertificate ? 1 : 0); ps.setInt(7,row.enabled); ps.setBytes(8,row.secret);
+            ps.setInt(5,row.port); ps.setInt(6,row.ignoreCertificate ? 1 : 0); ps.setInt(7,row.enabled); ps.setBytes(8,row.secret); ps.setString(9,row.remark); ps.setInt(10,row.sortOrder);
             return ps;
         }, key);
         if (key.getKey() == null) throw new IllegalStateException("远程桌面保存失败");
@@ -100,9 +103,36 @@ public class RdpConnectionService {
         requireHost(row.hostId);
         apply(row, request);
         if (StringUtils.hasText(request.getPassword())) row.secret = encrypt(request.getPassword());
-        jdbc.update("UPDATE rdp_connection SET host_id=?,name=?,username=?,domain=?,port=?,ignore_certificate=?,enabled=?,secret_enc=?,updated_at=datetime('now','localtime') WHERE id=?",
-                row.hostId,row.name,row.username,row.domain,row.port,row.ignoreCertificate ? 1 : 0,row.enabled,row.secret,id);
+        jdbc.update("UPDATE rdp_connection SET host_id=?,name=?,username=?,domain=?,port=?,ignore_certificate=?,enabled=?,secret_enc=?,remark=?,sort_order=?,updated_at=datetime('now','localtime') WHERE id=?",
+                row.hostId,row.name,row.username,row.domain,row.port,row.ignoreCertificate ? 1 : 0,row.enabled,row.secret,row.remark,row.sortOrder,id);
         return toVo(row);
+    }
+
+    public ConnectionVO get(long id) { return toVo(require(id)); }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void move(long id, long hostId) {
+        require(id); requireHost(hostId);
+        jdbc.update("UPDATE rdp_connection SET host_id=?,updated_at=datetime('now','localtime') WHERE id=?",hostId,id);
+    }
+
+    /** Resolve a draft without saving it, permitting a disabled saved connection. */
+    public RdpTarget resolveTest(TestRequest request) {
+        if (request == null) throw invalid("连接参数不能为空");
+        Profile row = request.getId()==null ? new Profile() : require(request.getId());
+        byte[] storedSecret=row.secret;
+        if (request.getId()==null) {row.name="test"; row.domain=""; row.remark=""; row.port=3389; row.enabled=1;}
+        if (request.getHostId()!=null) row.hostId=request.getHostId();
+        apply(row,request);
+        SshHost host = requireHost(row.hostId);
+        if (!Integer.valueOf(1).equals(host.getEnabled())) throw invalid("主机已禁用，禁止连接");
+        String password=request.getPassword();
+        if (!StringUtils.hasText(password) && storedSecret!=null) {
+            CredentialCipher.SshSecretPayload secret=CredentialCipher.parseSecretJson(cipher.decryptToJson(storedSecret));
+            password=secret==null ? null : secret.getPassword();
+        }
+        if (!StringUtils.hasText(password)) throw invalid("远程桌面密码未配置");
+        return new RdpTarget(host.getHost(),row.port,row.username,password,row.domain,row.ignoreCertificate);
     }
 
     public int delete(long id) {
@@ -133,6 +163,9 @@ public class RdpConnectionService {
     }
 
     private void apply(Profile row, SaveRequest request) {
+        if (request.getRemark() != null) row.remark = request.getRemark().trim();
+        if (request.getSortOrder() != null) row.sortOrder = request.getSortOrder();
+        if (row.remark.length()>4096) throw invalid("remark 过长");
         if (request.getName() != null) row.name = request.getName().trim();
         if (request.getUsername() != null) row.username = request.getUsername().trim();
         if (request.getDomain() != null) row.domain = request.getDomain().trim();
@@ -159,13 +192,14 @@ public class RdpConnectionService {
         Profile row = new Profile(); row.id=rs.getLong("id"); row.hostId=rs.getLong("host_id");
         row.name=rs.getString("name"); row.username=rs.getString("username"); row.domain=rs.getString("domain");
         row.port=rs.getInt("port"); row.ignoreCertificate=rs.getInt("ignore_certificate") == 1;
+        row.remark=rs.getString("remark"); row.sortOrder=rs.getInt("sort_order");
         row.enabled=rs.getInt("enabled"); row.secret=rs.getBytes("secret_enc"); return row;
     }
 
     private static ConnectionVO toVo(Profile row) {
         ConnectionVO vo = new ConnectionVO(); vo.setId(row.id); vo.setHostId(row.hostId); vo.setName(row.name);
         vo.setUsername(row.username); vo.setDomain(row.domain); vo.setPort(row.port); vo.setEnabled(row.enabled);
-        vo.setIgnoreCertificate(row.ignoreCertificate); vo.setHasPassword(row.secret != null && row.secret.length > 0); return vo;
+        vo.setRemark(row.remark); vo.setSortOrder(row.sortOrder); vo.setIgnoreCertificate(row.ignoreCertificate); vo.setHasPassword(row.secret != null && row.secret.length > 0); return vo;
     }
 
     private static BusinessRuntimeException invalid(String message) {
@@ -174,8 +208,8 @@ public class RdpConnectionService {
 
     private static final class Profile {
         long id,hostId;
-        String name,username,domain;
-        int port,enabled;
+        String name,username,domain,remark;
+        int port,enabled,sortOrder;
         boolean ignoreCertificate;
         byte[] secret;
     }
@@ -183,6 +217,8 @@ public class RdpConnectionService {
     @lombok.Data
     public static class SaveRequest {
         private Long hostId;
+        private String remark;
+        private Integer sortOrder;
         private String name;
         private String username;
         private String domain;
@@ -195,9 +231,15 @@ public class RdpConnectionService {
     }
 
     @lombok.Data
+    @lombok.EqualsAndHashCode(callSuper = true)
+    public static class TestRequest extends SaveRequest { private Long id; }
+
+    @lombok.Data
     public static class BackupConnection {
         private Long id;
         private Long hostId;
+        private String remark;
+        private Integer sortOrder;
         private String name;
         private String username;
         private String domain;
@@ -212,6 +254,8 @@ public class RdpConnectionService {
     public static class ConnectionVO {
         private Long id;
         private Long hostId;
+        private String remark;
+        private Integer sortOrder;
         private String name;
         private String username;
         private String domain;

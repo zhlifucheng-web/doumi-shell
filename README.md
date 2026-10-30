@@ -121,7 +121,7 @@ AI 助手可读取服务器资源、排查进程、执行命令和管理文件�
 
 ## Windows 远程桌面
 
-通过浏览器连接 Windows RDP，支持独立连接配置、多个桌面标签及全屏。需要可达的 Linux guacd 网关；Linux 启动脚本可按需管理本机 guacd 或 Docker 容器，Windows MSI 使用外部网关。仅使用 SSH 无需安装网关或 Docker。详见[远程桌面配置](docs/rdp.md)。
+通过浏览器连接 Windows RDP，SSH/RDP 共用账户配置与主工作区标签，支持测试未保存的连接配置、按连接忽略证书、多个桌面标签及全屏。需要可达的 Linux guacd 网关；Linux 启动脚本可按需管理本机 guacd 或 Docker 容器，Windows MSI 使用外部网关。仅使用 SSH 无需安装网关或 Docker。详见[远程桌面配置](docs/rdp.md)。
 
 ## 数据位置
 

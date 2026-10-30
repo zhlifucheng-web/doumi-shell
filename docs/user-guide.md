@@ -13,7 +13,7 @@
 
 ## Windows 远程桌面
 
-从主机或账户的“远程桌面”入口添加 RDP 连接，独立填写 Windows 用户名、密码、域和端口。选择连接打开桌面，支持多个标签、适应窗口、全屏、发送 Ctrl-Alt-Delete 及断开/重连。目标 Windows 需启用远程桌面，部署机器需配置可达的 Linux guacd 网关；Windows MSI 不包含原生 guacd。详见[网关部署与配置](https://github.com/zhlifucheng-web/doumi-shell/blob/main/docs/rdp.md)。
+新建账户时选择 RDP，填写 Windows 用户名、密码、域和独立端口；可勾选“忽略服务器证书校验”，并使用“测试连接”验证当前表单，无需先保存。SSH 和 RDP 账户并列显示在主机下，选择账户直接在主工作区打开连接，已有 RDP 配置会自动显示。桌面支持多个标签、适应窗口、全屏、发送 Ctrl-Alt-Delete 及断开/重连。目标 Windows 需启用远程桌面，部署机器需配置可达的 Linux guacd 网关；Windows MSI 不包含原生 guacd。详见[网关部署与配置](https://github.com/zhlifucheng-web/doumi-shell/blob/main/docs/rdp.md)。
 
 ## 终端与多个标签
 

@@ -17,14 +17,14 @@
         <div class="header-divider"></div>
 
         <!-- 当前主机上下文徽章 (面包屑式) -->
-        <div v-if="managedServer" class="server-badge" :title="serverTitle">
+        <div v-if="displayServer" class="server-badge" :title="serverTitle">
           <span class="online-pulse-dot"></span>
-          <span class="server-cluster">{{ managedServer.group || '默认分组' }} /</span>
+          <span class="server-cluster">{{ displayServer.group || '默认分组' }} /</span>
           <span class="server-name">
             <el-icon class="server-icon"><Monitor /></el-icon>
-            {{ managedServer.name }}
+            {{ displayServer.name }}
           </span>
-          <span class="server-ip font-mono-code">{{ managedServer.address }}{{ managedServer.port ? `:${managedServer.port}` : '' }}</span>
+          <span class="server-ip font-mono-code">{{ displayServer.address }}{{ displayServer.port ? `:${displayServer.port}` : '' }}</span>
         </div>
         <div v-else class="server-badge server-badge--empty">
           <span class="online-pulse-dot"></span>
@@ -139,9 +139,9 @@
     <!-- ================= 现代 WebShell 底部专业状态条 ================= -->
     <AppStatusBar
       v-if="!isStandalone"
-      :cols="workspaceStore.terminalCols"
-      :rows="workspaceStore.terminalRows"
-      :session-active="workspaceStore.terminalConnected"
+      :cols="activeDesktop ? 0 : workspaceStore.terminalCols"
+      :rows="activeDesktop ? 0 : workspaceStore.terminalRows"
+      :session-active="activeDesktop ? activeDesktop.connected : workspaceStore.terminalConnected"
       @open-transfers="onOpenTransfers"
     />
 
@@ -179,7 +179,8 @@ const route = useRoute()
 const isStandalone = computed(() => Boolean(route.meta?.standalone))
 const { background, style: backgroundStyle } = useBackground()
 const workspaceStore = useWorkspaceStore()
-const { managedServer } = storeToRefs(workspaceStore)
+const { managedServer, activeDesktop } = storeToRefs(workspaceStore)
+const displayServer = computed(() => activeDesktop.value || managedServer.value)
 const releaseStore = useReleaseStore()
 const { latest: latestRelease } = storeToRefs(releaseStore)
 const { preference, effectiveDark, themeLabel, setPreference } = useTheme()
@@ -282,8 +283,8 @@ onBeforeUnmount(() => {
 })
 
 const serverTitle = computed(() =>
-  managedServer.value
-    ? `${managedServer.value.username ? managedServer.value.username + '@' : ''}${managedServer.value.name} · ${managedServer.value.address}:${managedServer.value.port}`
+  displayServer.value
+    ? `${displayServer.value.username ? displayServer.value.username + '@' : ''}${displayServer.value.name} · ${displayServer.value.address}:${displayServer.value.port}`
     : ''
 )
 

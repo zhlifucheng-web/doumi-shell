@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS rdp_connection (
   ignore_certificate INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL DEFAULT 1,
   secret_enc BLOB NOT NULL,
+  remark TEXT NOT NULL DEFAULT '',
+  sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   FOREIGN KEY (host_id) REFERENCES ssh_host(id) ON DELETE CASCADE

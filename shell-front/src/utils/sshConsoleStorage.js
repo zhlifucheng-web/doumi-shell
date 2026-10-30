@@ -6,11 +6,11 @@ export function readSavedSshAccount() {
     const raw = localStorage.getItem(LS_SSH_LAST_ACCOUNT)
     if (!raw) return null
     const o = JSON.parse(raw)
-    if (o && o.nodeType === 'ACCOUNT' && o.id != null) {
+    if (o && ['ACCOUNT', 'RDP_ACCOUNT'].includes(o.nodeType) && o.id != null) {
       return {
-        nodeType: 'ACCOUNT',
+        nodeType: o.nodeType,
         id: Number(o.id),
-        key: o.key || `a:${o.id}`,
+        key: o.key || `${o.nodeType === 'RDP_ACCOUNT' ? 'r' : 'a'}:${o.id}`,
         hostId: o.hostId != null ? Number(o.hostId) : null,
         groupId: o.groupId != null ? Number(o.groupId) : null,
         label: o.label || ''
@@ -27,9 +27,9 @@ export function writeSavedSshAccount(payload) {
   localStorage.setItem(
     LS_SSH_LAST_ACCOUNT,
     JSON.stringify({
-      nodeType: 'ACCOUNT',
+      nodeType: payload.nodeType === 'RDP_ACCOUNT' ? 'RDP_ACCOUNT' : 'ACCOUNT',
       id: payload.id,
-      key: payload.key || `a:${payload.id}`,
+      key: payload.key || `${payload.nodeType === 'RDP_ACCOUNT' ? 'r' : 'a'}:${payload.id}`,
       hostId: payload.hostId ?? null,
       groupId: payload.groupId ?? null,
       label: payload.label || ''
@@ -95,6 +95,11 @@ export function removeAccountTerminalKey(accountId, storage = (typeof localStora
   }
 }
 
+function publicRdpAccount(account) {
+  if (!account) return null
+  return Object.fromEntries(['id', 'hostId', 'name', 'username', 'domain', 'port', 'ignoreCertificate', 'enabled', 'hasPassword', 'remark', 'sortOrder', 'protocol'].filter(key => key in account).map(key => [key, account[key]]))
+}
+
 export function saveTerminalTabs(tabs, activeTabId, storage = (typeof sessionStorage !== 'undefined' ? sessionStorage : null)) {
   if (!storage) return
   try {
@@ -103,6 +108,7 @@ export function saveTerminalTabs(tabs, activeTabId, storage = (typeof sessionSto
       tabId: t.tabId,
       terminalId: (t.terminalId && t.terminalId !== 'default') ? t.terminalId : generateTerminalSessionKey(),
       accountId: t.accountId,
+      ...(t.protocol === 'RDP' ? { protocol: 'RDP', connectionId: t.connectionId || t.account?.id } : {}),
       hostId: t.hostId,
       defaultCwd: t.defaultCwd || '',
       sftpPath: typeof t.sftpPath === 'string' ? t.sftpPath : '',
@@ -110,7 +116,7 @@ export function saveTerminalTabs(tabs, activeTabId, storage = (typeof sessionSto
       customTitle: t.customTitle || '',
       subIndex: t.subIndex != null ? Number(t.subIndex) : 1,
       encoding: t.encoding || 'UTF-8',
-      account: t.account || null
+      account: t.protocol === 'RDP' ? publicRdpAccount(t.account) : (t.account || null)
     }))
     storage.setItem(SS_SSH_TERMINAL_TABS, JSON.stringify(serialized))
     if (activeTabId != null) {
@@ -139,7 +145,8 @@ export function readSavedTerminalTabs(storage = (typeof sessionStorage !== 'unde
         return {
           tabId: String(t.tabId),
           terminalId: termId,
-          accountId: Number(t.accountId),
+          accountId: t.protocol === 'RDP' ? `rdp:${Number(t.connectionId || t.account?.id)}` : Number(t.accountId),
+          ...(t.protocol === 'RDP' ? { protocol: 'RDP', connectionId: Number(t.connectionId || t.account?.id) } : {}),
           hostId: t.hostId != null ? Number(t.hostId) : null,
           defaultCwd: t.defaultCwd || '',
           sftpPath: typeof t.sftpPath === 'string' ? t.sftpPath : '',
@@ -147,7 +154,7 @@ export function readSavedTerminalTabs(storage = (typeof sessionStorage !== 'unde
           customTitle: t.customTitle || '',
           subIndex: t.subIndex != null ? Number(t.subIndex) : 1,
           encoding: t.encoding || 'UTF-8',
-          account: t.account || null,
+          account: t.protocol === 'RDP' ? publicRdpAccount(t.account) : (t.account || null),
           token: '',
           connectionMode: ''
         }
@@ -223,7 +230,7 @@ export async function resolveSshExpandedKeys(selection, { getGroup, getHost } = 
   let groupId = selection.groupId ?? selection.extra?.groupId ?? null
   let hostId = selection.hostId ?? selection.extra?.hostId ?? null
 
-  if (selection.nodeType === 'ACCOUNT') {
+  if (['ACCOUNT', 'RDP_ACCOUNT'].includes(selection.nodeType)) {
     if (hostId) keys.push(`h:${hostId}`)
     if (groupId == null && hostId && getHost) {
       try {

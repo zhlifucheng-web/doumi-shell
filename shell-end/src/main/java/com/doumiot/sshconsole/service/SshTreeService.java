@@ -12,6 +12,7 @@ import com.doumiot.sshconsole.mapper.SshGroupMapper;
 import com.doumiot.sshconsole.mapper.SshHostMapper;
 import com.doumiot.sshconsole.model.TreeParentType;
 import com.doumiot.sshconsole.vo.TreeNodeVO;
+import com.doumiot.sshconsole.rdp.RdpConnectionService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -36,6 +37,7 @@ public class SshTreeService {
     private SshHostMapper sshHostMapper;
     @Resource
     private SshAccountMapper sshAccountMapper;
+    @Resource private RdpConnectionService rdp;
     @Resource private SshGroupService groups;
     @Resource private SshHostService hosts;
     @Resource private SshAccountService accounts;
@@ -52,6 +54,7 @@ public class SshTreeService {
             if ("GROUP".equals(type)) groups.move(request.getId(), newParentId);
             else if ("HOST".equals(type) && newParentId != null) hosts.move(request.getId(), newParentId);
             else if ("ACCOUNT".equals(type) && newParentId != null) accounts.move(request.getId(), newParentId);
+            else if ("RDP_ACCOUNT".equals(type) && newParentId != null) rdp.move(request.getId(), newParentId);
             else throw invalid("目标父节点类型无效");
         }
 
@@ -87,6 +90,7 @@ public class SshTreeService {
             SshAccount row = sshAccountMapper.selectById(id);
             if (row != null) return row.getHostId();
         }
+        if ("RDP_ACCOUNT".equals(type)) return rdp.get(id).getHostId();
         throw invalid("拖拽节点不存在");
     }
 
@@ -100,6 +104,8 @@ public class SshTreeService {
             for (SshHost row : sshHostMapper.selectList(new LambdaQueryWrapper<SshHost>().eq(SshHost::getGroupId, parentId))) ids.add(row.getId());
         } else if ("ACCOUNT".equals(type) && parentId != null) {
             for (SshAccount row : sshAccountMapper.selectList(new LambdaQueryWrapper<SshAccount>().eq(SshAccount::getHostId, parentId))) ids.add(row.getId());
+        } else if ("RDP_ACCOUNT".equals(type) && parentId != null) {
+            for (RdpConnectionService.ConnectionVO row : rdp.list(parentId)) ids.add(row.getId());
         } else if (!"GROUP".equals(type)) throw invalid("目标父节点类型无效");
         return ids;
     }
@@ -108,6 +114,7 @@ public class SshTreeService {
         if ("GROUP".equals(type)) return "ssh_group";
         if ("HOST".equals(type)) return "ssh_host";
         if ("ACCOUNT".equals(type)) return "ssh_account";
+        if ("RDP_ACCOUNT".equals(type)) return "rdp_connection";
         throw invalid("拖拽节点类型无效");
     }
 
@@ -208,13 +215,11 @@ public class SshTreeService {
                 new LambdaQueryWrapper<SshAccount>()
                         .eq(SshAccount::getHostId, hostId)
                         .orderByAsc(SshAccount::getSortOrder, SshAccount::getId));
-        if (accounts.isEmpty()) {
-            return Collections.emptyList();
-        }
         List<TreeNodeVO> nodes = new ArrayList<>();
         for (SshAccount a : accounts) {
             nodes.add(accountNode(a));
         }
+        for (RdpConnectionService.ConnectionVO row : rdp.list(hostId)) nodes.add(rdpNode(row));
         return nodes;
     }
 
@@ -249,6 +254,14 @@ public class SshTreeService {
         return n;
     }
 
+    private static TreeNodeVO rdpNode(RdpConnectionService.ConnectionVO row) {
+        TreeNodeVO node=new TreeNodeVO(); node.setId(row.getId()); node.setKey("r:"+row.getId());
+        node.setNodeType("RDP_ACCOUNT"); node.setLabel(row.getName()); node.setRemark(row.getRemark()); node.setLeaf(true);
+        Map<String,Object> extra=new HashMap<>(); extra.put("protocol","RDP"); extra.put("hostId",row.getHostId());
+        extra.put("username",row.getUsername()); extra.put("domain",row.getDomain()); extra.put("port",row.getPort());
+        extra.put("enabled",row.getEnabled()); extra.put("ignoreCertificate",row.isIgnoreCertificate()); node.setExtra(extra); return node;
+    }
+
     private static TreeNodeVO accountNode(SshAccount a) {
         TreeNodeVO n = new TreeNodeVO();
         n.setNodeType("ACCOUNT");
@@ -258,6 +271,7 @@ public class SshTreeService {
         n.setRemark(a.getRemark());
         n.setLeaf(true);
         Map<String, Object> extra = new HashMap<>();
+        extra.put("protocol", "SSH");
         extra.put("authType", a.getAuthType());
         extra.put("hostId", a.getHostId());
         extra.put("enabled", a.getEnabled());

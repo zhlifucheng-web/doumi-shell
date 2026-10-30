@@ -79,7 +79,7 @@ class RdpConnectionServiceTest {
         assertTrue(cipher.decryptToJson(stored).contains("秘密-password-123"));
         JsonNode json = new ObjectMapper().valueToTree(service.list(1L));
         Set<String> fields = new HashSet<>(); json.get(0).fieldNames().forEachRemaining(fields::add);
-        assertEquals(new HashSet<>(Arrays.asList("id","hostId","name","username","domain","port","ignoreCertificate","enabled","hasPassword")), fields);
+        assertEquals(new HashSet<>(Arrays.asList("id","hostId","name","username","domain","port","ignoreCertificate","enabled","hasPassword","remark","sortOrder")), fields);
         assertFalse(json.toString().contains("秘密"));
         RdpTarget target = service.resolve(created.getId());
         assertEquals("192.0.2.10", target.getHost()); assertEquals(3389, target.getPort());
@@ -106,6 +106,27 @@ class RdpConnectionServiceTest {
         service.update(id, req);
         assertEquals("new secret", service.resolve(id).getPassword());
         assertEquals("192.0.2.20", service.resolve(id).getHost()); assertEquals(3390, service.resolve(id).getPort());
+    }
+
+    @Test void draftUsesUnsavedValuesAndStoredBlankPasswordWithoutWrites() {
+        long id = service.create(request()).getId();
+        jdbc.update("UPDATE rdp_connection SET enabled=0 WHERE id=?",id);
+        byte[] before = jdbc.queryForObject("SELECT secret_enc FROM rdp_connection WHERE id=?",byte[].class,id);
+        RdpConnectionService.TestRequest draft = new RdpConnectionService.TestRequest();
+        draft.setId(id); draft.setHostId(2L); draft.setUsername("draft-user"); draft.setDomain("DRAFT");
+        draft.setPassword(" "); draft.setPort(3397); draft.setIgnoreCertificate(true);
+        RdpTarget target = service.resolveTest(draft);
+        assertEquals("192.0.2.20",target.getHost()); assertEquals("draft-user",target.getUsername());
+        assertEquals("DRAFT",target.getDomain()); assertEquals(3397,target.getPort());
+        assertTrue(target.isIgnoreCertificate()); assertEquals("秘密-password-123",target.getPassword());
+        assertEquals("Administrator",service.get(id).getUsername()); assertEquals(0,service.get(id).getEnabled());
+        assertArrayEquals(before,jdbc.queryForObject("SELECT secret_enc FROM rdp_connection WHERE id=?",byte[].class,id));
+        RdpConnectionService.TestRequest saved = new RdpConnectionService.TestRequest(); saved.setId(id);
+        assertEquals("Administrator", service.resolveTest(saved).getUsername());
+        assertFalse(service.resolveTest(saved).isIgnoreCertificate());
+        draft.setPassword("unsaved-new"); assertEquals("unsaved-new",service.resolveTest(draft).getPassword());
+        jdbc.update("UPDATE ssh_host SET enabled=0 WHERE id=2");
+        assertThrows(BusinessRuntimeException.class,()->service.resolveTest(draft));
     }
 
     @Test void disabledHostOrProfileCannotResolve() {
@@ -143,6 +164,17 @@ class RdpConnectionServiceTest {
         long id=service.create(request()).getId();
         RdpConnectionService.SaveRequest blank=new RdpConnectionService.SaveRequest(); blank.setName("  ");
         assertThrows(BusinessRuntimeException.class, () -> service.update(id,blank));
+    }
+
+    @Test void migratesLegacyRdpTableWithoutChangingEncryptedSecret() {
+        jdbc.execute("DROP TABLE rdp_connection");
+        jdbc.execute("CREATE TABLE rdp_connection(id INTEGER PRIMARY KEY,host_id INTEGER,name TEXT,username TEXT,domain TEXT,port INTEGER,ignore_certificate INTEGER,enabled INTEGER,secret_enc BLOB)");
+        byte[] secret = cipher.encryptSecretJson("{\"password\":\"legacy-secret\"}");
+        jdbc.update("INSERT INTO rdp_connection VALUES(1,1,'Legacy','admin','',3389,0,1,?)",secret);
+        service.initializeSchema(); service.initializeSchema();
+        assertEquals("",service.get(1).getRemark()); assertEquals(0,service.get(1).getSortOrder());
+        assertEquals("legacy-secret",service.resolve(1).getPassword());
+        assertArrayEquals(secret,jdbc.queryForObject("SELECT secret_enc FROM rdp_connection",byte[].class));
     }
 
     @Test void existingDatabaseInitializationIsIdempotentAndHostDeleteCascades() {

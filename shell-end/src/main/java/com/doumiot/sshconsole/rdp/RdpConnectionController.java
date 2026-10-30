@@ -9,11 +9,18 @@ import java.util.List;
 @RequestMapping("/api/ssh-console/rdp/connections")
 public class RdpConnectionController {
     private final RdpConnectionService service;
+    private final RdpConnectionTestService tests;
 
-    public RdpConnectionController(RdpConnectionService service) { this.service = service; }
+    public RdpConnectionController(RdpConnectionService service, RdpConnectionTestService tests) { this.service = service; this.tests=tests; }
 
     @GetMapping
     public List<RdpConnectionService.ConnectionVO> list(@RequestParam long hostId) { return service.list(hostId); }
+
+    @PostMapping("/test")
+    public RdpConnectionTestService.TestResult test(@RequestBody RdpConnectionService.TestRequest request) { return tests.test(request); }
+
+    @GetMapping("/{id}")
+    public RdpConnectionService.ConnectionVO get(@PathVariable long id) { return service.get(id); }
 
     @PostMapping
     public RdpConnectionService.ConnectionVO create(@RequestBody RdpConnectionService.SaveRequest request) { return service.create(request); }
