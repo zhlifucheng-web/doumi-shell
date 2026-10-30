@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -97,9 +98,13 @@ class GatewayLauncherTest(unittest.TestCase):
     def await_file(self, name):
         end=time.monotonic()+4
         while time.monotonic()<end:
-            if (self.base/name).exists(): return
+            try:
+                contents=(self.base/name).read_text().strip()
+            except FileNotFoundError:
+                contents=''
+            if contents: return contents
             time.sleep(.02)
-        self.fail(f'{name} was not created; events={self.events()}')
+        self.fail(f'{name} was not ready; events={self.events()}')
 
     def test_default_and_external_start_java_without_gateway(self):
         (self.base/'guacd-helper.sh').unlink(missing_ok=True)
@@ -192,8 +197,7 @@ public class SignalFixture {
         runtime=self.base/'runtime/bin'; runtime.mkdir(parents=True)
         (runtime/'java').symlink_to(tools['java'])
         p=self.launch(str(self.base), DOUMI_GUACD_MODE='native')
-        self.await_file('java-started')
-        java_pid=int((self.base/'java-started').read_text())
+        java_pid=int(self.await_file('java-started'))
         p.send_signal(signal.SIGINT)
         try:
             stdout,stderr=p.communicate(timeout=3)
@@ -236,5 +240,16 @@ public class SignalFixture {
             self.assertNotEqual(0,p.returncode)
         self.assertFalse((self.base/'java-started').exists())
         self.assertFalse((self.base/'guacd-pid').exists())
+
+class FixtureReadinessTest(unittest.TestCase):
+    def test_waits_for_marker_contents_when_file_is_created_before_pid_is_written(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            launcher=GatewayLauncherTest()
+            launcher.base=Path(tmp)
+            marker=launcher.base/'java-started'
+            marker.touch()
+            # Resume the writer on the first poll, after its empty file was visible.
+            with patch.object(time, 'sleep', side_effect=lambda _: marker.write_text('12345')):
+                self.assertEqual('12345', launcher.await_file('java-started'))
 
 if __name__ == '__main__': unittest.main()
