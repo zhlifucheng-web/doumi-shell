@@ -23,6 +23,7 @@ public class UpdateSettings {
     private final String token;
     private final boolean requireToken;
     private String proxy;
+    private String httpProxy;
     private final Properties saved=new Properties();
     private String defaultGithubToken="";
     private long revision;
@@ -31,6 +32,7 @@ public class UpdateSettings {
         this(Paths.get(storage.getDataDir()),env.getProperty("doumi.update.proxy", ""),env.getProperty("doumi.update.token", ""),
                 env.getProperty("doumi.update.require-token",Boolean.class,false));
         defaultGithubToken=normalizeGithubToken(env.getProperty("doumi.update.github-token", ""));
+        httpProxy=normalizeHttpProxy(saved.getProperty("http-proxy",env.getProperty("doumi.update.http-proxy","")));
     }
     public UpdateSettings(Path data,String defaultProxy,String overrideToken) throws IOException {
         this(data,defaultProxy,overrideToken,false);
@@ -42,6 +44,7 @@ public class UpdateSettings {
         Path config=directory.resolve("settings.properties");
         if(Files.exists(config))try(InputStream in=Files.newInputStream(config)){saved.load(in);}
         proxy=normalizeProxy(saved.getProperty("proxy",defaultProxy));
+        httpProxy=normalizeHttpProxy(saved.getProperty("http-proxy",""));
         Path tokenFile=directory.resolve("admin-token");
         if(!requireToken)token="";
         else if(overrideToken!=null&&!overrideToken.trim().isEmpty())token=overrideToken.trim();
@@ -58,6 +61,7 @@ public class UpdateSettings {
     public Path directory(){return directory;}
     public boolean requiresToken(){return requireToken;}
     public synchronized String proxy(){return proxy;}
+    public synchronized String httpProxy(){return httpProxy;}
     public synchronized void saveProxy(String value) throws IOException {
         saveSettings(normalizeProxy(value),null);
     }
@@ -73,14 +77,19 @@ public class UpdateSettings {
     }
     /** Null retains a setting; an explicit empty token disables authentication, including the environment default. */
     public synchronized void saveSettings(String value,String githubToken) throws IOException {
+        saveSettings(value,githubToken,null);
+    }
+    public synchronized void saveSettings(String value,String githubToken,String downloadProxy) throws IOException {
         String normalized=value==null?proxy:normalizeProxy(value);
+        String normalizedHttp=downloadProxy==null?httpProxy:normalizeHttpProxy(downloadProxy);
         Properties next=new Properties();next.putAll(saved);next.setProperty("proxy",normalized);
+        if(downloadProxy!=null)next.setProperty("http-proxy",normalizedHttp);
         if(githubToken!=null) {
             String secret=normalizeGithubToken(githubToken);
             next.setProperty("github-token.enc",secret.isEmpty()?"":Base64.getEncoder().encodeToString(cipher.encryptSecretJson(secret)));
         }
         ByteArrayOutputStream out=new ByteArrayOutputStream();next.store(out,"Doumi update settings");
-        atomic(directory.resolve("settings.properties"),out.toByteArray());saved.clear();saved.putAll(next);proxy=normalized;revision++;
+        atomic(directory.resolve("settings.properties"),out.toByteArray());saved.clear();saved.putAll(next);proxy=normalized;httpProxy=normalizedHttp;revision++;
     }
     private static String normalizeGithubToken(String input) {
         if(input==null)return "";
@@ -97,6 +106,16 @@ public class UpdateSettings {
     public synchronized String route(String url) {
         if(!url.equals(API)&&!url.startsWith(REPOSITORY+"/releases/download/"))throw new IllegalArgumentException("更新地址不属于指定 GitHub 仓库");
         return proxy+url;
+    }
+    public static String normalizeHttpProxy(String input) {
+        String value=input==null?"":input.trim();if(value.isEmpty())return "";
+        try {
+            URI uri=new URI(value);String path=uri.getRawPath();
+            if(value.length()>512||!"http".equalsIgnoreCase(uri.getScheme())||uri.getHost()==null||uri.getRawUserInfo()!=null
+                ||uri.getRawQuery()!=null||uri.getRawFragment()!=null||(path!=null&&!path.isEmpty()&&!path.equals("/"))
+                ||uri.getPort()<1||uri.getPort()>65535||value.chars().anyMatch(c->c<33||c==127))throw new IllegalArgumentException();
+            return "http://"+uri.getRawAuthority();
+        }catch(Exception error){throw new IllegalArgumentException("HTTP 下载代理须为 http://主机:端口，不支持账号密码、路径或查询参数");}
     }
     public static String normalizeProxy(String input) {
         String value=input==null?"":input.trim();if(value.isEmpty())return "";

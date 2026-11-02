@@ -5,6 +5,15 @@ import java.nio.file.*;
 import static org.junit.jupiter.api.Assertions.*;
 class UpdateServiceTest {
  @TempDir Path dir;
+ @Test void detectsLegacySystemdAndContainerCgroupsWithoutEnvironmentMarkers() {
+  assertTrue(UpdateService.managedCgroup("1:name=systemd:/system.slice/web-shell.service\n"));
+  assertTrue(UpdateService.managedCgroup("0::/system.slice/web-shell.service\n"));
+  assertTrue(UpdateService.managedCgroup("0::/user.slice/user-1000.slice/user@1000.service/app.slice/doumi.service\n"));
+  assertTrue(UpdateService.managedCgroup("0::/docker/123abc\n"));
+  assertTrue(UpdateService.managedCgroup("0::/kubepods.slice/pod/123abc\n"));
+  assertFalse(UpdateService.managedCgroup("0::/user.slice/user-1000.slice/user@1000.service/session-7.scope\n"));
+  assertFalse(UpdateService.managedCgroup("0::/\n"));
+ }
  @Test void onlyPackagedSupportedLayoutsCanSelfUpdate() throws Exception {
   Path root=dir.resolve("install");Files.createDirectories(root);Path jar=root.resolve("doumi-shell.jar");Files.write(jar,new byte[]{1});
   assertThrows(IllegalStateException.class,()->UpdateService.installRoot(jar,"Linux","amd64"));

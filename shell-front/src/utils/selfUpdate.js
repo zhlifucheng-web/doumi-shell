@@ -1,9 +1,10 @@
 export function canManageUpdates(state, token = '') {
   return Boolean(state) && (state.tokenRequired === false || Boolean(token.trim()))
 }
-export function buildUpdateSettings(proxy, githubToken = '', clearGithubToken = false) {
+export function buildUpdateSettings(proxy, githubToken = '', clearGithubToken = false, httpProxy) {
   if (clearGithubToken) return { githubToken: '' }
   const body = { proxy }
+  if (httpProxy !== undefined) body.httpProxy = httpProxy.trim()
   if (githubToken.trim()) body.githubToken = githubToken.trim()
   return body
 }

@@ -7,9 +7,12 @@
 1. 打开“关于”，检查最新正式版本。
 2. 默认免密授权，不显示“更新管理密钥”输入框。若部署端设置了 `DOUMI_UPDATE_REQUIRE_TOKEN=true`，从**部署机器**的数据目录读取 `updates/admin-token` 并填入；Windows MSI 默认位置为 `%LOCALAPPDATA%\DoumiShell\data\updates\admin-token`，Linux 默认是安装目录的 `data/updates/admin-token`，设置过 `DOUMI_DATA_DIR` 时以实际目录为准。也可通过 `DOUMI_UPDATE_TOKEN` 设置固定密钥。不要将密钥放入仓库。
 3. 按需填写“GitHub 加速代理”，保存后会重新检查版本。留空表示直连，例如填写 `https://gh-proxy.com/` 后会通过 `https://gh-proxy.com/https://github.com/...` 下载包与校验文件。版本检测先直连 GitHub API，失败后尝试加速代理；该服务也需要支持 GitHub API 转发。这里只支持地址前缀模式，不是 HTTP CONNECT/SOCKS 代理配置。不接受带账号密码、查询参数或片段的前缀。
+   如需使用普通 HTTP 代理，在独立的“HTTP 下载代理”填写 `http://代理主机:端口`，例如 `http://127.0.0.1:7890`；这里的地址须能从**部署机器**访问。该代理用于安装包、SHA-256 校验文件及 Windows 回滚包，HTTPS 使用 CONNECT 隧道并保留证书校验，不转发 GitHub API Token。不支持 SOCKS、代理账号密码或 `https://` 代理端点。可以与 GitHub 加速前缀同时使用。
 4. 等待文件传输和脚本任务结束，再点击“更新至 v…”。更新会断开 SSH 会话并短暂停止服务。页面会显示进度并在重启期间自动重试连接。
 
 密钥不会出现在接口响应中，也不会保存在浏览器存储中。代理设置持久化在数据目录的 `updates/settings.properties`；页面保存的值优先于 `DOUMI_UPDATE_PROXY`。首次启动也可通过 `DOUMI_UPDATE_PROXY=https://gh-proxy.com/` 设定默认值。
+
+HTTP 下载代理使用 `doumi.update.http-proxy` 或环境变量 `DOUMI_UPDATE_HTTP_PROXY`，默认留空直连；页面保存的值优先，清空后禁用环境变量默认值。GitHub API 查询不使用此下载代理。读取超时、连接中断、文件截断以及 HTTP 408/429/502/503/504 最多尝试 3 次，每次清理未完成文件后重新下载；仍失败时显示具体下载阶段及节点。HTTP 404、TLS 证书错误、非法重定向和超出大小限制不会自动重试，SHA-256 校验始终保留。
 
 管理密钥校验由部署配置 `doumi.update.require-token`（环境变量 `DOUMI_UPDATE_REQUIRE_TOKEN`）控制，默认 `false`。免密模式下，能访问 Doumi Shell 的用户即可保存更新设置、清除 GitHub Token 及安装更新；同源校验和安装确认仍保留。设为 `true` 并重启后恢复密钥验证；仅设置 `DOUMI_UPDATE_TOKEN` 不会自动开启验证。关闭时不会创建或读取管理密钥文件，已有文件保留，以便后续重新开启。
 
@@ -23,7 +26,7 @@ Token 只随直连 `api.github.com` 的版本查询发送，不发送给加速�
 
 程序先完整下载并校验 SHA-256，准备失败时当前服务继续运行。停止服务后备份旧程序和数据，再安装新版，检查版本号和本次启动标识。失败时恢复旧程序及数据并启动旧版本。Windows 会额外下载并校验当前版本的 MSI，以便恢复 Windows Installer 注册状态；因此历史版本的 MSI 和对应校验文件须保留。Linux 保留原数据目录、密钥和外置配置。启动目录、端口、环境、JVM 参数及程序参数会沿用。
 
-容器、systemd 等托管服务应使用原部署工具更新，并设置 `DOUMI_UPDATE_ENABLED=false`；检测到容器/systemd 环境时也会拒绝独立更新器。直接 HTTPS 监听目前使用手动升级。反向代理部署使用正常的 HTTP 后端，并正确配置可信的转发头，以便服务器识别网页同源请求。
+容器、systemd 等托管服务应使用原部署工具更新，并设置 `DOUMI_UPDATE_ENABLED=false`；检测到容器/systemd 环境时也会拒绝独立更新器，包括没有 `INVOCATION_ID` 的旧版 systemd cgroup。托管部署仍可保存更新设置。直接 HTTPS 监听目前使用手动升级。反向代理部署使用正常的 HTTP 后端，并正确配置可信的转发头，以便服务器识别网页同源请求。
 
 ## 日志、备份与恢复
 

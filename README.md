@@ -113,7 +113,7 @@ docker compose up -d --build
 
 ## 一键更新与自动构建
 
-“关于”页面支持 Windows / Linux 正式安装包一键更新，可配置 GitHub 加速代理（例如 `https://gh-proxy.com/`），并在更新失败时恢复旧程序和数据。首次需手动安装带更新器的版本。默认免填更新管理密钥，可通过 `DOUMI_UPDATE_REQUIRE_TOKEN=true` 开启密钥验证。
+“关于”页面支持 Windows / Linux 正式安装包一键更新，可分别配置 GitHub 加速前缀（例如 `https://gh-proxy.com/`）和 HTTP 下载代理（例如 `http://127.0.0.1:7890`），并在更新失败时恢复旧程序和数据。下载瞬时错误最多尝试 3 次。首次需手动安装带更新器的版本。默认免填更新管理密钥，可通过 `DOUMI_UPDATE_REQUIRE_TOKEN=true` 开启密钥验证。
 
 Docker 部署关闭应用内一键更新。更新源码后运行 `docker compose up -d --build` 重建应用，原数据卷继续保留；现有连接需重新打开。
 

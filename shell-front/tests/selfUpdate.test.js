@@ -15,6 +15,11 @@ test('saving proxy retains an existing GitHub token unless explicitly replaced o
   assert.deepEqual(buildUpdateSettings('https://gh-proxy.com/', ' fixtureToken '), { proxy: 'https://gh-proxy.com/', githubToken: 'fixtureToken' })
   assert.deepEqual(buildUpdateSettings('unsaved-proxy', 'unsaved-token', true), { githubToken: '' })
 })
+test('HTTP download proxy is saved independently and token clearing retains unsaved proxy edits', () => {
+  assert.deepEqual(buildUpdateSettings('https://gh-proxy.com/', '', false, 'http://127.0.0.1:7890'), { proxy: 'https://gh-proxy.com/', httpProxy: 'http://127.0.0.1:7890' })
+  assert.deepEqual(buildUpdateSettings('', '', false, ''), { proxy: '', httpProxy: '' })
+  assert.deepEqual(buildUpdateSettings('unsaved', 'unsaved', true, 'http://unsaved:80'), { githubToken: '' })
+})
 test('settings and installation send token headers and JSON only to the local update API', async () => {
   const calls = []
   const client = createUpdateClient({ fetchImpl: async (url, options) => { calls.push({ url, options }); return reply({ phase: 'IDLE' }) } })

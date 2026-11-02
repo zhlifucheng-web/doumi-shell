@@ -15,6 +15,9 @@
         <el-input v-model="proxy" placeholder="例如 https://gh-proxy.com/；留空时直连 GitHub" :disabled="busy || saving" autocomplete="off" />
         <p class="field-help">以“代理前缀 + 完整 GitHub 地址”下载。版本检测直连失败时也会尝试代理，需代理服务支持 GitHub API。</p>
       </el-form-item>
+      <el-form-item label="HTTP 下载代理（可选）">
+        <el-input v-model="httpProxy" placeholder="http://127.0.0.1:7890；留空时直连" :disabled="busy || saving" autocomplete="off" />
+      </el-form-item>
       <el-form-item label="GitHub API Token（可选）">
         <el-input v-model="githubToken" type="password" show-password autocomplete="off" :placeholder="state?.githubTokenConfigured ? '已配置，留空保持不变' : '输入 GitHub Token，提高版本查询限额'" :disabled="busy || saving" />
         <div class="github-token-actions">
@@ -24,7 +27,7 @@
       </el-form-item>
       <div class="update-buttons">
         <el-button :loading="saving" :disabled="busy || !authorized" @click="save()">保存更新设置</el-button>
-        <el-button type="primary" :loading="starting" :disabled="busy || saving || !state?.supported || !latest?.newer || !authorized || proxy !== state?.proxy || Boolean(githubToken.trim())" @click="install">
+        <el-button type="primary" :loading="starting" :disabled="busy || saving || !state?.supported || !latest?.newer || !authorized || proxy !== state?.proxy || httpProxy !== (state?.httpProxy || '') || Boolean(githubToken.trim())" @click="install">
           {{ latest?.newer ? `更新至 v${latest.version}` : '暂无可安装更新' }}
         </el-button>
       </div>
@@ -46,7 +49,7 @@ import { appVersion } from '@/utils/versionRefresh'
 const props = defineProps({ latest: { type: Object, default: null } })
 const emit = defineEmits(['settings-saved'])
 const request = createUpdateClient({ base: import.meta.env.VITE_API_BASE || '' })
-const state = ref(null), token = ref(''), proxy = ref(''), githubToken = ref(''), error = ref('')
+const state = ref(null), token = ref(''), proxy = ref(''), httpProxy = ref(''), githubToken = ref(''), error = ref('')
 const starting = ref(false), saving = ref(false)
 const tokenRequired = computed(() => state.value?.tokenRequired !== false)
 const authorized = computed(() => canManageUpdates(state.value, token.value))
@@ -59,7 +62,7 @@ async function poll() {
   polling = true
   try {
     const next = await request('status')
-    if (!state.value) proxy.value = next.proxy || ''
+    if (!state.value) { proxy.value = next.proxy || ''; httpProxy.value = next.httpProxy || '' }
     state.value = next; error.value = ''; disconnectedAt = 0
     if (next.phase === 'SUCCEEDED' && next.currentVersion !== appVersion) {
       const url = new URL(window.location.href); url.searchParams.set('v', next.currentVersion)
@@ -77,8 +80,8 @@ async function poll() {
 async function save(clearGithubToken = false) {
   saving.value = true; error.value = ''
   try {
-    state.value = await request('settings', { method: 'PUT', token: managementToken.value, body: buildUpdateSettings(proxy.value, githubToken.value, clearGithubToken) })
-    if (!clearGithubToken) proxy.value = state.value.proxy || ''
+    state.value = await request('settings', { method: 'PUT', token: managementToken.value, body: buildUpdateSettings(proxy.value, githubToken.value, clearGithubToken, httpProxy.value) })
+    if (!clearGithubToken) { proxy.value = state.value.proxy || ''; httpProxy.value = state.value.httpProxy || '' }
     githubToken.value = ''; ElMessage.success(clearGithubToken ? 'GitHub Token 已清除' : '更新设置已保存'); emit('settings-saved')
   } catch (e) { error.value = e.message }
   finally { saving.value = false }

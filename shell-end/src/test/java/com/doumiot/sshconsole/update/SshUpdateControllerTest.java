@@ -38,6 +38,14 @@ class SshUpdateControllerTest {
   mvc.perform(post("/api/ssh-console/update/install").contentType(MediaType.APPLICATION_JSON).content("{\"version\":\"1.0.64\"}")) .andExpect(status().isOk());
   verify(service).start("1.0.64");
  }
+ @Test void savesOnlyHttpProxyAndRejectsInvalidOrNullWithoutChangingSettings() throws Exception {
+  configure(false);
+  mvc.perform(put("/api/ssh-console/update/settings").contentType(MediaType.APPLICATION_JSON).content("{\"httpProxy\":\"http://127.0.0.1:7890\"}")) .andExpect(status().isOk());
+  org.junit.jupiter.api.Assertions.assertEquals("http://127.0.0.1:7890",settings.httpProxy());
+  mvc.perform(put("/api/ssh-console/update/settings").contentType(MediaType.APPLICATION_JSON).content("{\"proxy\":\"https://gh-proxy.com/\",\"httpProxy\":\"http://user:secret@host\"}")) .andExpect(status().isBadRequest());
+  org.junit.jupiter.api.Assertions.assertEquals("",settings.proxy());
+  mvc.perform(put("/api/ssh-console/update/settings").contentType(MediaType.APPLICATION_JSON).content("{\"httpProxy\":null}")) .andExpect(status().isBadRequest());
+ }
  @Test void explicitlyDisabledTokenStillRejectsCrossOriginAndCrossSiteRequests() throws Exception {
   configure(false);
   mvc.perform(put("/api/ssh-console/update/settings").header("Origin","https://evil.invalid").contentType(MediaType.APPLICATION_JSON).content("{\"proxy\":\"\"}")) .andExpect(status().isForbidden());

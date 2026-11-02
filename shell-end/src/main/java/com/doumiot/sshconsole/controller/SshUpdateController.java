@@ -25,9 +25,9 @@ public class SshUpdateController {
         authorize(token,request);
         synchronized(updates){
             if(Boolean.TRUE.equals(updates.status().get("busy")))throw new IllegalStateException("更新进行中，不能修改更新设置");
-            if(!body.containsKey("proxy")&&!body.containsKey("githubToken"))throw new IllegalArgumentException("缺少更新设置");
-            for(String key:new String[]{"proxy","githubToken"})if(body.containsKey(key)&&body.get(key)==null)throw new IllegalArgumentException("更新设置不能为 null");
-            settings.saveSettings(body.get("proxy"),body.get("githubToken"));return updates.status();
+            if(!body.containsKey("proxy")&&!body.containsKey("githubToken")&&!body.containsKey("httpProxy"))throw new IllegalArgumentException("缺少更新设置");
+            for(String key:new String[]{"proxy","githubToken","httpProxy"})if(body.containsKey(key)&&body.get(key)==null)throw new IllegalArgumentException("更新设置不能为 null");
+            settings.saveSettings(body.get("proxy"),body.get("githubToken"),body.get("httpProxy"));return updates.status();
         }
     }
     @PostMapping("/install") public Map<String,Object> install(@RequestHeader(value="X-Doumi-Update-Token",required=false) String token,

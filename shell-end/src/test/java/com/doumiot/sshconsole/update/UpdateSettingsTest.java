@@ -5,6 +5,18 @@ import java.nio.file.*;
 import static org.junit.jupiter.api.Assertions.*;
 class UpdateSettingsTest {
  @TempDir Path dir;
+ @Test void httpDownloadProxyPersistsWithoutChangingOtherSettings() throws Exception {
+  com.doumiot.config.DoumiShellStorageProperties storage=new com.doumiot.config.DoumiShellStorageProperties();storage.setDataDir(dir.toString());
+  UpdateSettings settings=new UpdateSettings(storage,new org.springframework.mock.env.MockEnvironment().withProperty("doumi.update.http-proxy","http://127.0.0.1:7890"));
+  assertEquals("http://127.0.0.1:7890",settings.httpProxy());
+  settings.saveSettings(null,null,"http://proxy.internal:8080/");
+  assertEquals("http://proxy.internal:8080",new UpdateSettings(dir,"","").httpProxy());
+  settings.saveProxy("https://gh-proxy.com/");assertEquals("http://proxy.internal:8080",settings.httpProxy());
+  for(String value:new String[]{"http://proxy","http://proxy/","https://proxy:443","http://user:secret@proxy:8080","http://proxy/path","http://proxy?token=secret","socks://proxy:1080","http://proxy:0","http://proxy:99999","http://proxy\r\nx"})
+   assertThrows(IllegalArgumentException.class,()->settings.saveSettings(null,null,value));
+  settings.saveSettings(null,null,"");
+  assertEquals("",new UpdateSettings(storage,new org.springframework.mock.env.MockEnvironment().withProperty("doumi.update.http-proxy","http://environment:80")).httpProxy());
+ }
  @Test void defaultDoesNotRequireOrGenerateManagementToken() throws Exception {
   com.doumiot.config.DoumiShellStorageProperties storage=new com.doumiot.config.DoumiShellStorageProperties();storage.setDataDir(dir.toString());
   UpdateSettings settings=new UpdateSettings(storage,new org.springframework.mock.env.MockEnvironment());

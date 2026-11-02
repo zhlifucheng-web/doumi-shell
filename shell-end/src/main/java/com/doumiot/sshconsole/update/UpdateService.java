@@ -73,17 +73,30 @@ public class UpdateService {
         String[] a=next.split("\\."),b=previous.split("\\.");for(int i=0;i<3;i++){int c=new BigInteger(a[i]).compareTo(new BigInteger(b[i]));if(c!=0)return c>0;}return false;
     }
     private Path jar(){File source=new ApplicationHome(ShellEndApplication.class).getSource();return source==null?null:source.toPath().toAbsolutePath().normalize();}
+    public static boolean managedCgroup(String cgroup) {
+        for(String line:cgroup.split("\\R")) {
+            String[] fields=line.split(":",3);if(fields.length!=3)continue;
+            String path=fields[2];
+            if(path.matches(".*(?:/system\\.slice|/app\\.slice)/[^/]+\\.service(?:/.*)?")
+                ||path.contains("/docker/")||path.contains("/docker-")||path.contains("/kubepods"))return true;
+        }
+        return false;
+    }
+    private static boolean managedRuntime() {
+        if(Files.exists(Path.of("/.dockerenv"))||System.getenv("INVOCATION_ID")!=null||System.getenv("NOTIFY_SOCKET")!=null)return true;
+        try{return Files.exists(Path.of("/proc/self/cgroup"))&&managedCgroup(Files.readString(Path.of("/proc/self/cgroup")));}
+        catch(IOException|SecurityException error){return false;}
+    }
     private Path root() {
         if(!env.getProperty("doumi.update.enabled",Boolean.class,true))throw new IllegalStateException("当前部署已关闭一键更新，请通过部署管理工具升级");
-        if(Files.exists(Path.of("/.dockerenv"))||System.getenv("INVOCATION_ID")!=null||System.getenv("NOTIFY_SOCKET")!=null)
-            throw new IllegalStateException("容器或托管服务请通过部署管理工具更新");
+        if(managedRuntime())throw new IllegalStateException("容器或 systemd 托管服务请通过原部署管理工具更新");
         if(env.getProperty("server.ssl.enabled",Boolean.class,false))throw new IllegalStateException("当前直接 HTTPS 部署请使用手动升级");
         Path root=installRoot(jar(),System.getProperty("os.name"),System.getProperty("os.arch"));
         if(data.equals(root)||root.startsWith(data))throw new IllegalStateException("数据目录与安装目录重叠，无法安全更新");
         return root;
     }
     public Map<String,Object> status() throws IOException {
-        Map<String,Object> result=new LinkedHashMap<>();result.put("currentVersion",version());result.put("proxy",settings.proxy());
+        Map<String,Object> result=new LinkedHashMap<>();result.put("currentVersion",version());result.put("proxy",settings.proxy());result.put("httpProxy",settings.httpProxy());
         result.put("githubTokenConfigured",settings.hasGithubToken());
         result.put("tokenRequired",settings.requiresToken());
         result.put("platform",System.getProperty("os.name").startsWith("Windows")?"Windows x64":(System.getProperty("os.name").equals("Linux")?"Linux x64":System.getProperty("os.name")));
@@ -137,9 +150,11 @@ public class UpdateService {
             String asset=windows?release.getWindowsUrl():release.getLinuxUrl(),checksum=windows?release.getWindowsChecksumUrl():release.getLinuxChecksumUrl();
             Path artifact=job.resolve(asset.substring(asset.lastIndexOf('/')+1)),hash=job.resolve("checksum.sha256");
             String assetRoute=settings.route(asset),checksumRoute=settings.route(checksum);
+            String downloadProxy=settings.httpProxy();
+            UpdateFiles.state(job,"DOWNLOADING","正在下载 SHA-256 校验文件",5);
+            download("SHA-256 校验文件",checksumRoute,downloadProxy,hash,4096,n->{});
             UpdateFiles.state(job,"DOWNLOADING","正在下载安装包",5);
-            UpdateDownload.download(checksumRoute,hash,4096,n->{});
-            UpdateDownload.download(assetRoute,artifact,1024L*1024*1024,n->{try{UpdateFiles.state(job,"DOWNLOADING","正在下载安装包",5+n/2);}catch(IOException e){throw new UncheckedIOException(e);}});
+            download("安装包",assetRoute,downloadProxy,artifact,1024L*1024*1024,n->{try{UpdateFiles.state(job,"DOWNLOADING","正在下载安装包",5+n/2);}catch(IOException e){throw new UncheckedIOException(e);}});
             UpdateFiles.state(job,"VERIFYING","正在校验安装包",56);UpdateFiles.verify(artifact,Files.readString(hash));
             if(!windows) {
                 UpdateFiles.extractLinux(artifact,job.resolve("expanded"),expectedVersion);
@@ -152,8 +167,8 @@ public class UpdateService {
                 String rollbackBase=UpdateSettings.REPOSITORY+"/releases/download/v"+previous+"/Doumi.Shell-"+previous+".msi";
                 Path rollbackMsi=job.resolve("Doumi.Shell-"+previous+".msi"),rollbackHash=job.resolve("rollback.sha256");
                 UpdateFiles.state(job,"PREPARING","正在准备旧版本安装包以便失败恢复",57);
-                UpdateDownload.download(settings.route(rollbackBase+".sha256"),rollbackHash,4096,n->{});
-                UpdateDownload.download(settings.route(rollbackBase),rollbackMsi,1024L*1024*1024,n->{});
+                download("回滚 SHA-256 校验文件",settings.route(rollbackBase+".sha256"),downloadProxy,rollbackHash,4096,n->{});
+                download("回滚安装包",settings.route(rollbackBase),downloadProxy,rollbackMsi,1024L*1024*1024,n->{});
                 UpdateFiles.verify(rollbackMsi,Files.readString(rollbackHash));
             }
             Path helperJar=job.resolve("doumi-updater.jar");Files.copy(jar().getParent().resolve("doumi-updater.jar"),helperJar);
@@ -202,6 +217,10 @@ public class UpdateService {
             if(!handedOff){maintenance.end();scripts.endUpdate();}
             preparing=false;try{lock.release();channel.close();}catch(IOException ignored){}
         }
+    }
+    private static void download(String label,String address,String proxy,Path target,long limit,java.util.function.IntConsumer progress)throws IOException {
+        try{UpdateDownload.download(address,proxy,target,limit,progress);}
+        catch(IOException error){throw new IOException("下载"+label+"失败："+error.getMessage(),error);}
     }
     /** Only trust a managed launcher that is the current JVM's actual parent. */
     public static long managedLauncherPid(String mode,String value,long parentPid) {

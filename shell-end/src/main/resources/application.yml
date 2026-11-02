@@ -9,6 +9,7 @@ doumi:
     enabled: ${DOUMI_UPDATE_ENABLED:true}
     require-token: ${DOUMI_UPDATE_REQUIRE_TOKEN:false}
     proxy: ${DOUMI_UPDATE_PROXY:}
+    http-proxy: ${DOUMI_UPDATE_HTTP_PROXY:}
     token: ${DOUMI_UPDATE_TOKEN:}
     github-token: ${DOUMI_GITHUB_TOKEN:}
 

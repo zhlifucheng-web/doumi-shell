@@ -7,6 +7,8 @@ doumi:
     require-token: ${DOUMI_UPDATE_REQUIRE_TOKEN:false}
     # 可选下载地址前缀，如 https://gh-proxy.com/；留空直连。页面保存的设置优先。
     proxy: ${DOUMI_UPDATE_PROXY:}
+    # 可选 HTTP CONNECT 下载代理，仅转发安装包与校验文件；页面保存的设置优先。
+    http-proxy: ${DOUMI_UPDATE_HTTP_PROXY:}
     # 开启密钥验证后，留空时在数据目录 updates/admin-token 自动生成，不要提交真实密钥。
     token: ${DOUMI_UPDATE_TOKEN:}
     # 可选 GitHub API Token，仅用于 GitHub API 直连；也可在更新页面加密保存。
