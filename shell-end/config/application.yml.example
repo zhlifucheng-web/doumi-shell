@@ -3,10 +3,14 @@ doumi:
   update:
     # 容器/systemd 等托管部署请设为 false，使用部署管理工具更新。
     enabled: ${DOUMI_UPDATE_ENABLED:true}
+    # 默认免密授权；设为 true 后，保存更新设置和安装更新需要管理密钥。
+    require-token: ${DOUMI_UPDATE_REQUIRE_TOKEN:false}
     # 可选下载地址前缀，如 https://gh-proxy.com/；留空直连。页面保存的设置优先。
     proxy: ${DOUMI_UPDATE_PROXY:}
-    # 留空时在数据目录 updates/admin-token 自动生成，不要提交真实密钥。
+    # 开启密钥验证后，留空时在数据目录 updates/admin-token 自动生成，不要提交真实密钥。
     token: ${DOUMI_UPDATE_TOKEN:}
+    # 可选 GitHub API Token，仅用于 GitHub API 直连；也可在更新页面加密保存。
+    github-token: ${DOUMI_GITHUB_TOKEN:}
 
   storage:
     data-dir: ./data
