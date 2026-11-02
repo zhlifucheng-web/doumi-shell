@@ -69,7 +69,7 @@
       <el-button v-if="busy" type="warning" :disabled="submitting || state === 'stopping'" @click="stop">停止</el-button><el-button v-else type="primary" :loading="submitting" :disabled="!providerId || !text.trim() || !!pending.length || uploading" @click="send">发送</el-button>
     </div>
     </div>
-    <details class="ai-help"><summary>使用说明 · 单文件 20 MB / 每次对话 50 MB</summary><p class="ai-footnote">消息、所选附件及工具结果会发送给你配置的厂商。附件仅为临时数据，过期或服务重启后需重新选择；API Key 在服务端加密保存。历史会话可在历史会话列表中恢复或在数据管理中清理。停止不会撤回已启动的操作。</p></details>
+    <details class="ai-help"><summary>使用说明 · 单文件 20 MB / 每次对话 50 MB</summary><p class="ai-footnote">本次服务允许最多 {{ limits.maxRounds }} 轮模型/工具调用，上下文最多 {{ limits.maxContextMessages }} 条消息（约 {{ Math.round(limits.maxContextChars / 1024) }} KB）；单轮最多 {{ limits.maxToolCalls }} 个工具调用。复杂任务可在服务端配置中调大这些上限。</p><p class="ai-footnote">消息、所选附件及工具结果会发送给你配置的厂商。附件仅为临时数据，过期或服务重启后需重新选择；API Key 在服务端加密保存。历史会话可在历史会话列表中恢复或在数据管理中清理。停止不会撤回已启动的操作。</p></details>
     <input ref="fileInput" type="file" multiple hidden @change="attach"><input ref="folderInput" type="file" multiple webkitdirectory hidden @change="attach">
     <div v-if="!fullscreen" class="ai-resize-handle" role="separator" aria-label="调整 AI 助手大小" aria-orientation="diagonal" :aria-valuenow="Math.round(panelLayout.width)" tabindex="0" @pointerdown.stop.prevent="startResize" @keydown="resizeByKeyboard"><el-icon><Rank /></el-icon></div>
       </aside>
@@ -116,6 +116,7 @@ defineEmits(['update:modelValue'])
 const route = useRoute()
 const { managedServer, fileLocation } = storeToRefs(useWorkspaceStore())
 const { style: backgroundStyle } = useBackground()
+const limits = ref({ maxRounds: 24, maxContextMessages: 400, maxContextChars: 1048576, maxToolCalls: 64 })
 const providers = ref([]), providerId = ref(''), previousProviderId = ref(''), conversationId = ref(''), events = ref([]), pending = ref([])
 const state = ref('idle'), busy = ref(false), text = ref(''), error = ref(''), submitting = ref(false)
 const attachments = ref([]), uploading = ref(false), uploadProgress = ref(0)
@@ -233,8 +234,12 @@ function normalizedError(value) {
 }
 function report(e) { error.value = normalizedError(e) || '请求失败，请检查网络连接' }
 async function loadProviders() {
-  try { providers.value = await aiApi.providers(); if (!providerId.value || !providers.value.some(p => p.id === providerId.value)) providerId.value = providers.value[0]?.id || ''; previousProviderId.value = providerId.value }
-  catch (e) { report(e) }
+  try {
+    try { limits.value = { ...limits.value, ...(await aiApi.limits()) } } catch { /* 旧服务端无此接口时使用默认值 */ }
+    providers.value = await aiApi.providers()
+    if (!providerId.value || !providers.value.some(p => p.id === providerId.value)) providerId.value = providers.value[0]?.id || ''
+    previousProviderId.value = providerId.value
+  } catch (e) { report(e) }
 }
 // AI 会话跟随前台终端切换。同一账户可以有多个终端标签，必须监听终端身份，
 // 不能只监听 accountId；分组浏览和主机备注更新不应切换 AI 会话。

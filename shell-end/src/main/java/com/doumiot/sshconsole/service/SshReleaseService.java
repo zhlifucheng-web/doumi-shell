@@ -23,10 +23,17 @@ public class SshReleaseService {
     private Latest cached;
     private long cachedAt;
     private String cachedProxy;
+    private long cachedRevision=-1;
     @Resource private UpdateSettings settings;
 
     public SshReleaseService() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory() {
+            @Override protected void prepareConnection(java.net.HttpURLConnection connection,String method) throws java.io.IOException {
+                super.prepareConnection(connection,method);
+                // The API URL is fixed. Never forward credentials to a redirect destination.
+                connection.setInstanceFollowRedirects(false);
+            }
+        };
         factory.setConnectTimeout(5000);
         factory.setReadTimeout(10000);
         http = new RestTemplate(factory);
@@ -34,17 +41,22 @@ public class SshReleaseService {
 
     public synchronized Latest latest(boolean refresh) {
         String proxy=settings==null?"":settings.proxy();
-        if (!refresh && java.util.Objects.equals(proxy,cachedProxy) && cached != null && System.currentTimeMillis() - cachedAt < 60_000) return cached;
+        long revision=settings==null?0:settings.revision();
+        if (!refresh && java.util.Objects.equals(proxy,cachedProxy) && revision==cachedRevision && cached != null && System.currentTimeMillis() - cachedAt < 60_000) return cached;
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setAccept(java.util.Collections.singletonList(MediaType.APPLICATION_JSON));
             headers.set(HttpHeaders.USER_AGENT, "Doumi-Shell-Update-Check");
             headers.setCacheControl("no-cache");
+            String githubToken=settings==null?"":settings.githubToken();
+            if(!githubToken.isEmpty())headers.setBearerAuth(githubToken);
             String response;
             try { response = metadata(API,headers); }
             catch (org.springframework.web.client.RestClientException directFailure) {
+                if(directFailure instanceof HttpStatusCodeException&&((HttpStatusCodeException)directFailure).getRawStatusCode()==401)throw directFailure;
                 if(proxy.isEmpty())throw directFailure;
-                response=metadata(settings.route(API),headers);
+                HttpHeaders anonymous=new HttpHeaders();anonymous.putAll(headers);anonymous.remove(HttpHeaders.AUTHORIZATION);
+                response=metadata(settings.route(API),anonymous);
             }
             JsonNode release = json.readTree(response);
             if (release == null || release.isNull()) return failure("GitHub 暂未返回可用发布版本，请稍后重试或直接打开下载页面。");
@@ -71,13 +83,17 @@ public class SshReleaseService {
             cached = latest;
             cachedAt = System.currentTimeMillis();
             cachedProxy=proxy;
+            cachedRevision=revision;
             return latest;
         } catch (HttpStatusCodeException error) {
             int status = error.getRawStatusCode();
+            if(status==401)return failure("GitHub API Token 无效或已过期，请在更新设置中替换或清除 Token。");
             if (status == 403 || status == 429) return failure("GitHub 拒绝或限制了更新请求（HTTP " + status + "），请稍后重试或打开下载页面。");
             return failure("GitHub 更新服务返回 HTTP " + status + "，无法确认最新版本，请稍后重试。");
         } catch (ResourceAccessException error) {
             return failure("部署 Doumi Shell 的机器无法连接 GitHub，可能是连接超时、DNS 或网络限制。请检查服务器网络，或直接打开下载页面。");
+        } catch (IllegalStateException error) {
+            return failure("GitHub API Token 无法读取，请重新保存 Token 或检查部署机器的凭据主密钥。");
         } catch (Exception error) {
             return failure("无法解析 GitHub 版本信息，本次未能确认最新版本，请稍后重试或打开下载页面。");
         }

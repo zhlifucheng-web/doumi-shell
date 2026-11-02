@@ -8,9 +8,9 @@ Doumi Shell 是一款支持 Windows 和 Linux 的 SSH 运维工作台。双击�
 
 **局域网部署一次，多设备随时使用。** 服务可部署在 Windows 或 Linux 上，局域网内的 Windows、Linux、macOS 电脑使用现代浏览器访问同一个地址即可，无需在每台电脑重复安装客户端。
 
-Windows MSI 自带运行环境，Linux 部署需要 Java 17；访问端只需浏览器，无需安装 Java、Node.js 或 Doumi Shell。程序升级在部署机器上完成，其他设备重新打开网页即可使用新版界面。
+Windows MSI 自带运行环境，Linux 安装包需要 Java 17；Docker 部署自带应用运行环境，宿主机只需 Docker Engine 和 Docker Compose V2。访问端只需浏览器，无需安装 Java、Node.js 或 Doumi Shell。程序升级在部署机器上完成，其他设备重新打开网页即可使用新版界面。
 
-[下载安装](https://github.com/zhlifucheng-web/doumi-shell/releases) · [使用教程](docs/user-guide.md) · [Windows 远程桌面](docs/rdp.md) · [AI API](docs/ai-api.md) · [非商业许可](LICENSE)
+[GitHub 下载](https://github.com/zhlifucheng-web/doumi-shell/releases) · [GitHub 仓库](https://github.com/zhlifucheng-web/doumi-shell) · [使用教程](docs/user-guide.md) · [AI API](docs/ai-api.md) · [非商业许可](LICENSE) · [Windows 远程桌面](docs/rdp.md)
 
 ## 亮点功能
 
@@ -96,17 +96,26 @@ AI 助手可读取服务器资源、排查进程、执行命令和管理文件�
 
 ### Docker 部署
 
-在源码仓库根目录运行 `docker compose up -d --build`，即可构建应用并自动拉取、启动 guacd。默认访问 `http://127.0.0.1:61880`，支持通过 `.env` 修改监听 IP 和端口；数据使用独立卷持久化。详见 [Docker 部署说明](docs/docker.md)。
+在源码仓库根目录执行：
+
+```bash
+cp deploy/docker.env.example .env
+docker compose up -d --build
+```
+
+默认访问 `http://127.0.0.1:61880`。局域网访问时，将 `.env` 中的 `DOUMI_BIND_IP` 改为部署机器的局域网 IP；`DOUMI_HTTP_PORT` 可修改端口。Compose 自动管理应用和 guacd，数据使用独立卷持久化。详见 [Docker 部署说明](docs/docker.md)。
 
 ### 局域网部署
 
-1. 在一台机器上安装并启动 Doumi Shell，保持程序运行，确认该机器能通过 SSH 访问目标服务器。
-2. 在部署机器的防火墙放行实际使用的 TCP 端口，默认是 80。
+1. 在一台机器上安装并启动 Doumi Shell，保持程序运行，确认该机器能访问目标 SSH 服务器；RDP 使用的 guacd 网关需能访问目标 Windows。
+2. 确认应用监听地址和实际 TCP 端口允许局域网访问，并按部署环境放行端口。Windows / Linux 安装包默认端口为 80；Docker 默认仅监听本机的 61880 端口，需先配置 `DOUMI_BIND_IP`。
 3. 在局域网其他电脑的浏览器中打开 `http://部署机器局域网IP:端口/`。
 
 ## 一键更新与自动构建
 
-“关于”页面支持 Windows / Linux 正式安装包一键更新，可配置 GitHub 加速代理（例如 `https://gh-proxy.com/`），并在更新失败时恢复旧程序和数据。首次需手动安装带更新器的版本，之后输入部署机器的更新管理密钥即可操作。
+“关于”页面支持 Windows / Linux 正式安装包一键更新，可配置 GitHub 加速代理（例如 `https://gh-proxy.com/`），并在更新失败时恢复旧程序和数据。首次需手动安装带更新器的版本。默认免填更新管理密钥，可通过 `DOUMI_UPDATE_REQUIRE_TOKEN=true` 开启密钥验证。
+
+Docker 部署关闭应用内一键更新。更新源码后运行 `docker compose up -d --build` 重建应用，原数据卷继续保留；现有连接需重新打开。
 
 仓库提供 GitHub Actions：提交/PR 自动验证，推送 `vX.Y.Z` 标签后构建两个平台并发布完整 Release，手动触发仅生成构建附件。详见[更新与发布说明](docs/self-update.md)。
 
@@ -123,6 +132,8 @@ AI 助手可读取服务器资源、排查进程、执行命令和管理文件�
 
 对话可以查看服务器资源、文件、进程、存储和脚本，创建及修改分组、主机与账户，也可以执行命令、编辑文件、管理定时任务及导入导出配置。
 
+复杂任务的执行轮次和上下文限制支持服务端配置。默认单次请求最多 24 轮模型/工具调用、400 条上下文消息、约 1 MB 上下文字符、单轮 64 个工具调用；可在外置 `config/application.yml` 中调整，或使用环境变量 `DOUMI_AI_MAX_ROUNDS`、`DOUMI_AI_MAX_CONTEXT_MESSAGES`、`DOUMI_AI_MAX_CONTEXT_CHARS`、`DOUMI_AI_MAX_TOOL_CALLS` 覆盖。应用会在 AI 助手的使用说明中显示当前生效限制。限制不能超过所选模型自身的上下文窗口，厂商返回上下文超限时应降低配置或新建会话。
+
 ## Windows 远程桌面
 
 通过浏览器连接 Windows RDP，SSH/RDP 共用账户配置与主工作区标签，支持测试未保存的连接配置、按连接忽略证书、多个桌面标签及全屏。需要可达的 Linux guacd 网关；Linux 启动脚本可按需管理本机 guacd 或 Docker 容器，Windows MSI 使用外部网关。仅使用 SSH 无需安装网关或 Docker。详见[远程桌面配置](docs/rdp.md)。
@@ -131,6 +142,7 @@ AI 助手可读取服务器资源、排查进程、执行命令和管理文件�
 
 - Windows 数据保存在 `%LOCALAPPDATA%\DoumiShell\data`
 - Linux 默认保存在启动目录的 `data/`，也可通过 `DOUMI_DATA_DIR` 指定
+- Docker 使用 `doumi-data` 命名卷，默认实际卷名为 `doumi-shell_doumi-data`，挂载到容器的 `/data`；`docker compose down` 保留数据卷
 - 日志位于数据目录的 `logs` 子目录
 
 ## 使用许可（非商业）

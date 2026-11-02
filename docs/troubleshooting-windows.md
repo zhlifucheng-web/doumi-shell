@@ -44,7 +44,7 @@ Get-ChildItem "$dir\runtime\bin\server\jvm.dll", "$dir\app\doumi-shell.jar" -Err
    托盘右键 **Exit Doumi Shell** 完全退出后再运行新 MSI。仍失败则「设置 → 应用」卸载 Doumi Shell，删除空安装目录后重装。
 
 4. **MSI 损坏或与系统不匹配**  
-   从 [Gitee Releases](https://gitee.com/hahadoumi/web-shell/releases) 重新下载，核对同目录下的 `.sha256`；需 **Windows 10/11 64 位**。
+   从 [GitHub Releases](https://github.com/zhlifucheng-web/doumi-shell/releases) 重新下载，核对同目录下的 `.sha256`；需 **Windows 10/11 64 位**。
 
 ## 3. 备用启动（绕过 exe 启动器）
 

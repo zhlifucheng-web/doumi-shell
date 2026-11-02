@@ -1,7 +1,20 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createUpdateClient, updatePhase } from '../src/utils/selfUpdate.js'
+import { buildUpdateSettings, canManageUpdates, createUpdateClient, updatePhase } from '../src/utils/selfUpdate.js'
 const reply = data => ({ ok: true, json: async () => ({ success: true, code: 200, data }) })
+test('default authorization follows server policy and remains locked until status is known', () => {
+  assert.equal(canManageUpdates(null, ''), false)
+  assert.equal(canManageUpdates({ tokenRequired: false }, ''), true)
+  assert.equal(canManageUpdates({ tokenRequired: true }, ''), false)
+  assert.equal(canManageUpdates({ tokenRequired: true }, '   '), false)
+  assert.equal(canManageUpdates({ tokenRequired: true }, 'management-secret'), true)
+  assert.equal(canManageUpdates({}, ''), false)
+})
+test('saving proxy retains an existing GitHub token unless explicitly replaced or cleared', () => {
+  assert.deepEqual(buildUpdateSettings('', ''), { proxy: '' })
+  assert.deepEqual(buildUpdateSettings('https://gh-proxy.com/', ' fixtureToken '), { proxy: 'https://gh-proxy.com/', githubToken: 'fixtureToken' })
+  assert.deepEqual(buildUpdateSettings('unsaved-proxy', 'unsaved-token', true), { githubToken: '' })
+})
 test('settings and installation send token headers and JSON only to the local update API', async () => {
   const calls = []
   const client = createUpdateClient({ fetchImpl: async (url, options) => { calls.push({ url, options }); return reply({ phase: 'IDLE' }) } })

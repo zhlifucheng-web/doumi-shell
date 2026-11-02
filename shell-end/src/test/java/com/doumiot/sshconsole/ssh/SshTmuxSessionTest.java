@@ -2,6 +2,8 @@ package com.doumiot.sshconsole.ssh;
 
 import net.schmizz.sshj.connection.channel.Channel;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
@@ -87,7 +89,8 @@ class SshTmuxSessionTest {
         assertThrows(IOException.class, () -> manager.prepare("persistent", null, 120, 40, false));
     }
 
-    @Test void clientEncodingControlsDecorationsWithoutTouchingPaneBytes() throws Exception {
+    @Test @DisabledOnOs(OS.WINDOWS)
+    void clientEncodingControlsDecorationsWithoutTouchingPaneBytes() throws Exception {
         // Execute the actual attach shell with a fake external tmux, rather than assert command text.
         java.nio.file.Path directory=java.nio.file.Files.createTempDirectory("tmux-encoding-");
         java.nio.file.Path tmux=directory.resolve("tmux");
@@ -138,12 +141,14 @@ class SshTmuxSessionTest {
         SshTmuxSession manager=new SshTmuxSession((cmd,seconds)->{calls.incrementAndGet();return result(1,"");});
         assertThrows(IOException.class,()->manager.prepare("shared",null,120,40,true));assertEquals(1,calls.get());
     }
-    @Test void posixWatchdogActuallyTerminatesABlockedShortCommand() throws Exception {
+    @Test @DisabledOnOs(OS.WINDOWS)
+    void posixWatchdogActuallyTerminatesABlockedShortCommand() throws Exception {
         Process p=new ProcessBuilder("sh","-c",SshTmuxSession.boundedCommand("exec sleep 20",1)).start();
         try {assertTrue(p.waitFor(5,TimeUnit.SECONDS),"startup must not wait for the blocked process");assertEquals(143,p.exitValue());}
         finally {p.destroyForcibly();}
     }
-    @Test void quickPreparationDoesNotWaitForTheWatchdogSleep() throws Exception {
+    @Test @DisabledOnOs(OS.WINDOWS)
+    void quickPreparationDoesNotWaitForTheWatchdogSleep() throws Exception {
         Process p=new ProcessBuilder("sh","-c",SshTmuxSession.boundedCommand("printf 'ok'",3)).start();
         try {assertTrue(p.waitFor(2,TimeUnit.SECONDS));assertEquals(0,p.exitValue());assertEquals('o',p.getInputStream().read());assertEquals('k',p.getInputStream().read());assertEquals(-1,p.getInputStream().read());}
         finally {p.destroyForcibly();}

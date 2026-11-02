@@ -28,6 +28,7 @@ public class AiController {
     @ModelAttribute void noCache(HttpServletResponse response){response.setHeader("Cache-Control","no-store");}
     @ExceptionHandler(IllegalArgumentException.class) public Object invalid(IllegalArgumentException e){return com.doumiot.spring.result.Result.failure(ParamExceptionEnum.IN_PARAM_EMPTY,e.getCause()==null?e.getMessage():"AI 请求参数格式无效");}
     @GetMapping("/providers") public Object providers(){return providers.list();}
+    @GetMapping("/limits") public Object limits(){return chats.limits();}
     @PostMapping("/providers") public Object save(@RequestBody AiProviderService.Settings request){return providers.save(request);}
     @DeleteMapping("/providers/{id}") public void deleteProvider(@PathVariable String id){providers.delete(id);}
     @PostMapping("/providers/{id}/test") public Object test(@PathVariable String id){return chats.test(id);}
