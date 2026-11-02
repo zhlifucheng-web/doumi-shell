@@ -5,11 +5,21 @@
 ## 使用一键更新
 
 1. 打开“关于”，检查最新正式版本。
-2. 从**部署机器**的数据目录读取 `updates/admin-token`，填入“更新管理密钥”。Windows MSI 默认位置为 `%LOCALAPPDATA%\DoumiShell\data\updates\admin-token`；Linux 默认是安装目录的 `data/updates/admin-token`，设置过 `DOUMI_DATA_DIR` 时以实际目录为准。也可通过 `DOUMI_UPDATE_TOKEN` 设置固定密钥。不要将密钥放入仓库。
+2. 默认免密授权，不显示“更新管理密钥”输入框。若部署端设置了 `DOUMI_UPDATE_REQUIRE_TOKEN=true`，从**部署机器**的数据目录读取 `updates/admin-token` 并填入；Windows MSI 默认位置为 `%LOCALAPPDATA%\DoumiShell\data\updates\admin-token`，Linux 默认是安装目录的 `data/updates/admin-token`，设置过 `DOUMI_DATA_DIR` 时以实际目录为准。也可通过 `DOUMI_UPDATE_TOKEN` 设置固定密钥。不要将密钥放入仓库。
 3. 按需填写“GitHub 加速代理”，保存后会重新检查版本。留空表示直连，例如填写 `https://gh-proxy.com/` 后会通过 `https://gh-proxy.com/https://github.com/...` 下载包与校验文件。版本检测先直连 GitHub API，失败后尝试加速代理；该服务也需要支持 GitHub API 转发。这里只支持地址前缀模式，不是 HTTP CONNECT/SOCKS 代理配置。不接受带账号密码、查询参数或片段的前缀。
 4. 等待文件传输和脚本任务结束，再点击“更新至 v…”。更新会断开 SSH 会话并短暂停止服务。页面会显示进度并在重启期间自动重试连接。
 
 密钥不会出现在接口响应中，也不会保存在浏览器存储中。代理设置持久化在数据目录的 `updates/settings.properties`；页面保存的值优先于 `DOUMI_UPDATE_PROXY`。首次启动也可通过 `DOUMI_UPDATE_PROXY=https://gh-proxy.com/` 设定默认值。
+
+管理密钥校验由部署配置 `doumi.update.require-token`（环境变量 `DOUMI_UPDATE_REQUIRE_TOKEN`）控制，默认 `false`。免密模式下，能访问 Doumi Shell 的用户即可保存更新设置、清除 GitHub Token 及安装更新；同源校验和安装确认仍保留。设为 `true` 并重启后恢复密钥验证；仅设置 `DOUMI_UPDATE_TOKEN` 不会自动开启验证。关闭时不会创建或读取管理密钥文件，已有文件保留，以便后续重新开启。
+
+### GitHub API Token
+
+GitHub 未认证 API 请求通常限制为每个出口 IP 每小时 60 次；配置个人访问 Token 后，通常可提高到每个用户每小时 5,000 次，实际额度以 GitHub 返回值为准。在“关于 → 一键更新”填写可选的“GitHub API Token”后点击“保存更新设置”；启用了管理密钥验证时需同时填写管理密钥。也可在部署端配置环境变量 `DOUMI_GITHUB_TOKEN`，或外置配置 `doumi.update.github-token`。公开仓库版本查询使用最小只读权限即可，无需授予写权限。
+
+页面保存的 Token 复用现有凭据主密钥加密，存储在 `updates/settings.properties`，优先于环境变量。页面只返回“已配置”状态；输入框留空保存时保留原 Token，点击“清除 Token”后禁用认证（包括环境变量的默认值）。两个密钥用途不同：更新管理密钥用于授权本机配置和安装操作，GitHub Token 用于提高 GitHub API 查询额度。
+
+Token 只随直连 `api.github.com` 的版本查询发送，不发送给加速代理、安装包下载地址或重定向目标。直连失败后，代理查询仍使用匿名请求，因此不会获得该 Token 的认证额度。无效或过期 Token 会提示替换或清除。Token 不会回显、写入浏览器存储或包含在更新任务状态中；不要将真实 Token 写入仓库。它提高查询限额，但不能解决代理地址被错误解析或证书过期的问题。
 
 程序先完整下载并校验 SHA-256，准备失败时当前服务继续运行。停止服务后备份旧程序和数据，再安装新版，检查版本号和本次启动标识。失败时恢复旧程序及数据并启动旧版本。Windows 会额外下载并校验当前版本的 MSI，以便恢复 Windows Installer 注册状态；因此历史版本的 MSI 和对应校验文件须保留。Linux 保留原数据目录、密钥和外置配置。启动目录、端口、环境、JVM 参数及程序参数会沿用。
 

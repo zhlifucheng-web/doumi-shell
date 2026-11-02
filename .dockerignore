@@ -16,3 +16,5 @@ shell-front/.env*
 shell-end/src/main/resources/static/
 **/__pycache__/
 **/*.log
+!deploy/
+!deploy/maven-settings.xml

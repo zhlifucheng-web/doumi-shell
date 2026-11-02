@@ -7,8 +7,10 @@ logging:
 doumi:
   update:
     enabled: ${DOUMI_UPDATE_ENABLED:true}
+    require-token: ${DOUMI_UPDATE_REQUIRE_TOKEN:false}
     proxy: ${DOUMI_UPDATE_PROXY:}
     token: ${DOUMI_UPDATE_TOKEN:}
+    github-token: ${DOUMI_GITHUB_TOKEN:}
 
   storage:
     data-dir: ${DOUMI_DATA_DIR:./data}

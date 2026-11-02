@@ -32,3 +32,15 @@ test('desktop tabs can open on LAN HTTP where randomUUID is unavailable', () => 
     assert.match(tab.tabId, /^rdp-3-/)
   } finally { Object.defineProperty(globalThis, 'crypto', previous) }
 })
+
+test('new desktop tabs snapshot the account default without changing an existing tab resolution', () => {
+  const account = { id: 3, resolution: '1920x1080' }
+  const first = createRdpTab(account, { name: 'Windows' }, [])
+  assert.equal(first.rdpResolution, '1920x1080')
+  first.rdpResolution = '1600x1000'
+  account.resolution = '2560x1440'
+  const second = createRdpTab(account, { name: 'Windows' }, [first])
+  assert.equal(first.rdpResolution, '1600x1000')
+  assert.equal(second.rdpResolution, '2560x1440')
+  assert.equal(createRdpTab({ id: 5 }, {}, []).rdpResolution, 'window')
+})

@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS rdp_connection (
   domain TEXT NOT NULL DEFAULT '',
   port INTEGER NOT NULL DEFAULT 3389,
   ignore_certificate INTEGER NOT NULL DEFAULT 0,
+  resolution TEXT NOT NULL DEFAULT 'window',
   enabled INTEGER NOT NULL DEFAULT 1,
   secret_enc BLOB NOT NULL,
   remark TEXT NOT NULL DEFAULT '',

@@ -84,6 +84,8 @@ public class UpdateService {
     }
     public Map<String,Object> status() throws IOException {
         Map<String,Object> result=new LinkedHashMap<>();result.put("currentVersion",version());result.put("proxy",settings.proxy());
+        result.put("githubTokenConfigured",settings.hasGithubToken());
+        result.put("tokenRequired",settings.requiresToken());
         result.put("platform",System.getProperty("os.name").startsWith("Windows")?"Windows x64":(System.getProperty("os.name").equals("Linux")?"Linux x64":System.getProperty("os.name")));
         try{root();result.put("supported",true);}catch(IllegalStateException e){result.put("supported",false);result.put("reason",e.getMessage());}
         Path job=currentJob();String phase="IDLE";

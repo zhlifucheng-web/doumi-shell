@@ -25,7 +25,7 @@ test('authentication and network errors have distinct recovery guidance', () => 
     assert.equal(describeRdpError(text).kind, 'authentication')
     assert.match(describeRdpError(text).message, /用户名.*密码/)
   }
-  for (const text of ['Connection refused', 'ERRCONNECT_CONNECT_FAILED', 'Connection timed out', 'guacd unavailable']) {
+  for (const text of ['Connection refused', 'ERRCONNECT_CONNECT_FAILED', 'Connection timed out']) {
     assert.equal(describeRdpError(text).kind, 'network')
     assert.match(describeRdpError(text).message, /地址.*端口/)
   }
@@ -72,4 +72,15 @@ test('a tentative certificate hint in a TLS error remains a security connection 
 test('explicit Chinese verification failures remain recognizable', () => {
   assert.equal(describeRdpError('服务器证书验证失败').kind, 'certificate')
   assert.equal(describeRdpError('身份验证失败').kind, 'authentication')
+})
+
+test('gateway failures explain server-side guacd installation without blaming Windows credentials',()=>{
+  for(const text of ['[GUACD_UNAVAILABLE]','guacd unavailable']) {
+    const result=describeRdpError(text)
+    assert.equal(result.kind,'gateway');assert.match(result.message,/安装.*启动.*guacd/)
+    assert.match(result.message,/项目.*服务器/);assert.doesNotMatch(result.message,/密码|用户名/)
+  }
+  assert.equal(describeRdpError('[GUACD_DISABLED]').kind,'gateway')
+  const failed=describeRdpError('[GUACD_CHECK_FAILED]')
+  assert.equal(failed.kind,'gateway-check');assert.doesNotMatch(failed.message,/安装/)
 })

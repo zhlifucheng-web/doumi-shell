@@ -14,7 +14,7 @@ docker compose ps
 
 默认访问 <http://127.0.0.1:61880>。局域网访问时，在 `.env` 将 `DOUMI_BIND_IP` 改为部署机器的局域网 IP；`DOUMI_HTTP_PORT` 可修改宿主机端口。应用使用容器网络中的 `guacd:4822`，guacd 不映射宿主机端口。已有反向代理可继续转发到应用端口，并保留 WebSocket Upgrade 配置。
 
-修改 `.env` 后运行 `docker compose up -d`。如需通过镜像仓库镜像地址拉取基础镜像或 guacd，可设置示例文件中的 `NODE_IMAGE`、`MAVEN_IMAGE`、`JAVA_IMAGE`、`GUACD_IMAGE`；保留对应版本和 guacd 的 RDP 支持。`DOUMI_IMAGE` 可指定应用镜像标签。镜像拉取失败时，Compose 会保留原始错误输出，可据此处理仓库连通性或认证。
+修改 `.env` 后运行 `docker compose up -d`。如需通过镜像仓库镜像地址拉取基础镜像或 guacd，可设置示例文件中的 `NODE_IMAGE`、`MAVEN_IMAGE`、`JAVA_IMAGE`、`GUACD_IMAGE`；保留对应版本和 guacd 的 RDP 支持。`MAVEN_MIRROR_URL` 可配置 Java 构建依赖仓库，默认是官方 Maven Central 的 `https://repo1.maven.org/maven2`；只影响构建，不改变应用或 guacd 的网络配置。`DOUMI_IMAGE` 可指定应用镜像标签。镜像拉取失败时，Compose 会保留原始错误输出，可据此处理仓库连通性或认证。
 
 ## 数据与更新
 

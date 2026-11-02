@@ -22,6 +22,24 @@ class UpdateServiceTest {
   assertTrue(UpdateService.newer("1.0.100","1.0.99"));assertFalse(UpdateService.newer("1.0.99","1.0.100"));
   assertFalse(UpdateService.newer("1.0.99","1.0.99"));assertThrows(IllegalArgumentException.class,()->UpdateService.newer("../bad","1.0.99"));
  }
+ @Test void statusExposesOnlyGithubTokenPresence() throws Exception {
+  com.doumiot.config.DoumiShellStorageProperties storage=new com.doumiot.config.DoumiShellStorageProperties();storage.setDataDir(dir.toString());
+  org.springframework.mock.env.MockEnvironment env=new org.springframework.mock.env.MockEnvironment().withProperty("doumi.update.github-token","ghp_fixtureStatusSecret");
+  UpdateSettings settings=new UpdateSettings(storage,env);
+  UpdateService service=new UpdateService(settings,null,new UpdateMaintenance(),null,null,storage,env,null,null);
+  try {
+   java.util.Map<String,Object> status=service.status();assertEquals(true,status.get("githubTokenConfigured"));
+   assertEquals(false,status.get("tokenRequired"));
+   assertFalse(status.toString().contains("ghp_fixtureStatusSecret"));assertFalse(status.containsKey("githubToken"));
+  }finally{service.close();}
+ }
+ @Test void statusReportsExplicitlyEnabledManagementTokenPolicy() throws Exception {
+  com.doumiot.config.DoumiShellStorageProperties storage=new com.doumiot.config.DoumiShellStorageProperties();storage.setDataDir(dir.toString());
+  org.springframework.mock.env.MockEnvironment env=new org.springframework.mock.env.MockEnvironment().withProperty("doumi.update.require-token","true").withProperty("doumi.update.token","fixture-management-secret");
+  UpdateService service=new UpdateService(new UpdateSettings(storage,env),null,new UpdateMaintenance(),null,null,storage,env,null,null);
+  try {java.util.Map<String,Object> status=service.status();assertEquals(true,status.get("tokenRequired"));assertFalse(status.toString().contains("fixture-management-secret"));}
+  finally{service.close();}
+ }
  @Test void candidateRejectsBusinessWorkUntilInstallerCommits() throws Exception {
   UpdateSettings settings=new UpdateSettings(dir,"","");
   String id=java.util.UUID.randomUUID().toString();Path job=settings.directory().resolve(id);Files.createDirectory(job);

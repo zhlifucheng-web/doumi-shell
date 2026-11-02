@@ -128,7 +128,7 @@ GBK 等多字节编码在首次接管普通 Tail 时需要确定字符边界；�
 
 Windows 使用 MSI 安装包；Linux x64 解压后使用 Java 17 运行 `run-linux.sh`。Linux 部署后，局域网设备可通过 `http://服务器IP:端口/` 访问，需放行对应端口。默认端口为 80，可用 `DOUMI_PORT` 修改，用 `DOUMI_DATA_DIR` 指定独立数据目录。
 
-“关于 → 检查更新”读取 GitHub 最新正式版本。带更新器的 Windows / Linux 安装包可在同页输入更新管理密钥，按需设置加速代理后执行“一键更新”；失败时自动恢复旧程序及数据。首次安装带更新器的版本、容器和托管服务使用原部署方式升级。更新会中断当前连接，应先等待文件传输及脚本任务结束。详见[一键更新与自动发布](https://github.com/zhlifucheng-web/doumi-shell/blob/main/docs/self-update.md)。
+“关于 → 检查更新”读取 GitHub 最新正式版本。带更新器的 Windows / Linux 安装包可在同页按需设置加速代理后执行“一键更新”，默认免填管理密钥；部署端设置 `DOUMI_UPDATE_REQUIRE_TOKEN=true` 后需输入更新管理密钥。失败时自动恢复旧程序及数据。首次安装带更新器的版本、容器和托管服务使用原部署方式升级。更新会中断当前连接，应先等待文件传输及脚本任务结束。详见[一键更新与自动发布](https://github.com/zhlifucheng-web/doumi-shell/blob/main/docs/self-update.md)。
 
 | 情况 | 检查方法 |
 | --- | --- |

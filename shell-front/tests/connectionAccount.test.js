@@ -15,7 +15,23 @@ test('opening an account never copies persisted plaintext credentials into the d
 test('new RDP saves optional name as username and an explicit certificate preference', () => {
   const form = accountConnectionForm({ protocol: 'RDP', hostId: 2 })
   Object.assign(form, { username: ' alice ', password: ' p ', remark: 'office', sortOrder: 4 })
-  assert.deepEqual(accountConnectionPayload(form), { hostId: 2, name: 'alice', username: 'alice', password: ' p ', domain: '', port: 3389, ignoreCertificate: false, remark: 'office', sortOrder: 4, enabled: 1 })
+  assert.deepEqual(accountConnectionPayload(form), { hostId: 2, name: 'alice', username: 'alice', password: ' p ', domain: '', port: 3389, ignoreCertificate: false, resolution: 'window', remark: 'office', sortOrder: 4, enabled: 1 })
+})
+
+test('RDP account resolution survives preset and custom edits and can return to following the window', () => {
+  for (const saved of ['1920x1080', '1600x1000']) {
+    const form = accountConnectionForm({ protocol: 'RDP', id: 3, hostId: 2, username: 'alice', resolution: saved })
+    assert.equal(accountConnectionPayload(form).resolution, saved)
+    if (saved === '1600x1000') {
+      assert.equal(form.resolution, 'custom'); assert.equal(form.customWidth, 1600); assert.equal(form.customHeight, 1000)
+      form.customWidth = 1680
+      assert.equal(accountConnectionPayload(form).resolution, '1680x1000')
+      form.customWidth = 1601
+      assert.throws(() => accountConnectionPayload(form), /分辨率/)
+    }
+    form.resolution = 'window'
+    assert.equal(accountConnectionPayload(form).resolution, 'window')
+  }
 })
 
 test('edited RDP tests unsaved fields while omitting a blank stored password replacement', () => {

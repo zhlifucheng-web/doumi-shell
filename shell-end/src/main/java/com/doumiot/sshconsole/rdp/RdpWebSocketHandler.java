@@ -71,7 +71,7 @@ public class RdpWebSocketHandler extends TextWebSocketHandler implements SubProt
                 send(bridge,instruction.toString());
             }
         } catch(Exception error) {
-            if(!bridge.ticket.closed.get()) fail(bridge,"RDP 连接失败，请检查 guacd、Windows 远程桌面、账户和证书设置",GuacamoleStatus.UPSTREAM_ERROR);
+            if(!bridge.ticket.closed.get()) fail(bridge,error instanceof RdpGatewayException ? "[GUACD_UNAVAILABLE]" : "RDP 连接失败，请检查 Windows 远程桌面、账户和证书设置",GuacamoleStatus.UPSTREAM_ERROR);
         } finally { close(bridge,"gateway-eof"); }
     }
     private void write(Bridge bridge) {
@@ -80,6 +80,16 @@ public class RdpWebSocketHandler extends TextWebSocketHandler implements SubProt
                 if(instruction.getOpcode().isEmpty()) {
                     if(instruction.getArgs().size()==2 && "ping".equals(instruction.getArgs().get(0))) {
                         try { send(bridge,instruction.toString()); } catch(IOException error) { throw new GuacamoleServerException("浏览器连接已断开",error); }
+                    }
+                    return null;
+                }
+                if (bridge.clipboard.accept(instruction)) {
+                    // guacd 1.6 does not ACK clipboard streams. Acknowledge only
+                    // after the upstream write to bound browser-side producers.
+                    bridge.socket.getWriter().writeInstruction(instruction);
+                    if (!"end".equals(instruction.getOpcode())) {
+                        try {send(bridge,new GuacamoleInstruction("ack",instruction.getArgs().get(0),"OK","0").toString());}
+                        catch(IOException error) {throw new GuacamoleServerException("浏览器连接已断开",error);}
                     }
                     return null;
                 }
@@ -140,6 +150,7 @@ public class RdpWebSocketHandler extends TextWebSocketHandler implements SubProt
         final RdpSessionService.Ticket ticket;
         final WebSocketSession browser;
         final RdpInputBuffer input=new RdpInputBuffer();
+        final RdpClipboardInput clipboard=new RdpClipboardInput();
         final AtomicReference<String> reason=new AtomicReference<>();
         final long startedAt=System.currentTimeMillis();
         volatile GuacamoleSocket socket;

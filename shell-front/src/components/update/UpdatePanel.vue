@@ -7,7 +7,7 @@
     <p class="update-hint">由部署机器下载并安装 GitHub 正式版本。更新期间服务会重启，SSH 连接会断开，请先结束文件传输及脚本任务。</p>
     <el-alert v-if="state && !state.supported" :title="state.reason" type="info" :closable="false" show-icon />
     <el-form label-position="top" @submit.prevent>
-      <el-form-item label="更新管理密钥">
+      <el-form-item v-if="state && tokenRequired" label="更新管理密钥">
         <el-input v-model="token" type="password" show-password autocomplete="off" placeholder="输入部署机器的更新管理密钥" :disabled="busy" />
         <p class="field-help">从部署机器数据目录下的 updates/admin-token 文件读取，或使用部署时设置的 DOUMI_UPDATE_TOKEN。密钥仅用于本页操作，不会保存在浏览器中。</p>
       </el-form-item>
@@ -15,9 +15,16 @@
         <el-input v-model="proxy" placeholder="例如 https://gh-proxy.com/；留空时直连 GitHub" :disabled="busy || saving" autocomplete="off" />
         <p class="field-help">以“代理前缀 + 完整 GitHub 地址”下载。版本检测直连失败时也会尝试代理，需代理服务支持 GitHub API。</p>
       </el-form-item>
+      <el-form-item label="GitHub API Token（可选）">
+        <el-input v-model="githubToken" type="password" show-password autocomplete="off" :placeholder="state?.githubTokenConfigured ? '已配置，留空保持不变' : '输入 GitHub Token，提高版本查询限额'" :disabled="busy || saving" />
+        <div class="github-token-actions">
+          <span class="field-help">仅发送给 GitHub API，不发送给加速代理。</span>
+          <el-button v-if="state?.githubTokenConfigured" link type="danger" :disabled="busy || saving || !authorized" @click="save(true)">清除 Token</el-button>
+        </div>
+      </el-form-item>
       <div class="update-buttons">
-        <el-button :loading="saving" :disabled="busy || !token || !state" @click="save">保存代理设置</el-button>
-        <el-button type="primary" :loading="starting" :disabled="busy || !state?.supported || !latest?.newer || !token || proxy !== state?.proxy" @click="install">
+        <el-button :loading="saving" :disabled="busy || !authorized" @click="save()">保存更新设置</el-button>
+        <el-button type="primary" :loading="starting" :disabled="busy || saving || !state?.supported || !latest?.newer || !authorized || proxy !== state?.proxy || Boolean(githubToken.trim())" @click="install">
           {{ latest?.newer ? `更新至 v${latest.version}` : '暂无可安装更新' }}
         </el-button>
       </div>
@@ -34,13 +41,16 @@
 <script setup>
 import { computed, onMounted, onActivated, onDeactivated, onBeforeUnmount, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createUpdateClient, updatePhase } from '@/utils/selfUpdate'
+import { buildUpdateSettings, canManageUpdates, createUpdateClient, updatePhase } from '@/utils/selfUpdate'
 import { appVersion } from '@/utils/versionRefresh'
 const props = defineProps({ latest: { type: Object, default: null } })
 const emit = defineEmits(['settings-saved'])
 const request = createUpdateClient({ base: import.meta.env.VITE_API_BASE || '' })
-const state = ref(null), token = ref(''), proxy = ref(''), error = ref('')
+const state = ref(null), token = ref(''), proxy = ref(''), githubToken = ref(''), error = ref('')
 const starting = ref(false), saving = ref(false)
+const tokenRequired = computed(() => state.value?.tokenRequired !== false)
+const authorized = computed(() => canManageUpdates(state.value, token.value))
+const managementToken = computed(() => tokenRequired.value ? token.value : '')
 const busy = computed(() => starting.value || Boolean(state.value?.busy))
 const phase = computed(() => updatePhase(state.value?.phase))
 let timer, polling = false, disconnectedAt = 0
@@ -64,11 +74,12 @@ async function poll() {
     } else error.value = e.message
   } finally { polling = false }
 }
-async function save() {
+async function save(clearGithubToken = false) {
   saving.value = true; error.value = ''
   try {
-    state.value = await request('settings', { method: 'PUT', token: token.value, body: { proxy: proxy.value } })
-    proxy.value = state.value.proxy || ''; ElMessage.success('代理设置已保存'); emit('settings-saved')
+    state.value = await request('settings', { method: 'PUT', token: managementToken.value, body: buildUpdateSettings(proxy.value, githubToken.value, clearGithubToken) })
+    if (!clearGithubToken) proxy.value = state.value.proxy || ''
+    githubToken.value = ''; ElMessage.success(clearGithubToken ? 'GitHub Token 已清除' : '更新设置已保存'); emit('settings-saved')
   } catch (e) { error.value = e.message }
   finally { saving.value = false }
 }
@@ -79,12 +90,12 @@ async function install() {
     })
   } catch { return }
   starting.value = true; error.value = ''
-  try { state.value = await request('install', { method: 'POST', token: token.value, body: { version: props.latest.version } }) }
+  try { state.value = await request('install', { method: 'POST', token: managementToken.value, body: { version: props.latest.version } }) }
   catch (e) { error.value = e.message; await poll() }
   finally { starting.value = false }
 }
 function startPolling() { if (!timer) { void poll(); timer = window.setInterval(poll, 2500) } }
-function stopPolling() { window.clearInterval(timer); timer = undefined; token.value = '' }
+function stopPolling() { window.clearInterval(timer); timer = undefined; token.value = ''; githubToken.value = '' }
 onMounted(startPolling); onActivated(startPolling); onDeactivated(stopPolling); onBeforeUnmount(stopPolling)
 </script>
 <style scoped>
@@ -93,4 +104,5 @@ onMounted(startPolling); onActivated(startPolling); onDeactivated(stopPolling); 
 .update-hint,.field-help{color:var(--el-text-color-secondary);font-size:13px;line-height:1.7}.field-help{margin:6px 0 0}
 .el-form{margin-top:16px}.el-form-item{margin-bottom:16px}.update-buttons{display:flex;flex-wrap:wrap;gap:10px}.update-buttons .el-button+.el-button{margin-left:0}
 .update-progress,.update-error{margin-top:16px}.el-progress{margin-top:14px}
+.github-token-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;flex-wrap:wrap}
 </style>

@@ -483,9 +483,10 @@
                       <div class="terminal-pane main-pane">
                         <div v-for="tab in terminalTabs" :key="`terminal-${tab.tabId}`" v-show="activeTerminalId === tab.tabId" class="terminal-tab-content">
                           <RdpDesktop v-if="tab.protocol === 'RDP'" :profile="tab.account"
+                            :initial-resolution="tab.rdpResolution"
                             :active="activeTerminalId === tab.tabId && accountTab === 'terminal' && !accountDlg"
                             :ref="el => setTerminalRef(tab.tabId, el)"
-                            @state="state => onRdpState(tab.tabId, state)" @edit="editRdpTab(tab)" />
+                            @state="state => onRdpState(tab.tabId, state)" @resolution="value => onRdpResolution(tab.tabId, value)" @edit="editRdpTab(tab)" />
                           <SshTerminal v-else :account-id="tab.accountId"
                             connection-actions-in-toolbar
                             :active="activeTerminalId === tab.tabId"
@@ -1987,6 +1988,13 @@ function focusConnectionTab(tabId) {
 function onRdpState(tabId, state) {
   const tab = terminalTabs.value.find(tab => tab.tabId === tabId)
   if (tab) tab.connectionState = state.state
+}
+
+function onRdpResolution(tabId, value) {
+  const tab = terminalTabs.value.find(tab => tab.tabId === tabId)
+  if (tab?.protocol !== 'RDP' || tab.rdpResolution === value) return
+  tab.rdpResolution = value
+  persistTerminalTabs()
 }
 
 function activateTerminalForAccount(account) {

@@ -103,12 +103,18 @@ class RdpWebSocketTest {
                 Map<String,String> actual=guacd.connect.get(5,TimeUnit.SECONDS);
                 assertEquals("192.0.2.5",actual.get("hostname"));assertEquals("13389",actual.get("port"));
                 assertEquals("server-secret",actual.get("password")); assertEquals("nla",actual.get("security"));
+                assertEquals("false",actual.get("disable-copy"));assertEquals("false",actual.get("disable-paste"));
                 assertEquals("false",actual.get("ignore-cert")); assertEquals("display-update",actual.get("resize-method"));
                 handler.handleMessage(browser,new TextMessage("0.,4.ping,3.456;"));
                 assertEquals("0.,4.ping,3.456;",output.poll(5,TimeUnit.SECONDS));
                 handler.handleMessage(browser,new TextMessage("3.key,2.65,1.1;"));
                 GuacamoleInstruction input=guacd.input.poll(5,TimeUnit.SECONDS);
                 assertNotNull(input); assertEquals("key",input.getOpcode()); assertEquals(Arrays.asList("65","1"),input.getArgs());
+                for(GuacamoleInstruction clip:Arrays.asList(new GuacamoleInstruction("clipboard","0","text/plain"),new GuacamoleInstruction("blob","0","5Lit5paH8J+YgA=="),new GuacamoleInstruction("end","0"))) {
+                    handler.handleMessage(browser,new TextMessage(clip.toString()));
+                    assertEquals(clip.toString(),guacd.input.poll(3,TimeUnit.SECONDS).toString());
+                    if(!"end".equals(clip.getOpcode()))assertTrue(output.poll(3,TimeUnit.SECONDS).startsWith("3.ack,1.0,"));
+                }
                 sessions.cancel(token);
                 assertTrue(guacd.eof.get(5,TimeUnit.SECONDS));
             } finally {handler.shutdown();sessions.shutdown();}
@@ -138,7 +144,7 @@ class RdpWebSocketTest {
                     WriterGuacamoleWriter out=new WriterGuacamoleWriter(new OutputStreamWriter(socket.getOutputStream(),StandardCharsets.UTF_8));
                     GuacamoleInstruction select=in.readInstruction();
                     if(!"select".equals(select.getOpcode()) || !select.getArgs().equals(Collections.singletonList("rdp")))throw new IOException("not RDP");
-                    List<String> names=Arrays.asList("hostname","port","username","password","domain","security","ignore-cert","resize-method");
+                    List<String> names=Arrays.asList("hostname","port","username","password","domain","security","ignore-cert","resize-method","disable-copy","disable-paste");
                     out.writeInstruction(new GuacamoleInstruction("args",names));
                     GuacamoleInstruction instruction;
                     while((instruction=in.readInstruction())!=null && !"connect".equals(instruction.getOpcode())) {}

@@ -147,6 +147,7 @@ class RdpConnectionIntegrationTest {
             RdpConnectionService.SaveRequest req = new RdpConnectionService.SaveRequest();
             req.setHostId(host); req.setName("Archive desktop"); req.setUsername("Administrator");
             req.setRemark("archive remark"); req.setSortOrder(7);
+            mapper.readerForUpdating(req).readValue("{\"resolution\":\"1600x1000\"}");
             req.setPassword("archive-secret"); req.setDomain("CORP"); req.setPort(3395); req.setIgnoreCertificate(true);
             long sourceId = profiles.create(req).getId();
             for (boolean encrypted : new boolean[]{false,true}) {
@@ -154,6 +155,7 @@ class RdpConnectionIntegrationTest {
                 ObjectNode saved = (ObjectNode) mapper.readTree(ConfigurationArchive.decrypt(archive,"archive-password"));
                 assertTrue(saved.has("rdpConnections"), "RDP connections must be present in backups");
                 assertEquals("archive-secret", saved.get("rdpConnections").get(0).get("password").asText());
+                assertEquals("1600x1000", saved.get("rdpConnections").get(0).get("resolution").asText());
                 Map<String,Integer> counts = configurations.importAll(archive,"archive-password");
                 assertEquals(encrypted ? 2 : 1,counts.get("rdpConnections"));
             }
@@ -165,6 +167,7 @@ class RdpConnectionIntegrationTest {
                 RdpTarget target = profiles.resolve(((Number)row.get("id")).longValue());
                 assertEquals("archive remark",profiles.get(((Number)row.get("id")).longValue()).getRemark());
                 assertEquals(7,profiles.get(((Number)row.get("id")).longValue()).getSortOrder());
+                assertEquals("1600x1000",mapper.valueToTree(profiles.get(((Number)row.get("id")).longValue())).path("resolution").asText());
                 assertEquals("archive-secret",target.getPassword()); assertEquals(3395,target.getPort());
                 assertEquals("CORP",target.getDomain()); assertTrue(target.isIgnoreCertificate());
                 assertEquals("192.0.2.30",target.getHost());

@@ -1,3 +1,12 @@
+export function canManageUpdates(state, token = '') {
+  return Boolean(state) && (state.tokenRequired === false || Boolean(token.trim()))
+}
+export function buildUpdateSettings(proxy, githubToken = '', clearGithubToken = false) {
+  if (clearGithubToken) return { githubToken: '' }
+  const body = { proxy }
+  if (githubToken.trim()) body.githubToken = githubToken.trim()
+  return body
+}
 export function createUpdateClient({ base = '', fetchImpl = fetch } = {}) {
   return async function request(path, { method = 'GET', token = '', body } = {}) {
     if (!['status', 'settings', 'install'].includes(path)) throw new Error('无效更新接口')

@@ -31,6 +31,18 @@ test('persisted RDP tabs omit credentials and transient session data', () => {
   assert.equal(readSavedTerminalTabs(storage).tabs[0].account.username, 'Administrator')
 })
 
+test('refresh restores each desktop resolution independently of changed account defaults', () => {
+  const storage = memory()
+  saveTerminalTabs([
+    { tabId: 'rdp-a', accountId: 'rdp:2', protocol: 'RDP', connectionId: 2, rdpResolution: '1600x1000', account: { id: 2, resolution: '2560x1440' } },
+    { tabId: 'rdp-b', accountId: 'rdp:2', protocol: 'RDP', connectionId: 2, rdpResolution: 'window', account: { id: 2, resolution: '2560x1440' } }
+  ], 'rdp-b', storage)
+  const restored = readSavedTerminalTabs(storage)
+  assert.deepEqual(restored.tabs.map(t => t.rdpResolution), ['1600x1000', 'window'])
+  assert.equal(restored.tabs[0].account.resolution, '2560x1440')
+  assert.equal(restored.activeTabId, 'rdp-b')
+})
+
 test('last selected RDP account remains typed and restores host expansion metadata', () => {
   const previous = globalThis.localStorage
   globalThis.localStorage = memory()
