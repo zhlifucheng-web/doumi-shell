@@ -3,12 +3,8 @@
     <div class="rdp-toolbar">
       <span role="status" class="rdp-status">{{ stateLabel }}</span>
       <el-select v-model="resolution" aria-label="远程桌面分辨率" class="rdp-resolution" :disabled="status.state === 'connecting'">
-        <el-option label="窗口分辨率" value="window" />
-        <el-option label="1280 × 720" value="1280x720" />
-        <el-option label="1600 × 900" value="1600x900" />
-        <el-option label="1920 × 1080" value="1920x1080" />
-        <el-option label="2560 × 1440" value="2560x1440" />
-        <el-option label="3840 × 2160" value="3840x2160" />
+        <el-option label="跟随窗口" value="window" />
+        <el-option v-for="size in RDP_RESOLUTIONS" :key="size" :label="size.replace('x', ' × ')" :value="size" />
         <el-option label="自定义" value="custom" />
       </el-select>
       <div v-if="resolution === 'custom'" class="rdp-custom-resolution">
@@ -60,12 +56,14 @@ import { rdpTunnel, trackGuacamoleListeners } from '@/utils/rdpGuacamole'
 import { bindRdpFocus } from '@/utils/rdpFocus'
 import { describeRdpError } from '@/utils/rdpError'
 import { bindRdpClipboard } from '@/utils/rdpClipboard'
-const props = defineProps({ profile: { type: Object, required: true }, active: Boolean })
-const emit = defineEmits(['edit', 'state'])
+import { RDP_RESOLUTIONS, rdpResolutionForm } from '@/utils/rdpResolution'
+const props = defineProps({ profile: { type: Object, required: true }, active: Boolean, initialResolution: String })
+const emit = defineEmits(['edit', 'state', 'resolution'])
 const fullscreenError = ref('')
 const clipboardText = ref(''), clipboardNotice = ref(''), clipboardOpen = ref(false)
-const root = ref(), viewport = ref(), surface = ref(), fit = ref(true), resolution = ref('window')
-const customWidth = ref(1920), customHeight = ref(1080)
+const initialSize = rdpResolutionForm(props.initialResolution ?? props.profile.resolution)
+const root = ref(), viewport = ref(), surface = ref(), fit = ref(true), resolution = ref(initialSize.resolution)
+const customWidth = ref(initialSize.customWidth), customHeight = ref(initialSize.customHeight)
 const status = reactive({ state: 'disconnected', error: '' })
 const failure = computed(() => status.error ? describeRdpError(status.error, props.profile) : null)
 watch(() => [status.state, failure.value?.message], () => emit('state', { state: status.state, error: failure.value?.message || '' }), { immediate: true })
@@ -133,6 +131,7 @@ async function connect() {
     dimensions.width = Math.round(dimensions.width / 4) * 4
     customWidth.value = dimensions.width; customHeight.value = dimensions.height
   }
+  emit('resolution', resolution.value === 'window' ? 'window' : `${dimensions.width}x${dimensions.height}`)
   await session.connect({ connectionId: props.profile.id, ...dimensions })
   session.setActive(props.active)
 }
@@ -151,7 +150,11 @@ async function fullscreen() {
 }
 watch(() => props.active, active => { session.setActive(active); if (!active) releaseInput(); else nextTick(updateViewport) })
 watch(fit, scaleDisplay)
-watch(resolution, value => { if (value !== 'custom' && status.state === 'connected') connect() })
+watch(resolution, value => {
+  if (value === 'custom') return
+  emit('resolution', value)
+  if (status.state === 'connected') connect()
+})
 onMounted(() => {
   disposeFocus = bindRdpFocus({ windowTarget: window, documentTarget: document, getSurface: () => surface.value, isActive: () => props.active, setFocused: value => session.setFocused(value), releaseInput })
   resizeObserver = new ResizeObserver(updateViewport); resizeObserver.observe(viewport.value)

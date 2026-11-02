@@ -1,4 +1,5 @@
 import { describeRdpError } from './rdpError.js'
+import { rdpResolutionForm, rdpResolutionValue } from './rdpResolution.js'
 
 export function accountConnectionForm(initial = {}) {
   return {
@@ -7,6 +8,7 @@ export function accountConnectionForm(initial = {}) {
     authType: initial.authType || 'PASSWORD', defaultCwd: initial.defaultCwd || '',
     name: initial.name || '', domain: initial.domain || '', port: initial.port ?? 3389,
     ignoreCertificate: !!initial.ignoreCertificate, remark: initial.remark || '',
+    ...rdpResolutionForm(initial.resolution),
     sortOrder: initial.sortOrder ?? 0, enabled: initial.enabled ?? 1,
     password: '', privateKeyPem: '', passphrase: ''
   }
@@ -27,6 +29,7 @@ export function accountConnectionPayload(form, { test = false } = {}) {
       const name = form.name?.trim() || username
       if (name.length > 100) throw new Error('连接名称不能超过 100 字')
       Object.assign(payload, { name })
+      payload.resolution = rdpResolutionValue(form)
       // Save identity lives in the URL; the test endpoint accepts it in its body.
       delete payload.id
     }

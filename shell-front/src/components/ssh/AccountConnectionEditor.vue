@@ -19,6 +19,19 @@
         </template>
         <el-form-item v-if="form.protocol === 'SSH'" label="默认目录"><el-input v-model="form.defaultCwd" /></el-form-item>
         <el-form-item v-else label="RDP 端口" required><el-input-number v-model="form.port" :min="1" :max="65535" /></el-form-item>
+        <template v-if="form.protocol === 'RDP'">
+          <el-form-item label="默认分辨率">
+            <el-select v-model="form.resolution" aria-label="默认分辨率">
+              <el-option label="跟随窗口" value="window" />
+              <el-option v-for="size in RDP_RESOLUTIONS" :key="size" :label="size.replace('x', ' × ')" :value="size" />
+              <el-option label="自定义" value="custom" />
+            </el-select>
+          </el-form-item>
+          <div v-if="form.resolution === 'custom'" class="account-form-row">
+            <el-form-item label="宽度"><el-input-number v-model="form.customWidth" aria-label="默认分辨率宽度" :min="640" :max="3840" :step="4" step-strictly /></el-form-item>
+            <el-form-item label="高度"><el-input-number v-model="form.customHeight" aria-label="默认分辨率高度" :min="480" :max="2160" /></el-form-item>
+          </div>
+        </template>
         <div class="account-form-row account-form-options">
           <el-checkbox v-if="form.protocol === 'RDP'" v-model="form.ignoreCertificate">忽略服务器证书校验</el-checkbox>
           <el-checkbox v-model="form.enabled" :true-value="1" :false-value="0">启用</el-checkbox>
@@ -40,6 +53,7 @@ import { onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { getAccount, createAccount, updateAccount, testAccount } from '@/api/sshConsole'
 import { getRdpConnection, createRdpConnection, updateRdpConnection, testRdpConnection } from '@/api/rdp'
 import { accountConnectionForm, accountConnectionPayload, accountConnectionFeedback } from '@/utils/connectionAccount'
+import { RDP_RESOLUTIONS } from '@/utils/rdpResolution'
 
 const props = defineProps({ modelValue: Boolean, initial: { type: Object, default: () => ({}) }, hostOptions: { type: Array, default: () => [] } })
 const emit = defineEmits(['update:modelValue', 'saved'])

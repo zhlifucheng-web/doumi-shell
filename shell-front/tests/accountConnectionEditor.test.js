@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { nextTick } from 'vue'
 import { mountSfcSetup } from './helpers/mountSfcSetup.js'
 import * as accountHelpers from '../src/utils/connectionAccount.js'
+import * as resolutionHelpers from '../src/utils/rdpResolution.js'
 
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 const settle = async () => { await Promise.resolve(); await nextTick() }
@@ -13,6 +14,7 @@ function editor(initial = {}, apis = {}) {
     props: { modelValue: true, initial, hostOptions: [{ id: 2, name: 'Host', host: '192.0.2.1', port: 22 }], onSaved: value => events.push(value), 'onUpdate:modelValue': value => events.push(value) },
     modules: {
       '@/utils/connectionAccount': accountHelpers,
+      '@/utils/rdpResolution': resolutionHelpers,
       '@/api/sshConsole': Object.fromEntries(['getAccount', 'createAccount', 'updateAccount', 'testAccount'].map(n => [n, request(n)])),
       '@/api/rdp': Object.fromEntries(['getRdpConnection', 'createRdpConnection', 'updateRdpConnection', 'testRdpConnection'].map(n => [n, request(n)]))
     }

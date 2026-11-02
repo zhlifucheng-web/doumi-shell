@@ -12,7 +12,7 @@ export function createRdpTab(account, host, tabs) {
   const baseLabel = `${host.name || host.host} · ${name}`
   return {
     tabId: `rdp-${account.id}-${globalThis.crypto?.randomUUID?.() || generateTerminalSessionKey()}`,
-    protocol: 'RDP', connectionId: account.id, accountId: `rdp:${account.id}`,
+    protocol: 'RDP', connectionId: account.id, accountId: `rdp:${account.id}`, rdpResolution: account.resolution || 'window',
     account: { ...account, protocol: 'RDP' }, hostId: account.hostId,
     hostName: host.name || '', hostAddress: host.host || '',
     label: subIndex > 1 ? `${baseLabel} #${subIndex}` : baseLabel,

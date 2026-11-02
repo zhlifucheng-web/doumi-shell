@@ -26,7 +26,7 @@ import java.util.List;
 @SshConsoleEnabled
 @Service
 public class RdpConnectionService {
-    private static final String SELECT = "SELECT id,host_id,name,username,domain,port,ignore_certificate,enabled,remark,sort_order,secret_enc FROM rdp_connection";
+    private static final String SELECT = "SELECT id,host_id,name,username,domain,port,ignore_certificate,enabled,remark,sort_order,resolution,secret_enc FROM rdp_connection";
     private final JdbcTemplate jdbc;
     private final SshHostService hosts;
     private final CredentialCipher cipher;
@@ -51,6 +51,7 @@ public class RdpConnectionService {
         java.util.Set<String> columns = new java.util.HashSet<>(jdbc.query("PRAGMA table_info(rdp_connection)", (rs,n) -> rs.getString("name")));
         if (!columns.contains("remark")) jdbc.execute("ALTER TABLE rdp_connection ADD COLUMN remark TEXT NOT NULL DEFAULT ''");
         if (!columns.contains("sort_order")) jdbc.execute("ALTER TABLE rdp_connection ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0");
+        if (!columns.contains("resolution")) jdbc.execute("ALTER TABLE rdp_connection ADD COLUMN resolution TEXT NOT NULL DEFAULT 'window'");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_rdp_connection_host ON rdp_connection(host_id)");
     }
 
@@ -63,6 +64,7 @@ public class RdpConnectionService {
             BackupConnection saved = new BackupConnection();
             saved.setId(row.id); saved.setHostId(row.hostId); saved.setName(row.name); saved.setUsername(row.username);
             saved.setDomain(row.domain); saved.setPort(row.port); saved.setIgnoreCertificate(row.ignoreCertificate);
+            saved.setResolution(row.resolution);
             saved.setRemark(row.remark); saved.setSortOrder(row.sortOrder); saved.setEnabled(row.enabled); saved.setPassword(secret.getPassword());
             return saved;
         });
@@ -85,9 +87,10 @@ public class RdpConnectionService {
         KeyHolder key = new GeneratedKeyHolder();
         jdbc.update(connection -> {
             PreparedStatement ps = connection.prepareStatement("INSERT INTO rdp_connection "
-                    + "(host_id,name,username,domain,port,ignore_certificate,enabled,secret_enc,remark,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?)", Statement.RETURN_GENERATED_KEYS);
+                    + "(host_id,name,username,domain,port,ignore_certificate,enabled,secret_enc,remark,sort_order,resolution) VALUES (?,?,?,?,?,?,?,?,?,?,?)", Statement.RETURN_GENERATED_KEYS);
             ps.setLong(1,row.hostId); ps.setString(2,row.name); ps.setString(3,row.username); ps.setString(4,row.domain);
             ps.setInt(5,row.port); ps.setInt(6,row.ignoreCertificate ? 1 : 0); ps.setInt(7,row.enabled); ps.setBytes(8,row.secret); ps.setString(9,row.remark); ps.setInt(10,row.sortOrder);
+            ps.setString(11,row.resolution);
             return ps;
         }, key);
         if (key.getKey() == null) throw new IllegalStateException("远程桌面保存失败");
@@ -103,8 +106,8 @@ public class RdpConnectionService {
         requireHost(row.hostId);
         apply(row, request);
         if (StringUtils.hasText(request.getPassword())) row.secret = encrypt(request.getPassword());
-        jdbc.update("UPDATE rdp_connection SET host_id=?,name=?,username=?,domain=?,port=?,ignore_certificate=?,enabled=?,secret_enc=?,remark=?,sort_order=?,updated_at=datetime('now','localtime') WHERE id=?",
-                row.hostId,row.name,row.username,row.domain,row.port,row.ignoreCertificate ? 1 : 0,row.enabled,row.secret,row.remark,row.sortOrder,id);
+        jdbc.update("UPDATE rdp_connection SET host_id=?,name=?,username=?,domain=?,port=?,ignore_certificate=?,enabled=?,secret_enc=?,remark=?,sort_order=?,resolution=?,updated_at=datetime('now','localtime') WHERE id=?",
+                row.hostId,row.name,row.username,row.domain,row.port,row.ignoreCertificate ? 1 : 0,row.enabled,row.secret,row.remark,row.sortOrder,row.resolution,id);
         return toVo(row);
     }
 
@@ -172,10 +175,20 @@ public class RdpConnectionService {
         if (request.getPort() != null) row.port = request.getPort();
         if (request.getEnabled() != null) row.enabled = request.getEnabled();
         if (request.getIgnoreCertificate() != null) row.ignoreCertificate = request.getIgnoreCertificate();
+        if (request.getResolution() != null) row.resolution = request.getResolution();
+        validateResolution(row.resolution);
         validateText(row.name,"name",true); validateText(row.username,"username",true); validateText(row.domain,"domain",false);
         if (row.port < 1 || row.port > 65535) throw invalid("port 无效");
         if (row.enabled != 0 && row.enabled != 1) throw invalid("enabled 无效");
         if (request.getPassword() != null && request.getPassword().length() > 4096) throw invalid("密码过长");
+    }
+
+    private static void validateResolution(String value) {
+        if ("window".equals(value)) return;
+        if (value == null || !value.matches("[0-9]{3,4}x[0-9]{3,4}")) throw invalid("分辨率无效");
+        String[] parts=value.split("x");
+        int width=Integer.parseInt(parts[0]),height=Integer.parseInt(parts[1]);
+        if (width<640 || width>3840 || width%4!=0 || height<480 || height>2160) throw invalid("分辨率宽度须为 640–3840 且为 4 的倍数，高度须为 480–2160");
     }
 
     private static void validateText(String value, String field, boolean required) {
@@ -193,12 +206,14 @@ public class RdpConnectionService {
         row.name=rs.getString("name"); row.username=rs.getString("username"); row.domain=rs.getString("domain");
         row.port=rs.getInt("port"); row.ignoreCertificate=rs.getInt("ignore_certificate") == 1;
         row.remark=rs.getString("remark"); row.sortOrder=rs.getInt("sort_order");
+        row.resolution=rs.getString("resolution");
         row.enabled=rs.getInt("enabled"); row.secret=rs.getBytes("secret_enc"); return row;
     }
 
     private static ConnectionVO toVo(Profile row) {
         ConnectionVO vo = new ConnectionVO(); vo.setId(row.id); vo.setHostId(row.hostId); vo.setName(row.name);
         vo.setUsername(row.username); vo.setDomain(row.domain); vo.setPort(row.port); vo.setEnabled(row.enabled);
+        vo.setResolution(row.resolution);
         vo.setRemark(row.remark); vo.setSortOrder(row.sortOrder); vo.setIgnoreCertificate(row.ignoreCertificate); vo.setHasPassword(row.secret != null && row.secret.length > 0); return vo;
     }
 
@@ -209,6 +224,7 @@ public class RdpConnectionService {
     private static final class Profile {
         long id,hostId;
         String name,username,domain,remark;
+        String resolution="window";
         int port,enabled,sortOrder;
         boolean ignoreCertificate;
         byte[] secret;
@@ -224,6 +240,7 @@ public class RdpConnectionService {
         private String domain;
         private Integer port;
         private Boolean ignoreCertificate;
+        private String resolution;
         private Integer enabled;
         @lombok.ToString.Exclude
         @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
@@ -245,6 +262,7 @@ public class RdpConnectionService {
         private String domain;
         private Integer port;
         private Boolean ignoreCertificate;
+        private String resolution;
         private Integer enabled;
         @lombok.ToString.Exclude
         private String password;
@@ -261,6 +279,7 @@ public class RdpConnectionService {
         private String domain;
         private int port;
         private boolean ignoreCertificate;
+        private String resolution;
         private int enabled;
         private boolean hasPassword;
     }

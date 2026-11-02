@@ -25,6 +25,7 @@ class RdpSchemaTest {
             jdbc.update("INSERT INTO ssh_host(id,group_id,name,host) VALUES (1,1,'Desktop','192.0.2.10')");
             jdbc.update("INSERT INTO rdp_connection(host_id,name,username,secret_enc) VALUES (1,'Admin','Administrator',?)", new byte[]{1,2,3});
             assertEquals(3389, jdbc.queryForObject("SELECT port FROM rdp_connection", Integer.class));
+            assertEquals("window", jdbc.queryForObject("SELECT resolution FROM rdp_connection", String.class));
             jdbc.update("DELETE FROM ssh_host WHERE id=1");
             assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM rdp_connection", Integer.class));
         }

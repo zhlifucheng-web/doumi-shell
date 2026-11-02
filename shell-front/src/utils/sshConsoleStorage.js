@@ -97,7 +97,7 @@ export function removeAccountTerminalKey(accountId, storage = (typeof localStora
 
 function publicRdpAccount(account) {
   if (!account) return null
-  return Object.fromEntries(['id', 'hostId', 'name', 'username', 'domain', 'port', 'ignoreCertificate', 'enabled', 'hasPassword', 'remark', 'sortOrder', 'protocol'].filter(key => key in account).map(key => [key, account[key]]))
+  return Object.fromEntries(['id', 'hostId', 'name', 'username', 'domain', 'port', 'ignoreCertificate', 'enabled', 'hasPassword', 'remark', 'sortOrder', 'protocol', 'resolution'].filter(key => key in account).map(key => [key, account[key]]))
 }
 
 export function saveTerminalTabs(tabs, activeTabId, storage = (typeof sessionStorage !== 'undefined' ? sessionStorage : null)) {
@@ -108,7 +108,7 @@ export function saveTerminalTabs(tabs, activeTabId, storage = (typeof sessionSto
       tabId: t.tabId,
       terminalId: (t.terminalId && t.terminalId !== 'default') ? t.terminalId : generateTerminalSessionKey(),
       accountId: t.accountId,
-      ...(t.protocol === 'RDP' ? { protocol: 'RDP', connectionId: t.connectionId || t.account?.id } : {}),
+      ...(t.protocol === 'RDP' ? { protocol: 'RDP', connectionId: t.connectionId || t.account?.id, rdpResolution: t.rdpResolution || t.account?.resolution || 'window' } : {}),
       hostId: t.hostId,
       defaultCwd: t.defaultCwd || '',
       sftpPath: typeof t.sftpPath === 'string' ? t.sftpPath : '',
@@ -146,7 +146,7 @@ export function readSavedTerminalTabs(storage = (typeof sessionStorage !== 'unde
           tabId: String(t.tabId),
           terminalId: termId,
           accountId: t.protocol === 'RDP' ? `rdp:${Number(t.connectionId || t.account?.id)}` : Number(t.accountId),
-          ...(t.protocol === 'RDP' ? { protocol: 'RDP', connectionId: Number(t.connectionId || t.account?.id) } : {}),
+          ...(t.protocol === 'RDP' ? { protocol: 'RDP', connectionId: Number(t.connectionId || t.account?.id), rdpResolution: t.rdpResolution || t.account?.resolution || 'window' } : {}),
           hostId: t.hostId != null ? Number(t.hostId) : null,
           defaultCwd: t.defaultCwd || '',
           sftpPath: typeof t.sftpPath === 'string' ? t.sftpPath : '',

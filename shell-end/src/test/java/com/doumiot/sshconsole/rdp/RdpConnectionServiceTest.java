@@ -79,7 +79,7 @@ class RdpConnectionServiceTest {
         assertTrue(cipher.decryptToJson(stored).contains("秘密-password-123"));
         JsonNode json = new ObjectMapper().valueToTree(service.list(1L));
         Set<String> fields = new HashSet<>(); json.get(0).fieldNames().forEachRemaining(fields::add);
-        assertEquals(new HashSet<>(Arrays.asList("id","hostId","name","username","domain","port","ignoreCertificate","enabled","hasPassword","remark","sortOrder")), fields);
+        assertEquals(new HashSet<>(Arrays.asList("id","hostId","name","username","domain","port","ignoreCertificate","enabled","hasPassword","remark","sortOrder","resolution")), fields);
         assertFalse(json.toString().contains("秘密"));
         RdpTarget target = service.resolve(created.getId());
         assertEquals("192.0.2.10", target.getHost()); assertEquals(3389, target.getPort());
@@ -88,6 +88,26 @@ class RdpConnectionServiceTest {
         assertEquals(0, service.list(2L).size());
         assertEquals(1, service.delete(created.getId())); assertTrue(service.list(1L).isEmpty());
         assertThrows(BusinessRuntimeException.class, () -> service.resolve(created.getId()));
+    }
+
+    @Test void resolutionDefaultsAndCustomValuesPersistWithoutChangingCredentials() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        long id = service.create(request()).getId();
+        assertEquals("window", mapper.valueToTree(service.get(id)).path("resolution").asText());
+        for (String resolution : Arrays.asList("1920x1080", "1600x1000", "window")) {
+            RdpConnectionService.SaveRequest update = mapper.readValue("{\"resolution\":\""+resolution+"\"}",RdpConnectionService.SaveRequest.class);
+            service.update(id, update);
+            assertEquals(resolution, mapper.valueToTree(service.get(id)).path("resolution").asText());
+            assertEquals(resolution, jdbc.queryForObject("SELECT resolution FROM rdp_connection WHERE id=?",String.class,id));
+            assertEquals("秘密-password-123", service.resolve(id).getPassword());
+            service.update(id, new RdpConnectionService.SaveRequest());
+            assertEquals(resolution, mapper.valueToTree(service.list(1L).get(0)).path("resolution").asText());
+        }
+        for (String resolution : Arrays.asList("custom", "640x479", "639x480", "3844x2160", "1920x2161", "1601x1000", "0x0", "")) {
+            RdpConnectionService.SaveRequest update = mapper.readValue("{\"resolution\":\""+resolution+"\"}",RdpConnectionService.SaveRequest.class);
+            assertThrows(BusinessRuntimeException.class, () -> service.update(id,update),resolution);
+            assertEquals("window", mapper.valueToTree(service.get(id)).path("resolution").asText());
+        }
     }
 
     @Test void blankPasswordAndOmittedUpdateFieldsPreserveExistingProfile() {
@@ -172,6 +192,7 @@ class RdpConnectionServiceTest {
         byte[] secret = cipher.encryptSecretJson("{\"password\":\"legacy-secret\"}");
         jdbc.update("INSERT INTO rdp_connection VALUES(1,1,'Legacy','admin','',3389,0,1,?)",secret);
         service.initializeSchema(); service.initializeSchema();
+        assertEquals("window",new ObjectMapper().valueToTree(service.get(1)).path("resolution").asText());
         assertEquals("",service.get(1).getRemark()); assertEquals(0,service.get(1).getSortOrder());
         assertEquals("legacy-secret",service.resolve(1).getPassword());
         assertArrayEquals(secret,jdbc.queryForObject("SELECT secret_enc FROM rdp_connection",byte[].class));
