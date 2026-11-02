@@ -10,7 +10,8 @@ final class RdpSocketFactory {
     private RdpSocketFactory() {}
     static GuacamoleSocket open(Socket socket, RdpProperties properties, RdpTarget target,
                             int width, int height, int dpi, int timeoutMs) throws Exception {
-        socket.connect(new InetSocketAddress(properties.getGuacdHost(), properties.getGuacdPort()), Math.min(5000, timeoutMs));
+        try { socket.connect(new InetSocketAddress(properties.getGuacdHost(), properties.getGuacdPort()), Math.min(5000, timeoutMs)); }
+        catch (java.io.IOException | IllegalArgumentException error) { throw new RdpGatewayException(error); }
         socket.setSoTimeout(timeoutMs); socket.setTcpNoDelay(true);
         GuacamoleConfiguration config = new GuacamoleConfiguration();
         config.setProtocol("rdp");
@@ -25,8 +26,8 @@ final class RdpSocketFactory {
         config.setParameter("enable-drive", "false");
         config.setParameter("disable-audio", "true");
         config.setParameter("enable-audio-input", "false");
-        config.setParameter("disable-copy", "true");
-        config.setParameter("disable-paste", "true");
+        config.setParameter("disable-copy", "false");
+        config.setParameter("disable-paste", "false");
         GuacamoleClientInformation info = new GuacamoleClientInformation();
         info.setOptimalScreenWidth(width); info.setOptimalScreenHeight(height); info.setOptimalResolution(dpi);
         info.getImageMimetypes().addAll(Arrays.asList("image/png", "image/jpeg", "image/webp"));

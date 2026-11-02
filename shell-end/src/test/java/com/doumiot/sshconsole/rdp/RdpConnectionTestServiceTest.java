@@ -12,6 +12,21 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class RdpConnectionTestServiceTest {
+    @Test void missingGatewayExplainsServerInstallationInsteadOfWindowsCredentials() throws Exception {
+        RdpProperties properties=new RdpProperties();
+        try(ServerSocket unused=new ServerSocket(0,1,InetAddress.getLoopbackAddress())) {
+            properties.setGuacdPort(unused.getLocalPort());
+        }
+        RdpConnectionService profiles=mock(RdpConnectionService.class);
+        when(profiles.resolveTest(any())).thenReturn(new RdpTarget("192.0.2.1",3389,"user","secret","",false));
+        try(RdpConnectionTestService probe=new RdpConnectionTestService(properties,profiles,2000,1)) {
+            RdpConnectionTestService.TestResult result=probe.test(new RdpConnectionService.TestRequest());
+            assertFalse(result.isSuccess());
+            assertTrue(result.getMessage().contains("guacd"));
+            assertTrue(result.getMessage().contains("项目服务器上安装并启动"));
+            assertFalse(result.getMessage().contains("secret"));
+        }
+    }
     RdpConnectionTestService probe(FakeGuacd gateway, int timeout) {
         RdpProperties properties=new RdpProperties(); properties.setGuacdPort(gateway.server.getLocalPort());
         RdpConnectionService profiles=mock(RdpConnectionService.class);

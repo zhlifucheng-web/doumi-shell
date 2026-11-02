@@ -99,6 +99,7 @@ public class RdpConnectionTestService implements AutoCloseable {
                 if (expired.get()) return result(false,"连接测试超时，请检查主机、端口和网络",started);
             }
         } catch (Exception error) {
+            if (error instanceof RdpGatewayException) return result(false,"无法连接 guacd，请在项目服务器上安装并启动 guacd；若已安装，请检查网关地址、端口和网络",started);
             if (expired.get() || timedOut(error)) return result(false,"连接测试超时，请检查主机、端口和网络",started);
             return result(false,remoteFailure(error.getMessage(),""),started);
         }

@@ -11,11 +11,11 @@ export function rdpDimensions(width, height, dpi = 96) {
 }
 
 /** Owns one ticket/transport generation. A late request can never reopen a closed tab. */
-export function createRdpSession({ openTicket, closeTicket, createTransport, makeUrl = buildRdpWsUrl, onChange = () => {}, scheduleMouse, cancelMouse = () => {} }) {
+export function createRdpSession({ checkGateway, openTicket, closeTicket, createTransport, makeUrl = buildRdpWsUrl, onChange = () => {}, scheduleMouse, cancelMouse = () => {} }) {
   let generation = 0, transport = null, token = null, active = false, focused = false, mouseState = null, lastSize = null
   let mouseFrame = null, pendingMouse = null
   const keys = new Set()
-  const session = { state: 'disconnected', error: '', connect, disconnect, setActive, setFocused, key, mouse, releaseInput, ctrlAltDelete, resize }
+  const session = { state: 'disconnected', error: '', connect, disconnect, setActive, setFocused, key, mouse, releaseInput, shortcut, ctrlAltDelete, resize }
   function update(state, error = '') { session.state = state; session.error = error; onChange({ state, error }) }
   function cancel(ticket) { if (ticket) { try { Promise.resolve(closeTicket(ticket)).catch(() => {}) } catch { /* Best-effort cleanup; gateway also owns timeouts. */ } } }
   function flushMouse() {
@@ -44,6 +44,14 @@ export function createRdpSession({ openTicket, closeTicket, createTransport, mak
   async function connect(request) {
     disconnect(); const current = generation; lastSize = { width: request.width, height: request.height }; update('connecting')
     try {
+      if (checkGateway) {
+        let gateway
+        try { gateway = await checkGateway() }
+        catch { throw new Error('[GUACD_CHECK_FAILED]') }
+        if (current !== generation) return
+        if (!gateway?.enabled) throw new Error('[GUACD_DISABLED]')
+        if (!gateway.available) throw new Error('[GUACD_UNAVAILABLE]')
+      }
       const ticket = await openTicket(request)
       if (current !== generation) { cancel(ticket.token); return }
       token = ticket.token
@@ -97,6 +105,13 @@ export function createRdpSession({ openTicket, closeTicket, createTransport, mak
     releaseInput()
     for (const keysym of [65507, 65513, 65535]) transport.sendKey(1, keysym)
     for (const keysym of [65535, 65513, 65507]) transport.sendKey(0, keysym)
+  }
+  function shortcut(keysym) {
+    if (!active || !focused || !transport || session.state !== 'connected') return false
+    releaseInput()
+    for (const key of [65507, keysym]) transport.sendKey(1, key)
+    for (const key of [keysym, 65507]) transport.sendKey(0, key)
+    return true
   }
   return session
 }

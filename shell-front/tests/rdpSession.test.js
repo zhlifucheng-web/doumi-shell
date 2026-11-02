@@ -97,3 +97,21 @@ test('mouse motion coalesces per frame while wheel, button and key transitions r
   assert.equal(sent.length,count+1) // only release the pressed key; no stale motion
   assert.deepEqual(sent.at(-1),['key',0,65])
 })
+
+test('gateway preflight blocks tickets and sockets and remains cancellable', async () => {
+  const checks=deferred(),opened=[],transports=[]
+  const session=createRdpSession({checkGateway:()=>checks.promise,openTicket:async()=>{opened.push(true);return {token:'t'}},closeTicket:async()=>{},createTransport:()=>{transports.push(true)},makeUrl:()=>''})
+  const pending=session.connect({connectionId:7});assert.equal(session.state,'connecting');assert.equal(opened.length,0)
+  session.disconnect();checks.resolve({enabled:true,available:true});await pending
+  assert.equal(opened.length,0);assert.equal(transports.length,0)
+  const offline=createRdpSession({checkGateway:async()=>({enabled:true,available:false}),openTicket:async()=>{opened.push(true)},closeTicket:async()=>{},createTransport:()=>{transports.push(true)}})
+  await offline.connect({connectionId:7});assert.equal(offline.state,'error');assert.match(offline.error,/GUACD_UNAVAILABLE/)
+  assert.equal(opened.length,0);assert.equal(transports.length,0)
+})
+test('gateway preflight success precedes tickets while API failure is not reported as missing guacd',async()=>{
+  const events=[]
+  const session=createRdpSession({checkGateway:async()=>{events.push('check');return {enabled:true,available:true}},openTicket:async()=>{events.push('ticket');return {token:'t'}},closeTicket:async()=>{},makeUrl:()=>'',createTransport:()=>({connect(){events.push('socket')},disconnect(){}})})
+  await session.connect({connectionId:7});assert.deepEqual(events,['check','ticket','socket'])
+  const failed=createRdpSession({checkGateway:async()=>{throw new Error('backend offline')},openTicket:async()=>{events.push('unexpected')},closeTicket:async()=>{}})
+  await failed.connect({connectionId:7});assert.match(failed.error,/GUACD_CHECK_FAILED/);assert.equal(events.includes('unexpected'),false)
+})

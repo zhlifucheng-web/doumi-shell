@@ -48,6 +48,36 @@ class RdpSessionTest {
         verify(profiles,times(2)).resolve(7L);
         sessions.cancel(token);
     }
+    @Test void gatewayCheckRejectsOtherTcpServicesAndOffersInstallationGuidance() throws Exception {
+        try(java.net.ServerSocket server=new java.net.ServerSocket(0,1,java.net.InetAddress.getLoopbackAddress())) {
+            properties.setGuacdPort(server.getLocalPort());
+            java.util.concurrent.CompletableFuture<Void> worker=java.util.concurrent.CompletableFuture.runAsync(()->{
+                try(java.net.Socket socket=server.accept()) {socket.getOutputStream().write("HTTP/1.1 200 OK\r\n\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+                catch(Exception error){throw new RuntimeException(error);}
+            });
+            assertEquals(false,sessions.gateway().get("available"));
+            assertTrue(sessions.gateway().get("message").toString().contains("安装"));
+            worker.get(3,java.util.concurrent.TimeUnit.SECONDS);
+        }
+        try(java.net.ServerSocket server=new java.net.ServerSocket(0)) {properties.setGuacdPort(server.getLocalPort());}
+        assertEquals(false,sessions.gateway().get("available"));
+        assertTrue(sessions.gateway().get("message").toString().contains("guacd"));
+    }
+    @Test void gatewayCheckRecognizesRdpNegotiationWithoutOpeningWindowsSession() throws Exception {
+        try(java.net.ServerSocket server=new java.net.ServerSocket(0,1,java.net.InetAddress.getLoopbackAddress())) {
+            properties.setGuacdPort(server.getLocalPort());
+            java.util.concurrent.CompletableFuture<Void> worker=java.util.concurrent.CompletableFuture.runAsync(()->{
+                try(java.net.Socket socket=server.accept()) {
+                    org.apache.guacamole.io.ReaderGuacamoleReader reader=new org.apache.guacamole.io.ReaderGuacamoleReader(new java.io.InputStreamReader(socket.getInputStream(),java.nio.charset.StandardCharsets.UTF_8));
+                    assertEquals("rdp",reader.readInstruction().getArgs().get(0));
+                    socket.getOutputStream().write("4.args,8.hostname;".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    assertNull(reader.readInstruction());
+                } catch(Exception error){throw new RuntimeException(error);}
+            });
+            assertEquals(true,sessions.gateway().get("available"));worker.get(3,java.util.concurrent.TimeUnit.SECONDS);
+            verifyNoInteractions(profiles);
+        }
+    }
     static class MutableClock extends Clock {
         long now;
         public ZoneId getZone(){return ZoneOffset.UTC;}

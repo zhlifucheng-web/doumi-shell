@@ -4,6 +4,8 @@ import com.doumiot.common.exception.enums.ParamExceptionEnum;
 import com.doumiot.spring.exception.BusinessRuntimeException;
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
 import org.apache.guacamole.net.GuacamoleSocket;
+import org.apache.guacamole.io.ReaderGuacamoleReader;
+import org.apache.guacamole.io.WriterGuacamoleWriter;
 import org.apache.guacamole.protocol.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -11,6 +13,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.socket.*;
 import javax.annotation.PreDestroy;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
 import java.net.*;
 import java.time.Clock;
 import java.util.*;
@@ -99,10 +104,14 @@ public class RdpSessionService {
         boolean available = false;
         if (enabled) try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(properties.getGuacdHost(), properties.getGuacdPort()), 1000);
-            available = true;
-        } catch (IOException | IllegalArgumentException ignored) {}
+            socket.setSoTimeout(1500);
+            new WriterGuacamoleWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8))
+                    .writeInstruction(new GuacamoleInstruction("select", "rdp"));
+            GuacamoleInstruction response = new ReaderGuacamoleReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8)).readInstruction();
+            available = response != null && "args".equals(response.getOpcode()) && !response.getArgs().isEmpty();
+        } catch (Exception ignored) { /* No remote error text or credentials in diagnostics. */ }
         result.put("available", available);
-        result.put("message", !enabled ? "远程桌面已禁用" : available ? "网关可用" : "无法连接 guacd，请检查部署机器的网关地址和端口");
+        result.put("message", !enabled ? "远程桌面已禁用" : available ? "网关可用" : "无法连接 guacd，请在项目服务器上安装并启动 guacd；若已安装，请检查网关地址、端口和网络");
         return result;
     }
     private void checkEnabled() {

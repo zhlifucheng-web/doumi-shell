@@ -5,7 +5,14 @@ const diagnostics = /\b(?:ERRCONNECT_(?:TLS_CONNECT_FAILED|LOGON_FAILURE|CONNECT
 export function describeRdpError(value, profile = {}) {
   const raw = typeof value === 'string' ? value : ''
   let kind = 'unknown', title = '连接失败', message = '请检查连接设置后重试。'
-  if (/certificate (?:verify|validation|verification) failed|certificate (?:has )?expired|certificate is not trusted|证书(?:验证|校验)失败|证书已?过期/i.test(raw)) {
+  if (/\[GUACD_UNAVAILABLE\]|guacd unavailable/i.test(raw)) {
+    kind = 'gateway'; title = 'guacd 网关不可用'
+    message = '无法连接 guacd。请在运行本项目的服务器上安装并启动 guacd；若已安装，请检查网关地址、端口和网络。远程 Windows 无需安装 guacd。'
+  } else if (/\[GUACD_DISABLED\]/.test(raw)) {
+    kind = 'gateway'; title = '远程桌面已禁用'; message = '请由管理员启用项目服务器上的 RDP 功能并配置 guacd 网关。'
+  } else if (/\[GUACD_CHECK_FAILED\]/.test(raw)) {
+    kind = 'gateway-check'; title = '无法检查 guacd 网关'; message = '网关检查请求未完成，请检查项目服务和网络后重试。'
+  } else if (/certificate (?:verify|validation|verification) failed|certificate (?:has )?expired|certificate is not trusted|证书(?:验证|校验)失败|证书已?过期/i.test(raw)) {
     kind = 'certificate'; title = '证书验证失败'
     message = profile.ignoreCertificate
       ? '已设置忽略证书；请检查服务器证书和安全协议设置后重试。'
