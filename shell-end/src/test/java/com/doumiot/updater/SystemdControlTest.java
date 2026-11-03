@@ -1,5 +1,7 @@
 package com.doumiot.updater;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.*;
 import java.util.*;
@@ -19,7 +21,8 @@ class SystemdControlTest {
   p.setProperty("KillMode","process");assertThrows(java.io.IOException.class,()->SystemdControl.verifyOwnership("web-shell.service",p,dir,124,123,0));p.setProperty("KillMode","control-group");
   p.setProperty("WorkingDirectory",dir.resolve("other").toString());assertThrows(java.io.IOException.class,()->SystemdControl.verifyOwnership("web-shell.service",p,dir,124,123,0));
  }
- @Test void transientHelperAndHealthOverrideAreIsolatedFromOriginalService()throws Exception {
+ @Test @DisabledOnOs(OS.WINDOWS) // Runtime systemd drop-ins require POSIX file permissions.
+ void transientHelperAndHealthOverrideAreIsolatedFromOriginalService()throws Exception {
   String id=UUID.randomUUID().toString();Path job=dir.resolve(id);Files.createDirectory(job);
   List<String> command=SystemdControl.launchCommand("/jdk/bin/java",job.resolve("doumi-updater.jar"),job.resolve("job.properties"));
   assertTrue(command.contains("--unit=doumi-update-"+id+".service"));assertFalse(command.stream().anyMatch(arg->arg.startsWith("--property=")),"systemd 219 rejects transient WorkingDirectory and UMask assignments");assertEquals(job.resolve("job.properties").toString(),command.get(command.size()-1));

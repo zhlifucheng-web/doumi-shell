@@ -50,7 +50,7 @@ Files: modify `UpdateService.java`, related tests, `docs/self-update.md`, `READM
 - [x] Release the initiating maintenance gate if the helper aborts and the old service stays alive. Use the existing nonce health endpoint through a temporary DOUMI_UPDATE_HEALTH_ID unit override.
 - [x] Build frontend and run full backend/frontend/script verification plus independent review.
 - [x] On the deployment host, create a loopback-only isolated fixture service with disposable data. Exercise success and forced health failure through the real transient helper. Clean up only fixture units/files and prove the production service/container baseline unchanged.
-- [ ] Commit scoped changes on main, back up production offline, deploy as 1.0.63, verify API support status, resources, data/key/settings integrity, original service and guacd health. Do not publish a tag/release or trigger a production upgrade to another version.
+- [x] Commit scoped changes on main, back up production offline, deploy as 1.0.63, verify API support status, resources, data/key/settings integrity, original service and guacd health. Do not publish a tag/release or trigger a production upgrade to another version.
 
 ## Verification evidence before deployment
 
@@ -60,3 +60,9 @@ Files: modify `UpdateService.java`, related tests, `docs/self-update.md`, `READM
 - Real target-host fixture run: success `SUCCEEDED`, forced health failure `ROLLED_BACK`, helper cgroup separate, runtime health drop-ins removed, program/data/key rollback verified, configuration/history preserved.
 - Fixture evidence: `/disk01/doumi-systemd-fixtures/39ec7f18-18b2-4cbf-a17d-e185cc67c124/result.json`. Production hashes, service and running container IDs unchanged during rehearsal.
 - Packaged version remains 1.0.63. No production install endpoint was invoked.
+
+## Deployment and release follow-up
+
+- The adaptation commit `f7621b4` was deployed as 1.0.63. Offline backup: `/disk01/web-shell-backups/20261103-103037-pre-f7621b4`.
+- Production verification passed: supported=true, busy=false, original unit/settings/key/data preserved, HTTPS assets match the packaged JAR, no startup errors, guacd healthy, unrelated containers unchanged.
+- The subsequent user request authorizes pushing remote main, publishing a new complete Release and deploying it. Version 1.0.65 supersedes the previous version-retention/no-publication constraint for this follow-up; existing published tags remain unchanged.
