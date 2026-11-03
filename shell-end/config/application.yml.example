@@ -1,7 +1,7 @@
 # 复制为 jar 同级 config/application.yml（可选）
 doumi:
   update:
-    # 容器/systemd 等托管部署请设为 false，使用部署管理工具更新。
+    # root systemd 系统服务可更新；容器/非 root 托管部署请设为 false。
     enabled: ${DOUMI_UPDATE_ENABLED:true}
     # 默认免密授权；设为 true 后，保存更新设置和安装更新需要管理密钥。
     require-token: ${DOUMI_UPDATE_REQUIRE_TOKEN:false}

@@ -38,6 +38,13 @@ class SshUpdateControllerTest {
   mvc.perform(post("/api/ssh-console/update/install").contentType(MediaType.APPLICATION_JSON).content("{\"version\":\"1.0.64\"}")) .andExpect(status().isOk());
   verify(service).start("1.0.64");
  }
+ @Test void systemdHealthNonceEnvironmentMapsToExistingEndpoint()throws Exception {
+  MockEnvironment env=new MockEnvironment();env.getPropertySources().addFirst(new org.springframework.core.env.SystemEnvironmentPropertySource("systemd",Map.of("DOUMI_UPDATE_HEALTH_ID","fixture-health-id")));
+  org.junit.jupiter.api.Assertions.assertEquals("fixture-health-id",env.getProperty("doumi.update.health-id"));
+  when(service.version()).thenReturn("1.0.63");SshUpdateController controller=new SshUpdateController(settings,service,env);controller.ready(null);
+  org.junit.jupiter.api.Assertions.assertEquals(200,controller.health("fixture-health-id").getStatusCodeValue());
+  org.junit.jupiter.api.Assertions.assertEquals(503,controller.health("old-health-id").getStatusCodeValue());
+ }
  @Test void savesOnlyHttpProxyAndRejectsInvalidOrNullWithoutChangingSettings() throws Exception {
   configure(false);
   mvc.perform(put("/api/ssh-console/update/settings").contentType(MediaType.APPLICATION_JSON).content("{\"httpProxy\":\"http://127.0.0.1:7890\"}")) .andExpect(status().isOk());

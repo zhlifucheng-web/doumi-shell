@@ -5,6 +5,11 @@ import java.nio.file.*;
 import static org.junit.jupiter.api.Assertions.*;
 class UpdateServiceTest {
  @TempDir Path dir;
+ @Test void helperReadinessRequiresAnAlivePidAndNotOnlyAnEmptyMarker()throws Exception {
+  Files.writeString(dir.resolve("helper-ready"),"");assertFalse(UpdateService.helperReady(dir));
+  Files.writeString(dir.resolve("helper-ready"),"invalid");assertFalse(UpdateService.helperReady(dir));
+  Files.writeString(dir.resolve("helper-ready"),Long.toString(ProcessHandle.current().pid()));assertTrue(UpdateService.helperReady(dir));
+ }
  @Test void detectsLegacySystemdAndContainerCgroupsWithoutEnvironmentMarkers() {
   assertTrue(UpdateService.managedCgroup("1:name=systemd:/system.slice/web-shell.service\n"));
   assertTrue(UpdateService.managedCgroup("0::/system.slice/web-shell.service\n"));

@@ -26,7 +26,15 @@ Token 只随直连 `api.github.com` 的版本查询发送，不发送给加速�
 
 程序先完整下载并校验 SHA-256，准备失败时当前服务继续运行。停止服务后备份旧程序和数据，再安装新版，检查版本号和本次启动标识。失败时恢复旧程序及数据并启动旧版本。Windows 会额外下载并校验当前版本的 MSI，以便恢复 Windows Installer 注册状态；因此历史版本的 MSI 和对应校验文件须保留。Linux 保留原数据目录、密钥和外置配置。启动目录、端口、环境、JVM 参数及程序参数会沿用。
 
-容器、systemd 等托管服务应使用原部署工具更新，并设置 `DOUMI_UPDATE_ENABLED=false`；检测到容器/systemd 环境时也会拒绝独立更新器，包括没有 `INVOCATION_ID` 的旧版 systemd cgroup。托管部署仍可保存更新设置。直接 HTTPS 监听目前使用手动升级。反向代理部署使用正常的 HTTP 后端，并正确配置可信的转发头，以便服务器识别网页同源请求。
+### systemd 部署
+
+Linux x64 的 root 系统服务支持一键更新，包括没有 `INVOCATION_ID` 的 systemd 219。程序从自身 cgroup 识别所属服务，并核对 root 权限、MainPID、安装工作目录及 `KillMode=control-group` 或 `mixed`；部署机器须有 `systemctl` 和 `systemd-run`。网页不能指定服务名或执行命令。不满足条件的托管服务仍提示使用原部署工具升级，也可通过 `DOUMI_UPDATE_ENABLED=false` 主动关闭。
+
+下载、SHA-256 校验及请求排空完成后，独立的临时 `doumi-update-<任务ID>.service` 执行更新，不会随原服务的 cgroup 一起退出。更新器停止原服务后，只备份/替换发布包中的程序文件，并备份完整业务数据；保留 `service.env`、nginx、运行时和历史发布目录。启动与回滚都使用原 systemd 服务，沿用既有端口、环境文件、启动脚本及 guacd 管理。
+
+每次启动通过 `/run/systemd/system/<原服务>.d/90-doumi-update-health.conf` 临时注入本次健康标识；更新或回滚完成后删除该文件并重新加载 unit。不会覆盖持久 unit 或其他 drop-in。健康检查失败时先停止候选服务，再恢复旧程序和数据。若服务无法确认停止或临时配置无法清理，任务标记为 `ROLLBACK_FAILED`，保留备份并阻止再次安装，需到部署机器检查。旧版程序也通过既有环境健康标识参与回滚检查。
+
+容器、非 root 服务、systemd 用户服务及直接 HTTPS 监听目前使用原部署方式升级；反向代理部署使用正常的 HTTP 后端，并正确配置可信的转发头，以便服务器识别网页同源请求。systemd 自动更新能力需要已安装的程序及独立更新器均包含此适配；安装旧的历史 Release 后，后续功能以该 Release 的程序为准。
 
 ## 日志、备份与恢复
 

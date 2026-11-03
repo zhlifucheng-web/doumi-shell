@@ -5,6 +5,7 @@ import com.doumiot.config.*;
 import com.doumiot.sshconsole.config.SshConsoleEnabled;
 import com.doumiot.sshconsole.service.*;
 import com.doumiot.updater.UpdateFiles;
+import com.doumiot.updater.SystemdControl;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.system.ApplicationHome;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -87,12 +88,23 @@ public class UpdateService {
         try{return Files.exists(Path.of("/proc/self/cgroup"))&&managedCgroup(Files.readString(Path.of("/proc/self/cgroup")));}
         catch(IOException|SecurityException error){return false;}
     }
+    private static boolean containerRuntime() {
+        if(Files.exists(Path.of("/.dockerenv")))return true;
+        try{String cgroup=Files.readString(Path.of("/proc/self/cgroup"));return cgroup.contains("/docker/")||cgroup.contains("/docker-")||cgroup.contains("/kubepods");}
+        catch(IOException|SecurityException error){return false;}
+    }
+    private String systemdUnit(Path root) {
+        long launcher=managedLauncherPid(System.getenv("DOUMI_GUACD_MODE"),System.getenv("DOUMI_LAUNCHER_PID"),ProcessHandle.current().parent().map(ProcessHandle::pid).orElse(-1L));
+        try{return SystemdControl.currentUnit(root,ProcessHandle.current().pid(),launcher);}
+        catch(IOException error){throw new IllegalStateException(error.getMessage(),error);}
+    }
     private Path root() {
         if(!env.getProperty("doumi.update.enabled",Boolean.class,true))throw new IllegalStateException("当前部署已关闭一键更新，请通过部署管理工具升级");
-        if(managedRuntime())throw new IllegalStateException("容器或 systemd 托管服务请通过原部署管理工具更新");
+        if(containerRuntime())throw new IllegalStateException("容器部署请通过原部署管理工具更新");
         if(env.getProperty("server.ssl.enabled",Boolean.class,false))throw new IllegalStateException("当前直接 HTTPS 部署请使用手动升级");
         Path root=installRoot(jar(),System.getProperty("os.name"),System.getProperty("os.arch"));
         if(data.equals(root)||root.startsWith(data))throw new IllegalStateException("数据目录与安装目录重叠，无法安全更新");
+        if(managedRuntime()&&systemdUnit(root).isEmpty())throw new IllegalStateException("当前托管方式不支持一键更新；systemd 需使用 root 系统服务");
         return root;
     }
     public Map<String,Object> status() throws IOException {
@@ -143,6 +155,7 @@ public class UpdateService {
     private void prepare(Path job,Path root,String expectedVersion,FileChannel channel,FileLock lock) {
         Process helper=null;boolean handedOff=false;
         try {
+            String systemd=systemdUnit(root);
             SshReleaseService.Latest release=releases.latest(true);
             if(release.getError()!=null)throw new IOException(release.getError());
             if(!expectedVersion.equals(release.getVersion()))throw new IOException("最新版本已变化，请重新检查后再更新");
@@ -173,16 +186,17 @@ public class UpdateService {
             }
             Path helperJar=job.resolve("doumi-updater.jar");Files.copy(jar().getParent().resolve("doumi-updater.jar"),helperJar);
             String helperJava=Path.of(System.getProperty("java.home"),"bin",windows?"java.exe":"java").toString();
-            if(windows) {
+            if(windows||(!systemd.isEmpty()&&Path.of(System.getProperty("java.home")).toAbsolutePath().normalize().startsWith(root))) {
                 UpdateFiles.state(job,"PREPARING","正在准备独立更新环境",58);
                 UpdateFiles.snapshot(Path.of(System.getProperty("java.home")),job.resolve("runtime"),Collections.emptySet());
-                helperJava=job.resolve("runtime/bin/java.exe").toString();
+                helperJava=job.resolve(windows?"runtime/bin/java.exe":"runtime/bin/java").toString();
             }
             Properties p=new Properties();p.setProperty("install.root",root.toString());p.setProperty("data.root",data.toString());
             long launcherPid=managedLauncherPid(System.getenv("DOUMI_GUACD_MODE"),System.getenv("DOUMI_LAUNCHER_PID"),
                     ProcessHandle.current().parent().map(ProcessHandle::pid).orElse(-1L));
             p.setProperty("parent.pid",Long.toString(launcherPid>0?launcherPid:ProcessHandle.current().pid()));p.setProperty("version",expectedVersion);p.setProperty("previous.version",version());
             p.setProperty("platform",windows?"windows":"linux");
+            if(!systemd.isEmpty())p.setProperty("systemd.unit",systemd);
             if(windows)p.setProperty("rollback.msi",job.resolve("Doumi.Shell-"+version()+".msi").toString());p.setProperty("artifact",artifact.toString());p.setProperty("app.jar",jar().toString());
             p.setProperty("working.directory",System.getProperty("user.dir"));p.setProperty("health.id",UUID.randomUUID().toString());
             String address=env.getProperty("server.address","127.0.0.1");
@@ -200,13 +214,17 @@ public class UpdateService {
             long deadline=System.nanoTime()+Duration.ofSeconds(30).toNanos();
             while(maintenance.active()>0&&System.nanoTime()<deadline)Thread.sleep(200);
             if(maintenance.active()>0||uploads.activeCount()>0)throw new IOException("仍有文件传输或请求未结束，请等待完成后重试更新");
-            helper=new ProcessBuilder(helperJava,"-jar",helperJar.toString(),job.resolve("job.properties").toString())
-                    .directory(job.toFile()).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(job.resolve("installer.log").toFile())).start();
+            List<String> helperCommand=systemd.isEmpty()?List.of(helperJava,"-jar",helperJar.toString(),job.resolve("job.properties").toString()):SystemdControl.launchCommand(helperJava,helperJar,job.resolve("job.properties"));
+            helper=new ProcessBuilder(helperCommand)
+                    .directory(job.toFile()).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(job.resolve(systemd.isEmpty()?"installer.log":"launcher.log").toFile())).start();
             long readyDeadline=System.nanoTime()+Duration.ofSeconds(15).toNanos();
-            while(!Files.exists(job.resolve("helper-ready"))&&helper.isAlive()&&System.nanoTime()<readyDeadline)Thread.sleep(100);
-            if(!Files.exists(job.resolve("helper-ready"))||!helper.isAlive())throw new IOException("独立更新器未能启动，当前服务继续运行");
-            UpdateFiles.state(job,"STOPPING","更新器已就绪，正在重启服务",62);handedOff=true;
-            context.close();System.exit(0);
+            while(!helperReady(job)&&System.nanoTime()<readyDeadline&&(helper.isAlive()||(!systemd.isEmpty()&&helper.exitValue()==0)))Thread.sleep(100);
+            if(!helperReady(job)||(systemd.isEmpty()&&!helper.isAlive())||(!helper.isAlive()&&helper.exitValue()!=0))throw new IOException("独立更新器未能启动，当前服务继续运行");
+            if(!systemd.isEmpty())candidateHealthId=p.getProperty("health.id");
+            UpdateFiles.state(job,"STOPPING","更新器已就绪，正在重启服务",62);
+            if(!systemd.isEmpty())Files.writeString(job.resolve("handoff-ready"),p.getProperty("health.id"),StandardOpenOption.CREATE_NEW);
+            handedOff=true;
+            if(systemd.isEmpty()){context.close();System.exit(0);}
         }catch(Exception e) {
             if(helper!=null&&!handedOff)helper.destroyForcibly();
             try {try(PrintWriter log=new PrintWriter(Files.newBufferedWriter(job.resolve("prepare.log")))){e.printStackTrace(log);}
@@ -217,6 +235,10 @@ public class UpdateService {
             if(!handedOff){maintenance.end();scripts.endUpdate();}
             preparing=false;try{lock.release();channel.close();}catch(IOException ignored){}
         }
+    }
+    static boolean helperReady(Path job) {
+        try{String value=Files.readString(job.resolve("helper-ready")).trim();return value.matches("[0-9]+")&&ProcessHandle.of(Long.parseLong(value)).map(ProcessHandle::isAlive).orElse(false);}
+        catch(IOException|NumberFormatException error){return false;}
     }
     private static void download(String label,String address,String proxy,Path target,long limit,java.util.function.IntConsumer progress)throws IOException {
         try{UpdateDownload.download(address,proxy,target,limit,progress);}

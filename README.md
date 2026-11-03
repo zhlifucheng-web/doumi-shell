@@ -117,6 +117,8 @@ docker compose up -d --build
 
 Docker 部署关闭应用内一键更新。更新源码后运行 `docker compose up -d --build` 重建应用，原数据卷继续保留；现有连接需重新打开。
 
+root 运行的 Linux systemd 系统服务支持通过独立临时服务完成一键更新和失败回滚，保留原 unit、环境文件和端口。非 root 或用户服务仍使用原部署方式升级，详见[systemd 部署](docs/self-update.md#systemd-部署)。
+
 仓库提供 GitHub Actions：提交/PR 自动验证，推送 `vX.Y.Z` 标签后构建两个平台并发布完整 Release，手动触发仅生成构建附件。详见[更新与发布说明](docs/self-update.md)。
 
 ## 第一次连接服务器

@@ -83,6 +83,25 @@ public final class UpdateFiles {
             }
         });
     }
+    public static void snapshotLinuxProgram(Path source,Path target)throws IOException {
+        Files.createDirectories(target);
+        try(DirectoryStream<Path> entries=Files.newDirectoryStream(source)) {
+            for(Path entry:entries) {
+                String name=entry.getFileName().toString();
+                if(name.equals("docs"))snapshot(entry,target.resolve(name),Collections.emptySet());
+                else if(programFile(name)) {
+                    if(Files.isSymbolicLink(entry)||!Files.isRegularFile(entry))throw new IOException("程序文件无效");
+                    Files.copy(entry,target.resolve(name),StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.COPY_ATTRIBUTES);
+                }
+            }
+        }
+    }
+    public static void restoreLinuxProgram(Path target,Path backup)throws IOException {
+        try(DirectoryStream<Path> entries=Files.newDirectoryStream(target)) {
+            for(Path entry:entries)if(programFile(entry.getFileName().toString())||entry.getFileName().toString().equals("docs"))delete(entry);
+        }
+        snapshotLinuxProgram(backup,target);
+    }
     public static void restore(Path target,Path backup,Set<String> excluded)throws IOException {
         try(DirectoryStream<Path> entries=Files.newDirectoryStream(target)){for(Path entry:entries)if(!excluded.contains(entry.getFileName().toString()))delete(entry);}
         snapshot(backup,target,Collections.emptySet());
