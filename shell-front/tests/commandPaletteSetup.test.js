@@ -3,10 +3,11 @@ import assert from 'node:assert/strict'
 import { nextTick } from 'vue'
 import { mountSfcSetup } from './helpers/mountSfcSetup.js'
 
-function mountPalette(fileContext = null, targets = [{ accountId: 9, hostId: 1, username: 'root', hostName: 'app.log', hostAddress: '10.0.0.1' }]) {
+function mountPalette(fileContext = null, targets = [{ accountId: 9, hostId: 1, username: 'root', hostName: 'app.log', hostAddress: '10.0.0.1' }], shallowProps = false) {
   const events = [], opened = []
   const context = fileContext && { accountId: 7, tabId: 'tab-a', path: '/var/log', ...fileContext, openFile: file => { opened.push(file); return true } }
   const mounted = mountSfcSetup(new URL('../src/components/CommandPalette.vue', import.meta.url), {
+    shallowProps,
     modules: { '@/api/sshConsole': { fetchSearchTargets: async () => targets } },
     props: { modelValue: true, fileContext: context, 'onUpdate:modelValue': value => events.push(['close', value]), onSelectTarget: target => events.push(['target', target]), onAction: action => events.push(['action', action]), onAskAi: prompt => events.push(['ai', prompt]) }
   })
@@ -14,6 +15,40 @@ function mountPalette(fileContext = null, targets = [{ accountId: 9, hostId: 1, 
 }
 const flush = async () => { await new Promise(setImmediate); await nextTick() }
 const loadDirectory = async () => { await new Promise(resolve => setTimeout(resolve, 250)); await flush() }
+
+test('directory results remain visible for raw contexts published by the shallow workspace store', async () => {
+  const palette = mountPalette({ files: [], listFiles: async () => [{ name: 'app.log', path: '/srv/logs/app.log' }] }, [], true)
+  try {
+    palette.state.query.value = 'logs/'; await loadDirectory()
+    assert.deepEqual(palette.state.filteredItems.value.filter(item => !item.isHeader).map(item => item.label), ['app.log'])
+  } finally { palette.unmount() }
+})
+
+test('Enter on current and nested folders fills the search path and loads the next directory without closing', async () => {
+  const requests = [], paths = []
+  const palette = mountPalette({ files: [{ name: 'logs', dir: true }],
+    listFiles: async path => {
+      requests.push(path)
+      return path === '/srv/logs/' ? [{ name: 'Archive', dir: true, path: '/srv/logs/Archive' }]
+        : [{ name: 'App.log', path: '/srv/logs/Archive/App.log' }]
+    },
+    path: '/srv', openPath: async path => { paths.push(path); return true }
+  }, [], true)
+  try {
+    await flush(); palette.state.query.value = 'log'; await flush()
+    await palette.state.selectActive()
+    assert.equal(palette.state.query.value, '/srv/logs/')
+    assert.deepEqual(palette.events, [])
+    await loadDirectory(); await palette.state.selectActive()
+    assert.equal(palette.state.query.value, '/srv/logs/Archive/')
+    assert.deepEqual(palette.events, [])
+    await loadDirectory()
+    assert.deepEqual(requests, ['/srv/logs/', '/srv/logs/Archive/'])
+    await palette.state.selectActive()
+    assert.deepEqual(paths, ['/srv/logs/Archive/App.log'])
+    assert.deepEqual(palette.events, [['close', false]])
+  } finally { palette.unmount() }
+})
 
 test('typing a directory loads its files and filters the filename without requesting it again', async () => {
   const requests = [], paths = []

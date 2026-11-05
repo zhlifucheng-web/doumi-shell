@@ -834,7 +834,7 @@ watch(
     clearFileSearchContext()
     if (disposed || !fileSearchActive.value || !props.active || !props.sessionToken || loading.value || !loadedPath.value || currentPath.value !== loadedPath.value) return
     const token = props.sessionToken, accountId = props.accountId, tabId = props.tabId, path = loadedPath.value
-    const files = items.value.filter(row => !row.dir && !isBinaryFile(row.name))
+    const files = items.value.filter(row => row.dir || !isBinaryFile(row.name))
     let context
     const isCurrent = () => !disposed && fileSearchActive.value && props.active && !loading.value &&
       token === props.sessionToken && accountId === props.accountId && tabId === props.tabId &&
@@ -848,7 +848,7 @@ watch(
         try {
           const data = await sftpList(token, parent)
           if (!isCurrent()) return null
-          return (data.items || []).filter(row => !row.dir && !isBinaryFile(row.name))
+          return (data.items || []).filter(row => row.dir || !isBinaryFile(row.name))
             .map(row => ({ ...row, path: `${parent.replace(/\/+$/, '')}/${row.name}` }))
         } catch (err) {
           if (!isCurrent()) return null
@@ -859,7 +859,7 @@ watch(
       openFile(row) {
         if (!isCurrent()) return false
         const file = files.find(file => file.name === row?.name)
-        if (!file) return false
+        if (!file || file.dir) return false
         openLargeFileViewer({ ...file, path: `${path.replace(/\/+$/, '')}/${file.name}` })
         return true
       },

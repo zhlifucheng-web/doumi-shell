@@ -9,7 +9,7 @@ import * as transferHistory from '../src/composables/transferHistory.js'
 const filename = new URL('../src/components/ssh/SshFilePanel.vue', import.meta.url)
 
 function mountPanel(props = {}, listDirectory, fileLocation = vue.ref(null), loadUsers, extra = {}) {
-  const fileSearchContext = vue.ref(null)
+  const fileSearchContext = vue.shallowRef(null)
   const requests = []
   const events = []
   const pathEvents = []
@@ -75,6 +75,34 @@ test('SFTP panel loads its initial directory and reports subsequent directory na
 
 const flush = async () => { await new Promise(setImmediate); await vue.nextTick() }
 
+test('the real shallow file context supports folder navigation and opening a searched file in the palette', async () => {
+  const panel = mountPanel({ sessionToken: 'session' }, async (token, path) => ({
+    path: path || '/srv', items: path === '/srv/logs'
+      ? [{ name: 'App.log', size: 123 }] : [{ name: 'logs', dir: true }]
+  }))
+  let palette
+  const events = []
+  try {
+    await flush()
+    palette = mountSfcSetup(new URL('../src/components/CommandPalette.vue', import.meta.url), {
+      shallowProps: true,
+      modules: { '@/api/sshConsole': { fetchSearchTargets: async () => [] } },
+      props: { modelValue: true, fileContext: panel.fileSearchContext.value, 'onUpdate:modelValue': value => events.push(value) }
+    })
+    palette.state.query.value = 'logs'; await flush()
+    await palette.state.selectActive()
+    assert.equal(palette.state.query.value, '/srv/logs/')
+    await new Promise(resolve => setTimeout(resolve, 250)); await flush()
+    assert.deepEqual(palette.state.filteredItems.value.map(item => item.label), ['App.log'])
+    await palette.state.selectActive()
+    assert.equal(panel.state.largeViewerFile.value.path, '/srv/logs/App.log')
+    assert.equal(panel.state.largeViewerFile.value.size, 123)
+    assert.equal(panel.state.showLargeViewer.value, true)
+    assert.deepEqual(events, [false])
+    assert.equal(panel.state.loadedPath.value, '/srv')
+  } finally { palette?.unmount(); panel.unmount() }
+})
+
 test('directory search lists viewable files with full paths without navigating the file panel', async () => {
   const panel = mountPanel({ sessionToken: 'session' }, async (token, path) => ({ path: path || '/srv/app', items: [
     { name: 'App.log', size: 99 }, { name: 'folder', dir: true }, { name: 'archive.zip', size: 20 }
@@ -82,9 +110,9 @@ test('directory search lists viewable files with full paths without navigating t
   try {
     await flush()
     const context = panel.fileSearchContext.value
-    assert.deepEqual(await context.listFiles('Logs/'), [{ name: 'App.log', size: 99, path: '/srv/app/Logs/App.log' }])
+    assert.deepEqual(await context.listFiles('Logs/'), [{ name: 'App.log', size: 99, path: '/srv/app/Logs/App.log' }, { name: 'folder', dir: true, path: '/srv/app/Logs/folder' }])
     assert.deepEqual(panel.requests.at(-1), { token: 'session', path: '/srv/app/Logs' })
-    assert.deepEqual(await context.listFiles('/var/log/'), [{ name: 'App.log', size: 99, path: '/var/log/App.log' }])
+    assert.deepEqual(await context.listFiles('/var/log/'), [{ name: 'App.log', size: 99, path: '/var/log/App.log' }, { name: 'folder', dir: true, path: '/var/log/folder' }])
     assert.equal(panel.state.loadedPath.value, '/srv/app')
     assert.equal(panel.state.showLargeViewer.value, false)
     panel.props.sessionToken = ''; await flush()
@@ -344,7 +372,7 @@ test('current directory provider opens a viewable file through the existing view
     await flush()
     const context = panel.fileSearchContext.value
     assert.equal(context.path, '/var/log')
-    assert.deepEqual(context.files.map(f => f.name), ['app.log'])
+    assert.deepEqual(context.files.map(f => f.name), ['app.log', 'folder'])
     assert.equal(context.openFile(context.files[0]), true)
     assert.equal(panel.state.showLargeViewer.value, true)
     assert.equal(panel.state.largeViewerFile.value.path, '/var/log/app.log')

@@ -67,8 +67,8 @@
 
         <div v-else-if="!loadingPath && !pathError" class="palette-empty">
           <el-icon class="palette-empty-ico"><Search /></el-icon>
-          <p>未找到匹配的{{ fileContext ? '文件、' : '' }}主机、IP 或操作命令</p>
-          <span class="palette-empty-hint">{{ fileContext ? '支持按当前目录文件名、主机名、IP、用户名或操作命令筛选' : '支持按主机名、IP 地址（如 192.168.x.x）、用户名、操作命令筛选' }}，或输入 ? 咨询 AI</span>
+          <p>未找到匹配的{{ fileContext ? '文件、文件夹、' : '' }}主机、IP 或操作命令</p>
+          <span class="palette-empty-hint">{{ fileContext ? '支持按文件名、文件夹路径、主机名、IP、用户名或操作命令筛选' : '支持按主机名、IP 地址（如 192.168.x.x）、用户名、操作命令筛选' }}，或输入 ? 咨询 AI</span>
         </div>
 
         <div class="palette-footer">
@@ -85,7 +85,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, shallowRef, watch } from 'vue'
 import {
   Brush,
   Cpu,
@@ -119,7 +119,7 @@ const emit = defineEmits([
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
 const placeholderText = computed(() =>
-  `搜索${props.fileContext ? '当前目录文件、' : ''}主机名、IP 地址、用户名、动作 (如 >split) 或输入 ? 询问 AI... (${isMac ? '⌘K' : 'Ctrl+K'})`
+  `搜索${props.fileContext ? '文件、文件夹路径、' : ''}主机名、IP 地址、用户名、动作 (如 >split) 或输入 ? 询问 AI... (${isMac ? '⌘K' : 'Ctrl+K'})`
 )
 
 const query = ref('')
@@ -131,7 +131,8 @@ const loadingTargets = ref(false)
 const openingPath = ref(false)
 const loadingPath = ref(false)
 const pathError = ref('')
-const directoryResults = ref(null)
+// Keep the workspace's raw context identity intact for stale-result checks.
+const directoryResults = shallowRef(null)
 const pathQuery = computed(() => {
   const text = query.value.trim()
   if (/^[>？?]/.test(text)) return null
@@ -221,8 +222,8 @@ const filteredItems = computed(() => {
       const matches = loaded?.context === context && loaded.directory === directory
         ? loaded.files.filter(file => pathTerms.every(term => file.name.toLowerCase().includes(term))) : []
       results.push(...matches.slice(0, 50).map(file => ({
-        id: `file-path-${file.path}`, type: 'file-path', label: file.name,
-        sub: file.path, icon: Document, path: file.path, fileContext: context
+        id: `file-path-${file.path}`, type: file.dir ? 'directory' : 'file-path', label: file.name,
+        sub: file.path, icon: file.dir ? Folder : Document, path: file.path, fileContext: context
       })))
       if (!matches.length && !rawQuery.endsWith('/') && context.openPath) {
         results.push({
@@ -236,8 +237,9 @@ const filteredItems = computed(() => {
       if (matches.length) {
         results.push({ isHeader: true, label: `当前目录文件 (${matches.length}${matches.length > 50 ? '，显示前 50 项' : ''}) · ${context.path}` })
         results.push(...matches.slice(0, 50).map(file => ({
-          id: `file-${file.name}`, type: 'file', label: file.name,
-          sub: context.path, icon: Document, file, fileContext: context
+          id: `file-${file.name}`, type: file.dir ? 'directory' : 'file', label: file.name,
+          sub: context.path, icon: file.dir ? Folder : Document, file, fileContext: context,
+          path: `${context.path.replace(/\/+$/, '')}/${file.name}`
         })))
       }
     }
@@ -375,6 +377,15 @@ function selectActive() {
 }
 
 async function execute(item) {
+  if (item.type === 'directory') {
+    if (item.fileContext !== props.fileContext) return
+    query.value = `${item.path.replace(/\/+$/, '')}/`
+    activeIndex.value = 0
+    await nextTick()
+    inputRef.value?.focus()
+    inputRef.value?.setSelectionRange(query.value.length, query.value.length)
+    return
+  }
   if (item.type === 'file-path') {
     if (openingPath.value || item.fileContext !== props.fileContext) return
     const selectedQuery = query.value

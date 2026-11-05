@@ -3,7 +3,7 @@ import { parse, compileScript } from '@vue/compiler-sfc'
 import * as vue from 'vue'
 
 // Run the complete production setup inside Vue without requiring a browser DOM.
-export function mountSfcSetup(filename, { modules = {}, globals = {}, props = {}, onSetup, keepAliveVisible } = {}) {
+export function mountSfcSetup(filename, { modules = {}, globals = {}, props = {}, onSetup, keepAliveVisible, shallowProps = false } = {}) {
   const { descriptor } = parse(readFileSync(filename, 'utf8'), { filename: filename.pathname })
   const compiled = compileScript(descriptor, { id: filename.pathname }).content
   const executable = compiled.replace(/^import\s+['"][^'"]+['"];?\s*$/gm, '').replace(/import\s+([\s\S]*?)\s+from\s+['"]([^'"]+)['"]/g, (_, bindings, source) => {
@@ -13,7 +13,7 @@ export function mountSfcSetup(filename, { modules = {}, globals = {}, props = {}
     return `const ${declaration} = modules[${JSON.stringify(source)}] || {};`
   }).replace('export default', 'return')
   const component = new Function('modules', ...Object.keys(globals), executable)({ vue, ...modules }, ...Object.values(globals))
-  const reactiveProps = vue.reactive(props)
+  const reactiveProps = shallowProps ? vue.shallowReactive(props) : vue.reactive(props)
   let state
   const renderer = vue.createRenderer({
     createElement: () => ({}), createComment: () => ({}), insert: () => {}, remove: () => {}, parentNode: () => null, nextSibling: () => null
