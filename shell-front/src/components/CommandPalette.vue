@@ -22,6 +22,9 @@
           <kbd class="palette-esc-badge" title="关闭 (ESC)" @click="close">ESC</kbd>
         </div>
 
+        <div v-if="loadingPath || pathError" class="palette-path-status" role="status">
+          {{ loadingPath ? '正在加载目录…' : pathError }}
+        </div>
         <div v-if="filteredItems.length" ref="listRef" class="palette-list">
           <div
             v-for="(item, idx) in filteredItems"
@@ -62,7 +65,7 @@
           </div>
         </div>
 
-        <div v-else class="palette-empty">
+        <div v-else-if="!loadingPath && !pathError" class="palette-empty">
           <el-icon class="palette-empty-ico"><Search /></el-icon>
           <p>未找到匹配的{{ fileContext ? '文件、' : '' }}主机、IP 或操作命令</p>
           <span class="palette-empty-hint">{{ fileContext ? '支持按当前目录文件名、主机名、IP、用户名或操作命令筛选' : '支持按主机名、IP 地址（如 192.168.x.x）、用户名、操作命令筛选' }}，或输入 ? 咨询 AI</span>
@@ -125,6 +128,37 @@ const inputRef = ref(null)
 const listRef = ref(null)
 const searchTargets = ref([])
 const loadingTargets = ref(false)
+const openingPath = ref(false)
+const loadingPath = ref(false)
+const pathError = ref('')
+const directoryResults = ref(null)
+const pathQuery = computed(() => {
+  const text = query.value.trim()
+  if (/^[>？?]/.test(text)) return null
+  const split = text.lastIndexOf('/')
+  return split < 0 ? null : { directory: text.slice(0, split + 1), filter: text.slice(split + 1) }
+})
+
+watch([() => props.modelValue, () => props.fileContext, () => pathQuery.value?.directory],
+  ([open, context, directory], previous, onCleanup) => {
+    directoryResults.value = null
+    pathError.value = ''
+    loadingPath.value = false
+    if (!open || !context?.listFiles || !directory) return
+    let cancelled = false
+    loadingPath.value = true
+    const timer = setTimeout(async () => {
+      try {
+        const files = await context.listFiles(directory)
+        if (!cancelled) directoryResults.value = { context, directory, files: files || [] }
+      } catch (error) {
+        if (!cancelled) pathError.value = error?.response?.data?.externMessage || error?.response?.data?.message || error?.message || '读取远程目录失败'
+      } finally {
+        if (!cancelled) loadingPath.value = false
+      }
+    }, 200)
+    onCleanup(() => { cancelled = true; clearTimeout(timer) })
+  }, { immediate: true })
 
 const defaultActions = [
   { id: 'act-clear', label: '清空终端屏幕', sub: 'Clear Terminal Screen', icon: Delete, shortcut: 'Ctrl+L', action: 'clear', keywords: ['clear', 'qingkong', 'qk'] },
@@ -156,7 +190,8 @@ async function loadTargets() {
 }
 
 const filteredItems = computed(() => {
-  const q = query.value.trim().toLowerCase()
+  const rawQuery = query.value.trim()
+  const q = rawQuery.toLowerCase()
   const results = []
 
   // 1. If query starts with ? or ？ ask AI directly
@@ -179,14 +214,32 @@ const filteredItems = computed(() => {
 
   const context = props.fileContext
   if (context && !q.startsWith('>')) {
-    const matches = (context.files || []).filter(file =>
-      terms.every(term => String(file.name).toLowerCase().includes(term)))
-    if (matches.length) {
-      results.push({ isHeader: true, label: `当前目录文件 (${matches.length}${matches.length > 50 ? '，显示前 50 项' : ''}) · ${context.path}` })
+    if (pathQuery.value) {
+      const { directory, filter } = pathQuery.value
+      const loaded = directoryResults.value
+      const pathTerms = filter.toLowerCase().split(/\s+/).filter(Boolean)
+      const matches = loaded?.context === context && loaded.directory === directory
+        ? loaded.files.filter(file => pathTerms.every(term => file.name.toLowerCase().includes(term))) : []
       results.push(...matches.slice(0, 50).map(file => ({
-        id: `file-${file.name}`, type: 'file', label: file.name,
-        sub: context.path, icon: Document, file, fileContext: context
+        id: `file-path-${file.path}`, type: 'file-path', label: file.name,
+        sub: file.path, icon: Document, path: file.path, fileContext: context
       })))
+      if (!matches.length && !rawQuery.endsWith('/') && context.openPath) {
+        results.push({
+          id: `file-path-${rawQuery}`, type: 'file-path', label: rawQuery,
+          sub: context.path, icon: Document, path: rawQuery, fileContext: context
+        })
+      }
+    } else {
+      const matches = (context.files || []).filter(file =>
+        terms.every(term => String(file.name).toLowerCase().includes(term)))
+      if (matches.length) {
+        results.push({ isHeader: true, label: `当前目录文件 (${matches.length}${matches.length > 50 ? '，显示前 50 项' : ''}) · ${context.path}` })
+        results.push(...matches.slice(0, 50).map(file => ({
+          id: `file-${file.name}`, type: 'file', label: file.name,
+          sub: context.path, icon: Document, file, fileContext: context
+        })))
+      }
     }
   }
 
@@ -278,10 +331,8 @@ watch(() => props.modelValue, (open) => {
 })
 
 watch(filteredItems, () => {
-  // Reset active index if out of bounds or on header
-  if (activeIndex.value >= filteredItems.value.length) {
-    activeIndex.value = 0
-  }
+  // A new search starts at its first result, skipping group headers.
+  activeIndex.value = 0
   const current = filteredItems.value[activeIndex.value]
   if (current?.isHeader) {
     navigate(1)
@@ -319,11 +370,23 @@ function ensureVisible(index) {
 function selectActive() {
   const item = filteredItems.value[activeIndex.value]
   if (item && !item.isHeader) {
-    execute(item)
+    return execute(item)
   }
 }
 
-function execute(item) {
+async function execute(item) {
+  if (item.type === 'file-path') {
+    if (openingPath.value || item.fileContext !== props.fileContext) return
+    const selectedQuery = query.value
+    openingPath.value = true
+    try {
+      const opened = await item.fileContext.openPath(item.path)
+      if (opened && item.fileContext === props.fileContext && query.value === selectedQuery) close()
+    } finally {
+      openingPath.value = false
+    }
+    return
+  }
   if (item.type === 'file') {
     if (item.fileContext === props.fileContext && props.fileContext?.openFile(item.file)) close()
     return
@@ -346,6 +409,11 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.palette-path-status {
+  padding: 12px 18px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
 .palette-overlay {
   position: fixed;
   inset: 0;

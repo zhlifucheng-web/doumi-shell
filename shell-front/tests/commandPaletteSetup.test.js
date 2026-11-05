@@ -13,6 +13,102 @@ function mountPalette(fileContext = null, targets = [{ accountId: 9, hostId: 1, 
   return { ...mounted, opened, events }
 }
 const flush = async () => { await new Promise(setImmediate); await nextTick() }
+const loadDirectory = async () => { await new Promise(resolve => setTimeout(resolve, 250)); await flush() }
+
+test('typing a directory loads its files and filters the filename without requesting it again', async () => {
+  const requests = [], paths = []
+  const palette = mountPalette({ files: [],
+    listFiles: async path => { requests.push(path); return [{ name: 'App.log', path: '/var/log/logs/App.log' }, { name: 'error.log', path: '/var/log/logs/error.log' }] },
+    openPath: async path => { paths.push(path); return true }
+  })
+  try {
+    await flush(); palette.state.query.value = 'logs/'; await loadDirectory()
+    assert.deepEqual(requests, ['logs/'])
+    assert.deepEqual(palette.state.filteredItems.value.filter(item => !item.isHeader).map(item => item.label), ['App.log', 'error.log'])
+    palette.state.query.value = 'logs/APP'; await flush()
+    assert.deepEqual(palette.state.filteredItems.value.filter(item => !item.isHeader).map(item => item.label), ['App.log'])
+    assert.deepEqual(requests, ['logs/'])
+    await palette.state.selectActive()
+    assert.deepEqual(paths, ['/var/log/logs/App.log'])
+  } finally { palette.unmount() }
+})
+
+test('directory search debounces input and discards late results from another prefix or connection', async () => {
+  const requests = [], pending = []
+  const palette = mountPalette({ files: [], listFiles: path => { requests.push(path); return new Promise(resolve => pending.push(resolve)) } })
+  try {
+    await flush(); palette.state.query.value = 'lo/'; await flush()
+    palette.state.query.value = 'logs/'; await loadDirectory()
+    assert.deepEqual(requests, ['logs/'])
+    palette.state.query.value = '/var/'; await loadDirectory()
+    pending[0]([{ name: 'old.log', path: '/old.log' }]); await flush()
+    assert.equal(palette.state.filteredItems.value.some(item => item.label === 'old.log'), false)
+    palette.props.fileContext = null; await flush()
+    pending[1]([{ name: 'other.log', path: '/var/other.log' }]); await flush()
+    assert.equal(palette.state.filteredItems.value.some(item => item.label === 'other.log'), false)
+  } finally { palette.unmount() }
+})
+
+test('directory search reports errors and cancels requests when closed or using AI and command prefixes', async () => {
+  const requests = []
+  const palette = mountPalette({ files: [], listFiles: async path => { requests.push(path); throw Error('Permission denied') } })
+  try {
+    await flush(); palette.state.query.value = 'private/'; await loadDirectory()
+    assert.match(palette.state.pathError.value, /Permission denied/)
+    for (const query of ['? logs/', '>logs/']) {
+      palette.state.query.value = query; await loadDirectory()
+    }
+    palette.state.query.value = 'logs/'; await flush()
+    palette.props.modelValue = false; await loadDirectory()
+    assert.deepEqual(requests, ['private/'])
+  } finally { palette.unmount() }
+})
+
+test('path queries open relative and absolute paths with original case via Enter', async () => {
+  const paths = []
+  const palette = mountPalette({ files: [], openPath: async path => { paths.push(path); return true } })
+  try {
+    await flush()
+    for (const query of ['logs/App.log', '/var/Logs/App.log', './logs/app.log', '../logs/app.log', 'logs/my app.log']) {
+      palette.state.query.value = query; await flush()
+      const result = palette.state.filteredItems.value.find(item => !item.isHeader)
+      assert.ok(result, `Missing path result for ${query}`)
+      await palette.state.selectActive()
+      assert.equal(paths.at(-1), query)
+      assert.deepEqual(palette.events.at(-1), ['close', false])
+    }
+  } finally { palette.unmount() }
+})
+
+test('failed and stale path selections keep the palette open', async () => {
+  const palette = mountPalette({ files: [], openPath: async () => false })
+  try {
+    await flush(); palette.state.query.value = 'logs/app.log'; await flush()
+    const result = palette.state.filteredItems.value.find(item => !item.isHeader)
+    assert.ok(result)
+    await palette.state.selectActive()
+    assert.deepEqual(palette.events, [])
+    palette.props.fileContext = null; await flush()
+    await palette.state.execute(result)
+    assert.deepEqual(palette.events, [])
+    assert.equal(palette.state.filteredItems.value.some(item => item.type === 'file-path'), false)
+  } finally { palette.unmount() }
+})
+
+test('a path query selects the file path before a host matching the same text', async () => {
+  const paths = []
+  const palette = mountPalette({ files: [{ name: 'app.log' }], openPath: async path => { paths.push(path); return true } }, [
+    { hostId: 1, hostName: 'logs/app.log', hostAddress: '10.0.0.1' }
+  ])
+  try {
+    await flush()
+    assert.equal(palette.state.activeIndex.value, 1)
+    palette.state.query.value = 'logs/app.log'; await flush()
+    await palette.state.selectActive()
+    assert.deepEqual(paths, ['logs/app.log'])
+    assert.deepEqual(palette.events, [['close', false]])
+  } finally { palette.unmount() }
+})
 
 test('the existing Ctrl+K palette searches current directory files before hosts and opens via Enter', async () => {
   const palette = mountPalette({ files: [{ name: 'app.log', size: 90 }, { name: 'error.log', size: 80 }] })

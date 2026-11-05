@@ -439,7 +439,7 @@
     <SshFileEditorDialog
       v-model="showEditor"
       :file="editorFile"
-      :dir="loadedPath || currentPath || defaultCwd || '/'"
+      :dir="editorFile?.path ? editorFile.path.slice(0, editorFile.path.lastIndexOf('/')) || '/' : loadedPath || currentPath || defaultCwd || '/'"
       :session-token="sessionToken"
       :account-id="accountId"
       @saved="refresh"
@@ -818,7 +818,7 @@ watch(
   { immediate: true }
 )
 
-// The palette reuses the loaded listing; typing never starts another SFTP request.
+// The palette can search another directory without navigating this panel.
 let publishedFileContext = null
 const fileSearchActive = ref(true)
 function clearFileSearchContext() {
@@ -836,16 +836,64 @@ watch(
     const token = props.sessionToken, accountId = props.accountId, tabId = props.tabId, path = loadedPath.value
     const files = items.value.filter(row => !row.dir && !isBinaryFile(row.name))
     let context
+    const isCurrent = () => !disposed && fileSearchActive.value && props.active && !loading.value &&
+      token === props.sessionToken && accountId === props.accountId && tabId === props.tabId &&
+      path === loadedPath.value && path === currentPath.value && fileSearchContext.value === context
     fileSearchContext.value = {
       accountId, tabId, path, files,
+      async listFiles(input) {
+        if (!isCurrent() || typeof input !== 'string' || input.includes('\0')) return null
+        const directory = input.startsWith('/') ? input : `${path.replace(/\/+$/, '')}/${input}`
+        const parent = directory.replace(/\/+$/, '') || '/'
+        try {
+          const data = await sftpList(token, parent)
+          if (!isCurrent()) return null
+          return (data.items || []).filter(row => !row.dir && !isBinaryFile(row.name))
+            .map(row => ({ ...row, path: `${parent.replace(/\/+$/, '')}/${row.name}` }))
+        } catch (err) {
+          if (!isCurrent()) return null
+          if (isSessionExpiredError(err)) emit('session-invalid')
+          throw err
+        }
+      },
       openFile(row) {
-        if (disposed || !fileSearchActive.value || !props.active || loading.value ||
-            token !== props.sessionToken || accountId !== props.accountId || tabId !== props.tabId ||
-            path !== loadedPath.value || path !== currentPath.value || fileSearchContext.value !== context) return false
+        if (!isCurrent()) return false
         const file = files.find(file => file.name === row?.name)
         if (!file) return false
         openLargeFileViewer({ ...file, path: `${path.replace(/\/+$/, '')}/${file.name}` })
         return true
+      },
+      async openPath(input) {
+        if (!isCurrent() || typeof input !== 'string' || input.includes('\0')) return false
+        const target = input.trim()
+        if (!target || target.endsWith('/')) {
+          ElMessage.warning('请输入文件路径')
+          return false
+        }
+        // Keep case and dot segments intact: remote symlinks affect how .. resolves.
+        const fullPath = target.startsWith('/') ? target : `${path.replace(/\/+$/, '')}/${target}`
+        const split = fullPath.lastIndexOf('/')
+        const parent = fullPath.slice(0, split) || '/', name = fullPath.slice(split + 1)
+        try {
+          const data = await sftpList(token, parent)
+          if (!isCurrent()) return false
+          const file = (data.items || []).find(row => row.name === name)
+          if (!file || file.dir) {
+            ElMessage.warning(file?.dir ? '指定路径是目录，请输入文件路径' : '指定文件不存在')
+            return false
+          }
+          if (isBinaryFile(file.name)) {
+            ElMessage.warning('该文件不支持文本预览，请使用下载操作')
+            return false
+          }
+          openLargeFileViewer({ ...file, path: fullPath })
+          return true
+        } catch (err) {
+          if (!isCurrent()) return false
+          if (isSessionExpiredError(err)) emit('session-invalid')
+          else ElMessage.error(err?.response?.data?.externMessage || err?.response?.data?.message || err?.message || '读取远程文件失败')
+          return false
+        }
       }
     }
     context = fileSearchContext.value

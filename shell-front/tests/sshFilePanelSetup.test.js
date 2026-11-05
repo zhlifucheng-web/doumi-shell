@@ -75,6 +75,81 @@ test('SFTP panel loads its initial directory and reports subsequent directory na
 
 const flush = async () => { await new Promise(setImmediate); await vue.nextTick() }
 
+test('directory search lists viewable files with full paths without navigating the file panel', async () => {
+  const panel = mountPanel({ sessionToken: 'session' }, async (token, path) => ({ path: path || '/srv/app', items: [
+    { name: 'App.log', size: 99 }, { name: 'folder', dir: true }, { name: 'archive.zip', size: 20 }
+  ] }))
+  try {
+    await flush()
+    const context = panel.fileSearchContext.value
+    assert.deepEqual(await context.listFiles('Logs/'), [{ name: 'App.log', size: 99, path: '/srv/app/Logs/App.log' }])
+    assert.deepEqual(panel.requests.at(-1), { token: 'session', path: '/srv/app/Logs' })
+    assert.deepEqual(await context.listFiles('/var/log/'), [{ name: 'App.log', size: 99, path: '/var/log/App.log' }])
+    assert.equal(panel.state.loadedPath.value, '/srv/app')
+    assert.equal(panel.state.showLargeViewer.value, false)
+    panel.props.sessionToken = ''; await flush()
+    assert.equal(await context.listFiles('Logs/'), null)
+  } finally { panel.unmount() }
+})
+
+test('quick-open resolves paths against the loaded directory and opens the exact file with metadata', async () => {
+  const panel = mountPanel({ sessionToken: 'session', tabId: 'tab-a' }, async (token, path) => ({
+    path: path || '/srv/app', items: path ? [{ name: 'App.log', size: 1234 }] : []
+  }))
+  try {
+    await flush()
+    const context = panel.fileSearchContext.value
+    for (const [query, parent, fullPath] of [
+      ['logs/App.log', '/srv/app/logs', '/srv/app/logs/App.log'],
+      ['/var/Logs/App.log', '/var/Logs', '/var/Logs/App.log'],
+      ['../logs/App.log', '/srv/app/../logs', '/srv/app/../logs/App.log'],
+      ['/App.log', '/', '/App.log']
+    ]) {
+      assert.equal(await context.openPath(query), true)
+      assert.deepEqual(panel.requests.at(-1), { token: 'session', path: parent })
+      assert.equal(panel.state.largeViewerFile.value.path, fullPath)
+      assert.equal(panel.state.largeViewerFile.value.size, 1234)
+      assert.equal(panel.state.showLargeViewer.value, true)
+      assert.equal(panel.state.loadedPath.value, '/srv/app')
+      panel.state.showLargeViewer.value = false
+    }
+  } finally { panel.unmount() }
+})
+
+test('quick-open refuses missing, directory and binary targets and reports inaccessible parents', async () => {
+  const panel = mountPanel({ sessionToken: 'session' }, async (token, path) => {
+    if (path === '/srv/app/private') throw Error('Permission denied')
+    return { path: path || '/srv/app', items: [{ name: 'folder', dir: true }, { name: 'archive.zip', size: 20 }] }
+  })
+  try {
+    await flush()
+    const context = panel.fileSearchContext.value
+    for (const path of ['logs/missing.log', 'logs/folder', 'logs/archive.zip', 'private/app.log']) {
+      assert.equal(await context.openPath(path), false)
+      assert.equal(panel.state.showLargeViewer.value, false)
+    }
+    assert.equal(panel.warnings.length, 3)
+    assert.deepEqual(panel.errors, ['Permission denied'])
+  } finally { panel.unmount() }
+})
+
+test('quick-open ignores a path lookup that completes after the session changes', async () => {
+  let complete
+  const panel = mountPanel({ sessionToken: 'session', tabId: 'tab-a' }, async (token, path) => {
+    if (path === '/srv/app/logs') return new Promise(resolve => { complete = resolve })
+    return { path: '/srv/app', items: [] }
+  })
+  try {
+    await flush()
+    const opening = panel.fileSearchContext.value.openPath('logs/app.log')
+    panel.props.sessionToken = 'new-session'; await flush()
+    complete({ path: '/srv/app/logs', items: [{ name: 'app.log', size: 20 }] })
+    assert.equal(await opening, false)
+    assert.equal(panel.state.showLargeViewer.value, false)
+    assert.deepEqual(panel.errors, [])
+  } finally { panel.unmount() }
+})
+
 test('double-click opens text files read-only regardless of extension or size', () => {
   const panel = mountPanel()
   try {
