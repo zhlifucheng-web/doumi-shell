@@ -46,7 +46,26 @@ class UpdateInstallerTest {
    if(managed)assertEquals(healthy?java.util.List.of("stop","start","cleanup"):java.util.List.of("stop","start","stop","start","cleanup"),calls);
    if(!healthy)assertFalse(Files.exists(data.resolve("doumi.db-wal")));
   } finally {
-   Path pid=root.resolve("fixture.pid");if(Files.exists(pid))ProcessHandle.of(Long.parseLong(Files.readString(pid))).ifPresent(h->{h.destroy();try{h.onExit().get(10,java.util.concurrent.TimeUnit.SECONDS);}catch(Exception ignored){}});
+   stopFixture(root,job);
+  }
+ }
+ static void stopFixture(Path root,Path job)throws Exception {
+  Path pid=root.resolve("fixture.pid");
+  if(Files.exists(pid)) {
+   Optional<ProcessHandle> process=ProcessHandle.of(Long.parseLong(Files.readString(pid)));
+   if(process.isPresent()) {
+    ProcessHandle handle=process.get();handle.destroyForcibly();
+    handle.onExit().get(10,java.util.concurrent.TimeUnit.SECONDS);
+    assertFalse(handle.isAlive(),"Installer fixture must exit before temporary files are removed");
+   }
+  }
+  // Windows may still hold redirected output briefly after the process exit notification.
+  long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+  for(String name:List.of("application.log","rollback.log")) {
+   while(true) {
+    try {Files.deleteIfExists(job.resolve(name));break;}
+    catch(FileSystemException locked) {if(System.nanoTime()>=deadline)throw locked;Thread.sleep(50);}
+   }
   }
  }
  static void jar(Path path,String version)throws Exception {
