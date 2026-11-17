@@ -18,9 +18,8 @@ class SshSftpDeleteTest {
     private final SFTPClient sftp = mock(SFTPClient.class);
 
     private void type(String path, FileMode.Type type) throws IOException {
-        FileAttributes attrs = mock(FileAttributes.class);
-        when(attrs.getType()).thenReturn(type);
-        when(sftp.lstat(path)).thenReturn(attrs);
+        // FileAttributes is final, so build a real value instead of mocking it.
+        when(sftp.lstat(path)).thenReturn(new FileAttributes.Builder().withType(type).build());
     }
 
     private RemoteResourceInfo entry(String name) {
@@ -34,8 +33,12 @@ class SshSftpDeleteTest {
         type("/data", FileMode.Type.DIRECTORY);
         type("/data/子目录", FileMode.Type.DIRECTORY);
         type("/data/子目录/.hidden", FileMode.Type.REGULAR);
-        when(sftp.ls("/data")).thenReturn(Arrays.asList(entry("."), entry(".."), entry("子目录")));
-        when(sftp.ls("/data/子目录")).thenReturn(Collections.singletonList(entry(".hidden")));
+        RemoteResourceInfo current = entry(".");
+        RemoteResourceInfo parent = entry("..");
+        RemoteResourceInfo sub = entry("子目录");
+        RemoteResourceInfo hidden = entry(".hidden");
+        when(sftp.ls("/data")).thenReturn(Arrays.asList(current, parent, sub));
+        when(sftp.ls("/data/子目录")).thenReturn(Collections.singletonList(hidden));
 
         SshSftpDelete.delete(sftp, "/data");
 
@@ -67,7 +70,8 @@ class SshSftpDeleteTest {
     void stopsOnFailureAndKeepsParent() throws IOException {
         type("/data", FileMode.Type.DIRECTORY);
         type("/data/file", FileMode.Type.REGULAR);
-        when(sftp.ls("/data")).thenReturn(Collections.singletonList(entry("file")));
+        RemoteResourceInfo file = entry("file");
+        when(sftp.ls("/data")).thenReturn(Collections.singletonList(file));
         doThrow(new IOException("permission denied")).when(sftp).rm("/data/file");
         assertThrows(IOException.class, () -> SshSftpDelete.delete(sftp, "/data"));
         verify(sftp, never()).rmdir(anyString());
