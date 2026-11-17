@@ -149,13 +149,17 @@ class DoumiShellIntegrationTest {
         script.setSchedule(schedule);
         long sourceId = scripts.create(script).getId();
         ConfigurationArchive.Archive archive = configuration.exportAll("test-password", true);
-        int before = jdbc.queryForObject("SELECT COUNT(*) FROM ssh_script", Integer.class);
+        // Other integration tests may share this data directory, so compare against what was exported.
+        int beforeGroups = jdbc.queryForObject("SELECT COUNT(*) FROM ssh_group", Integer.class);
+        int beforeHosts = jdbc.queryForObject("SELECT COUNT(*) FROM ssh_host", Integer.class);
+        int beforeAccounts = jdbc.queryForObject("SELECT COUNT(*) FROM ssh_account", Integer.class);
+        int beforeScripts = jdbc.queryForObject("SELECT COUNT(*) FROM ssh_script", Integer.class);
         Map<String, Integer> imported = configuration.importAll(archive, "test-password");
-        assertEquals(1, imported.get("groups"));
-        assertEquals(1, imported.get("hosts"));
-        assertEquals(1, imported.get("accounts"));
-        assertEquals(1, imported.get("scripts"));
-        assertEquals(before * 2, jdbc.queryForObject("SELECT COUNT(*) FROM ssh_script", Integer.class));
+        assertEquals(beforeGroups, imported.get("groups"));
+        assertEquals(beforeHosts, imported.get("hosts"));
+        assertEquals(beforeAccounts, imported.get("accounts"));
+        assertEquals(beforeScripts, imported.get("scripts"));
+        assertEquals(beforeScripts * 2, jdbc.queryForObject("SELECT COUNT(*) FROM ssh_script", Integer.class));
         Long importedScriptId = jdbc.queryForObject("SELECT MAX(id) FROM ssh_script WHERE name='backup-script'", Long.class);
         assertNotEquals(sourceId, importedScriptId);
         SshScriptService.SshScriptVO restored = scripts.getById(importedScriptId);
