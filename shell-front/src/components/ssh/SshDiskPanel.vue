@@ -16,7 +16,7 @@
         <el-table-column label="占目录空间" width="160"><template #default="{row}"><el-progress :percentage="Math.min(100,result.totalBytes ? Math.round(row.bytes/result.totalBytes*100) : 0)" /></template></el-table-column>
         <el-table-column label="管理" width="180" fixed="right"><template #default="{row}"><div @click.stop><el-button link :disabled="loading" @click="openFiles(row.directory ? row.path : parent(row.path))">定位</el-button><el-button link :disabled="loading" @click="rename(row)">重命名</el-button><el-button link type="danger" :disabled="loading" @click="remove(row)">删除</el-button></div></template></el-table-column>
       </el-table>
-      <p>删除目录时须为空；非空目录可进入后管理。文件删除无法恢复。逻辑文件大小可能受稀疏文件影响，超过目录实际占用。</p>
+      <p>删除目录会同时删除其所有内容，无法恢复。逻辑文件大小可能受稀疏文件影响，超过目录实际占用。</p>
     </template>
     <el-empty v-else-if="!loading" description="指定目录后点击扫描；留空使用当前用户主目录" />
     <el-dialog v-model="folderDialog" title="选择扫描目录" width="min(680px, 94vw)" append-to-body @closed="folderGeneration++">
@@ -86,7 +86,7 @@ async function rename(row){
 }
 async function remove(row){
   const token=props.sessionToken,account=props.accountId
-  try{await ElMessageBox.confirm(`将永久删除 ${row.path}${row.directory ? '（仅支持空目录）' : ''}。是否继续？`,'确认删除',{type:'warning',confirmButtonText:'删除',cancelButtonText:'取消'});if(token!==props.sessionToken||account!==props.accountId)return;await sftpDelete(token,row.path);ElMessage.success('已删除');await scan(result.value.path)}catch{/* canceled or API message */}
+  try{await ElMessageBox.confirm(`将永久删除 ${row.path}${row.directory ? ' 及其所有内容' : ''}，无法恢复。是否继续？`,'确认删除',{type:'warning',confirmButtonText:'删除',cancelButtonText:'取消'});if(token!==props.sessionToken||account!==props.accountId)return;await sftpDelete(token,row.path);ElMessage.success('已删除');await scan(result.value.path)}catch{/* canceled or API message */}
 }
 watch(()=>[props.accountId,props.sessionToken],()=>{generation++;result.value=null;error.value='';loading.value=false;path.value='';folderGeneration++;folderDialog.value=false;folderLoading.value=false;folderPath.value='';folders.value=[]})
 </script>

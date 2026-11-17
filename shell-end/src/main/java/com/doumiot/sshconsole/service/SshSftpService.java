@@ -8,6 +8,7 @@ import com.doumiot.sshconsole.config.SshConsoleProperties;
 import com.doumiot.sshconsole.sftp.SshSftpAttributeFormatter;
 import com.doumiot.sshconsole.sftp.SshSftpPathResolver;
 import com.doumiot.sshconsole.sftp.SftpStreams;
+import com.doumiot.sshconsole.sftp.SshSftpDelete;
 import com.doumiot.sshconsole.ssh.SshRemoteExec;
 import com.doumiot.sshconsole.ssh.SshSessionRegistry;
 import lombok.Data;
@@ -333,15 +334,10 @@ public class SshSftpService {
             String home = needHome(path) ? resolveHomeDir(sftp, entry) : (entry != null ? entry.getHomeDir() : null);
             String resolved = SshSftpPathResolver.resolve(path, entry != null ? entry.getDefaultCwd() : null, home);
             try {
-                net.schmizz.sshj.sftp.FileMode.Type type = sftp.type(resolved);
-                if (type == net.schmizz.sshj.sftp.FileMode.Type.DIRECTORY) {
-                    sftp.rmdir(resolved);
-                } else {
-                    sftp.rm(resolved);
-                }
+                SshSftpDelete.delete(sftp, resolved);
             } catch (SFTPException e) {
                 throw new BusinessRuntimeException(ParamExceptionEnum.IN_PARAM_EMPTY,
-                        "删除失败（目录须为空）: " + e.getMessage());
+                        "删除失败: " + e.getMessage());
             }
         }
     }

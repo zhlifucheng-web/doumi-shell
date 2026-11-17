@@ -1362,7 +1362,7 @@ async function doChown() {
 
 async function confirmDelete(row) {
   const tip = row.dir
-    ? `删除空目录「${row.name}」？非空目录请先清空。`
+    ? `永久删除目录「${row.name}」及其所有内容？此操作无法恢复。`
     : `删除文件「${row.name}」？`
   try {
     await ElMessageBox.confirm(tip, '确认删除', { type: 'warning' })
